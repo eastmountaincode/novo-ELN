@@ -796,6 +796,99 @@ export function updateAttachmentFile(input: {
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(attachment.pageId)};
   `);
   rebuildSearchIndex();
+  return getAttachmentForUser(input.userId, input.attachmentId);
+}
+
+export function createImportedNotebook(input: { userId: string; projectId: string; name: string }) {
+  ensureDatabase();
+  assertProjectEditAccess(input.userId, input.projectId);
+  const notebookId = randomUUID();
+  execSql(`
+    INSERT INTO notebooks (id, project_id, name)
+    VALUES (${sql(notebookId)}, ${sql(input.projectId)}, ${sql(input.name || "Evernote Import")});
+    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(input.projectId)};
+  `);
+  return notebookId;
+}
+
+export function createImportedPage(input: {
+  userId: string;
+  notebookId: string;
+  pageId?: string;
+  title: string;
+  body: string;
+  tags: string[];
+  createdAt?: string;
+  updatedAt?: string;
+  replaceExisting?: boolean;
+}) {
+  ensureDatabase();
+  assertNotebookEditAccess(input.userId, input.notebookId);
+  const pageId = input.pageId ?? randomUUID();
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const updatedAt = input.updatedAt ?? createdAt;
+  const title = input.title || "Untitled Evernote note";
+  const normalizedTags = normalizePageTags(input.tags);
+
+  if (input.replaceExisting) {
+    execSql(`
+      UPDATE pages
+      SET title = ${sql(title)}, body = ${sql(input.body)}, created_at = ${sql(createdAt)}, updated_at = ${sql(updatedAt)}
+      WHERE id = ${sql(pageId)};
+      DELETE FROM page_tags WHERE page_id = ${sql(pageId)};
+      ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
+      INSERT INTO page_versions (id, page_id, summary, created_by, created_at)
+      VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Imported from ENEX', ${sql(input.userId)}, ${sql(updatedAt)});
+    `);
+    return pageId;
+  }
+
+  execSql(`
+    INSERT INTO pages (id, notebook_id, title, body, status, owner_id, created_at, updated_at)
+    VALUES (${sql(pageId)}, ${sql(input.notebookId)}, ${sql(title)}, ${sql(input.body)}, 'Draft', ${sql(input.userId)}, ${sql(createdAt)}, ${sql(updatedAt)});
+    ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
+  `);
+  return pageId;
+}
+
+export function createImportedAttachment(input: {
+  pageId: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  storageKey: string;
+  blockType: BlockType;
+  previewText: string;
+  createdAt?: string;
+}): Attachment {
+  ensureDatabase();
+  const id = randomUUID();
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  execSql(`
+    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, preview_text, created_at)
+    VALUES (${sql(id)}, ${sql(input.pageId)}, ${sql(input.originalName)}, ${sql(input.mimeType)}, ${input.size}, ${sql(input.storageKey)}, ${sql(input.blockType)}, ${sql(input.previewText)}, ${sql(createdAt)});
+  `);
+  return {
+    id,
+    pageId: input.pageId,
+    originalName: input.originalName,
+    mimeType: input.mimeType,
+    size: input.size,
+    storageKey: input.storageKey,
+    blockType: input.blockType,
+    previewText: input.previewText,
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+export function finishImportedNotebook(projectId: string, notebookId: string) {
+  ensureDatabase();
+  execSql(`
+    UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
+    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(projectId)};
+  `);
+  rebuildSearchIndex();
 }
 
 export function deleteAttachment(userId: string, attachmentId: string) {

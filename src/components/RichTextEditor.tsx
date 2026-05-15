@@ -1,6 +1,7 @@
 "use client";
 
-import { Node, mergeAttributes } from "@tiptap/core";
+import { Extension, Node, mergeAttributes, type Editor } from "@tiptap/core";
+import { NodeSelection } from "@tiptap/pm/state";
 import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
@@ -71,6 +72,17 @@ const spreadsheetAccept = ".csv,.tsv,.xls,.xlsx,.xlsb,.ods";
 const presentationAccept = ".ppt,.pptx,.pps,.ppsx,.odp";
 const imageAccept = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/tiff";
 const IMAGE_MIN_WIDTH = 180;
+const TAB_INDENT = "    ";
+
+const EditorTabBehavior = Extension.create({
+  name: "editorTabBehavior",
+  addKeyboardShortcuts() {
+    return {
+      Tab: () => handleEditorTab(this.editor, false),
+      "Shift-Tab": () => handleEditorTab(this.editor, true),
+    };
+  },
+});
 
 export function attachmentToInlineAttrs(attachment: Attachment): InlineAttachmentAttrs {
   return {
@@ -93,6 +105,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       StarterKit.configure({
         link: false,
       }),
+      EditorTabBehavior,
       Underline,
       Link.configure({
         autolink: true,
@@ -358,6 +371,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
           <button
             type="button"
             onPointerDown={startImageResize}
+            tabIndex={-1}
             className="absolute -right-2 -top-2 grid size-4 cursor-ew-resize place-items-center border border-cyan-500 bg-white opacity-0 shadow-sm transition-opacity group-hover/inline-image:opacity-100 focus:opacity-100"
             title="Resize image"
             aria-label="Resize image"
@@ -365,6 +379,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
           <button
             type="button"
             onPointerDown={startImageResize}
+            tabIndex={-1}
             className="absolute -bottom-2 -right-2 grid size-4 cursor-ew-resize place-items-center border border-cyan-500 bg-white opacity-0 shadow-sm transition-opacity group-hover/inline-image:opacity-100 focus:opacity-100"
             title="Resize image"
             aria-label="Resize image"
@@ -390,15 +405,27 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
               {updatedAt ? <AttachmentMeta icon={<CalendarClock size={12} />} label="Updated" value={formatDateTime(updatedAt)} /> : null}
             </dl>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {canEdit ? <button type="button" onClick={() => openSpreadsheet(attrs, handleSpreadsheetSaved)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Edit3 size={13} />Edit</button> : null}
-              {canPreview ? <button type="button" onClick={() => openPresentation(attrs)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Eye size={13} />Preview</button> : null}
-              <a href={downloadUrl} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Download size={13} />Download</a>
+              {canEdit ? <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs, handleSpreadsheetSaved)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Edit3 size={13} />Edit</button> : null}
+              {canPreview ? <button type="button" tabIndex={-1} onClick={() => openPresentation(attrs)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Eye size={13} />Preview</button> : null}
+              <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Download size={13} />Download</a>
             </div>
           </div>
         </div>
       </div>
     </NodeViewWrapper>
   );
+}
+
+function handleEditorTab(editor: Editor, outdent: boolean) {
+  if (editor.isActive("bulletList") || editor.isActive("orderedList")) {
+    const listCommand = outdent ? editor.commands.liftListItem : editor.commands.sinkListItem;
+    listCommand("listItem");
+    return true;
+  }
+
+  if (outdent) return true;
+  if (editor.state.selection instanceof NodeSelection) return true;
+  return editor.commands.insertContent(TAB_INDENT);
 }
 
 function AttachmentMeta({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {

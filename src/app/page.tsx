@@ -85,6 +85,37 @@ type ProjectSelection = {
   project: Project;
 };
 
+type EnexInspection = {
+  path: string;
+  fileName: string;
+  suggestedNotebookName: string;
+  sizeBytes: number;
+  noteCount: number;
+  resourceCount: number;
+  inlineMediaCount: number;
+  notesWithResources: number;
+  tags: Array<{ tag: string; count: number }>;
+  mimeTypes: Array<{ mimeType: string; count: number }>;
+  elapsedMs: number;
+};
+
+type EnexImportJob = {
+  id: string;
+  state: "queued" | "running" | "succeeded" | "failed";
+  error?: string;
+  notebookId?: string;
+  importedResources: number;
+  startedAt: string;
+  finishedAt?: string;
+  progress: {
+    processedBytes: number;
+    totalBytes: number;
+    importedNotes: number;
+    totalNotes: number | null;
+    importedResources: number;
+  };
+};
+
 export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [authError, setAuthError] = useState("");
@@ -948,6 +979,12 @@ export default function Home() {
             dialog={nameDialog}
             onCancel={() => setNameDialog(null)}
             onSubmit={submitNameDialog}
+            onImportComplete={async (projectId, notebookId) => {
+              setNameDialog(null);
+              setActiveView("project");
+              writeNotebookUrl(notebookId, "push");
+              await refreshWorkspace({ projectId, notebookId });
+            }}
           />
         ) : null}
 
@@ -998,20 +1035,53 @@ export default function Home() {
   );
 }
 
-function NameModal({ dialog, onCancel, onSubmit }: { dialog: NameDialogState; onCancel: () => void; onSubmit: (name: string) => Promise<void> }) {
+function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: NameDialogState; onCancel: () => void; onSubmit: (name: string) => Promise<void>; onImportComplete?: (projectId: string, notebookId: string) => Promise<void> }) {
   const initialValue = dialog.kind === "renameProject" ? dialog.project.name : dialog.kind === "renameNotebook" ? dialog.notebook.name : "";
   const [name, setName] = useState(initialValue);
   const [submitting, setSubmitting] = useState(false);
+  const [mode, setMode] = useState<"blank" | "import">("blank");
+  const [serverPath, setServerPath] = useState("");
+  const [inspection, setInspection] = useState<EnexInspection | null>(null);
+  const [inspectionError, setInspectionError] = useState("");
+  const [inspecting, setInspecting] = useState(false);
+  const [job, setJob] = useState<EnexImportJob | null>(null);
+  const [importError, setImportError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const title = getNameModalTitle(dialog);
   const description = getNameModalDescription(dialog);
   const submitLabel = dialog.kind.startsWith("rename") ? "Rename" : "Create";
-  const disabled = !name.trim() || submitting;
+  const isNotebookCreate = dialog.kind === "createNotebook";
+  const importing = job?.state === "queued" || job?.state === "running";
+  const disabled = !name.trim() || submitting || importing;
+  const importDisabled = !isNotebookCreate || !serverPath.trim() || !name.trim() || inspecting || importing;
+  const progressTotal = job?.progress.totalNotes ?? inspection?.noteCount ?? null;
+  const byteProgressPercent = job?.progress.totalBytes ? Math.min(100, Math.round((job.progress.processedBytes / job.progress.totalBytes) * 100)) : 0;
+  const progressPercent = byteProgressPercent || (progressTotal && job ? Math.min(100, Math.round((job.progress.importedNotes / progressTotal) * 100)) : 0);
 
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();
   }, []);
+
+  useEffect(() => {
+    if (!job || (job.state !== "queued" && job.state !== "running")) return;
+    let active = true;
+    const timer = window.setInterval(async () => {
+      const response = await fetch(`/api/import/enex/jobs/${job.id}`);
+      if (!active || !response.ok) return;
+      const nextJob = (await response.json()) as EnexImportJob;
+      setJob(nextJob);
+      if (nextJob.state === "succeeded" && nextJob.notebookId && dialog.kind === "createNotebook") {
+        window.clearInterval(timer);
+        await onImportComplete?.(dialog.projectId, nextJob.notebookId);
+      }
+      if (nextJob.state === "failed") window.clearInterval(timer);
+    }, 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [dialog, job, onImportComplete]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1021,13 +1091,63 @@ function NameModal({ dialog, onCancel, onSubmit }: { dialog: NameDialogState; on
     setSubmitting(false);
   }
 
+  async function inspectEnex() {
+    if (!serverPath.trim()) return;
+    setInspecting(true);
+    setInspection(null);
+    setInspectionError("");
+    setImportError("");
+    const response = await fetch("/api/import/enex/inspect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: serverPath.trim() }),
+    });
+    const body = await response.json().catch(() => null) as EnexInspection | { error?: string } | null;
+    setInspecting(false);
+    if (!response.ok || !body || "error" in body) {
+      setInspectionError((body as { error?: string } | null)?.error || "Unable to inspect ENEX file.");
+      return;
+    }
+    const inspected = body as EnexInspection;
+    setInspection(inspected);
+    setServerPath(inspected.path);
+    if (!name.trim()) setName(inspected.suggestedNotebookName);
+  }
+
+  async function startImport() {
+    if (dialog.kind !== "createNotebook" || importDisabled) return;
+    setImportError("");
+    const response = await fetch("/api/import/enex", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: dialog.projectId,
+        notebookName: name.trim(),
+        path: serverPath.trim(),
+        totalNotes: inspection?.noteCount,
+      }),
+    });
+    const body = await response.json().catch(() => null) as { job?: EnexImportJob; error?: string } | null;
+    if (!response.ok || !body?.job) {
+      setImportError(body?.error || "Unable to start ENEX import.");
+      return;
+    }
+    setJob(body.job);
+  }
+
   return (
     <ModalFrame>
       <form onSubmit={(event) => void handleSubmit(event)}>
         <h2 className="text-lg font-semibold text-white">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-400">{description}</p>
+        {isNotebookCreate ? (
+          <div className="mt-5 grid grid-cols-2 border border-white/10 bg-white/5 p-1 text-sm">
+            <button type="button" onClick={() => setMode("blank")} className={`h-9 ${mode === "blank" ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-white/10"}`}>Blank</button>
+            <button type="button" onClick={() => setMode("import")} className={`h-9 ${mode === "import" ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-white/10"}`}>Import ENEX</button>
+          </div>
+        ) : null}
         <label className="mt-5 block text-sm font-medium text-slate-200">
-          Name
+          {mode === "import" && isNotebookCreate ? "Notebook name" : "Name"}
           <input
             ref={inputRef}
             value={name}
@@ -1036,14 +1156,77 @@ function NameModal({ dialog, onCancel, onSubmit }: { dialog: NameDialogState; on
             placeholder="Name"
           />
         </label>
+        {mode === "import" && isNotebookCreate ? (
+          <div className="mt-4 space-y-4">
+            <label className="block text-sm font-medium text-slate-200">
+              ENEX server path
+              <input
+                value={serverPath}
+                onChange={(event) => {
+                  setServerPath(event.target.value);
+                  setInspection(null);
+                  setInspectionError("");
+                }}
+                className="mt-2 h-10 w-full border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
+                placeholder="/mnt/speedy/aboylan/local_llm_2026_03_31/ctDNA_test_2026_05_05/ctDNA.enex"
+              />
+            </label>
+            <button type="button" onClick={() => void inspectEnex()} disabled={!serverPath.trim() || inspecting || importing} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500">
+              {inspecting ? "Inspecting" : "Inspect file"}
+            </button>
+            {inspectionError ? <p className="text-sm text-rose-300">{inspectionError}</p> : null}
+            {inspection ? (
+              <div className="border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
+                <div className="grid grid-cols-2 gap-3">
+                  <ImportMetric label="Notes" value={inspection.noteCount.toLocaleString()} />
+                  <ImportMetric label="Resources" value={inspection.resourceCount.toLocaleString()} />
+                  <ImportMetric label="Inline media" value={inspection.inlineMediaCount.toLocaleString()} />
+                  <ImportMetric label="Size" value={formatBytes(inspection.sizeBytes)} />
+                </div>
+                {inspection.tags.length ? <p className="mt-3 text-xs text-slate-400">Top tags: {inspection.tags.slice(0, 6).map((tag) => `${tag.tag} (${tag.count})`).join(", ")}</p> : null}
+              </div>
+            ) : null}
+            {job ? (
+              <div className="space-y-2 border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="capitalize">{job.state}</span>
+                  <span>{job.progress.importedNotes.toLocaleString()}{progressTotal ? ` / ${progressTotal.toLocaleString()}` : ""} notes</span>
+                </div>
+                <div className="h-2 overflow-hidden bg-slate-800">
+                  <div className="h-full bg-cyan-400 transition-all" style={{ width: `${progressPercent}%` }} />
+                </div>
+                <p className="text-xs text-slate-400">
+                  Elapsed {formatElapsed(job.startedAt, job.finishedAt)} · {job.importedResources.toLocaleString()} attachments imported · {formatBytes(job.progress.processedBytes)} / {formatBytes(job.progress.totalBytes)}
+                </p>
+                {job.state === "failed" ? <p className="text-sm text-rose-300">{job.error || "Import failed."}</p> : null}
+              </div>
+            ) : null}
+            {importError ? <p className="text-sm text-rose-300">{importError}</p> : null}
+          </div>
+        ) : null}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onCancel} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">Cancel</button>
-          <button type="submit" disabled={disabled} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">
-            {submitting ? "Saving" : submitLabel}
-          </button>
+          {mode === "import" && isNotebookCreate ? (
+            <button type="button" onClick={() => void startImport()} disabled={importDisabled} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">
+              {importing ? "Importing" : "Import"}
+            </button>
+          ) : (
+            <button type="submit" disabled={disabled} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">
+              {submitting ? "Saving" : submitLabel}
+            </button>
+          )}
         </div>
       </form>
     </ModalFrame>
+  );
+}
+
+function ImportMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</p>
+      <p className="mt-1 font-medium text-white">{value}</p>
+    </div>
   );
 }
 
@@ -2294,6 +2477,28 @@ function formatAttachmentDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`;
+}
+
+function formatElapsed(startedAt: string, finishedAt?: string) {
+  const start = Date.parse(startedAt);
+  const end = finishedAt ? Date.parse(finishedAt) : Date.now();
+  if (Number.isNaN(start) || Number.isNaN(end)) return "0s";
+  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
 function ResizeHandle({ onPointerDown, disabled = false }: { onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void; disabled?: boolean }) {

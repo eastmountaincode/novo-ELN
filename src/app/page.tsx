@@ -59,6 +59,8 @@ type DragState = {
   startWidth: number;
 };
 
+type PageSortKey = "updated" | "created" | "title";
+
 type NameDialogState =
   | { kind: "createProject" }
   | { kind: "createNotebook"; projectId: string; projectName: string }
@@ -1568,7 +1570,9 @@ function UnifiedSidebar({ workspace, activeView, selectedProject, selectedNotebo
 }
 
 function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, deletePage }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; deletePage: (page: PageEntry) => void }) {
-  const pages = selectedNotebook?.pages ?? [];
+  const pages = selectedNotebook?.pages;
+  const [sortKey, setSortKey] = useState<PageSortKey>("updated");
+  const sortedPages = useMemo(() => sortNotebookPages(pages ?? [], sortKey), [pages, sortKey]);
   const color = projectColor(selectedProject);
   return (
     <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
@@ -1577,12 +1581,26 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
           <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>{selectedProject?.name ?? "Project"}</p>
           <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
         </div>
-        <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 px-3 text-sm font-medium text-white hover:opacity-90" style={{ backgroundColor: color }}><Plus size={15} />Page</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 px-3 text-sm font-medium text-white hover:opacity-90" style={{ backgroundColor: color }}><Plus size={15} />Page</button>
+          <label className="flex h-9 min-w-0 items-center gap-2 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600">
+            Sort
+            <select
+              value={sortKey}
+              onChange={(event) => setSortKey(event.target.value as PageSortKey)}
+              className="min-w-0 bg-transparent text-sm text-slate-800 outline-none"
+            >
+              <option value="updated">Date updated</option>
+              <option value="created">Date created</option>
+              <option value="title">Title</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       <div className="overflow-y-auto scroll-contained py-3">
         <div className="space-y-2 px-4">
-            {pages.map((page) => (
+            {sortedPages.map((page) => (
               <PageCard
                 key={page.id}
                 page={page}
@@ -1594,7 +1612,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
                 onDelete={() => deletePage(page)}
               />
             ))}
-          {pages.length === 0 ? <p className="p-3 text-sm text-slate-500">No pages yet.</p> : null}
+          {sortedPages.length === 0 ? <p className="p-3 text-sm text-slate-500">No pages yet.</p> : null}
         </div>
       </div>
     </aside>
@@ -2793,6 +2811,28 @@ function pageCardTintStyle(value: string | undefined) {
     backgroundColor: colorWithAlpha(value, PAGE_CARD_TINT_ALPHA),
     borderColor: "#e2e8f0",
   };
+}
+
+function sortNotebookPages(pages: PageEntry[], sortKey: PageSortKey) {
+  return pages
+    .map((page, index) => ({ page, index }))
+    .sort((left, right) => {
+      if (sortKey === "title") {
+        const titleCompare = (left.page.title || "Untitled").localeCompare(right.page.title || "Untitled", undefined, { sensitivity: "base", numeric: true });
+        return titleCompare || left.index - right.index;
+      }
+
+      const field = sortKey === "created" ? "createdAt" : "updatedAt";
+      const timestampCompare = timestampForSort(right.page[field]) - timestampForSort(left.page[field]);
+      return timestampCompare || left.index - right.index;
+    })
+    .map(({ page }) => page);
+}
+
+function timestampForSort(value: string) {
+  if (value === "Just now") return Number.POSITIVE_INFINITY;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function normalizeTagList(tags: string[]) {

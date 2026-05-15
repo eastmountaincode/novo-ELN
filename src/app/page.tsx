@@ -1224,7 +1224,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
               {inspecting ? "Inspecting" : "Inspect file"}
             </button>
             <label className="block text-sm font-medium text-slate-200">
-              Cores to use
+              <span className="block">Cores to use</span>
               <input
                 type="number"
                 min={1}
@@ -1232,7 +1232,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
                 value={workerCount}
                 onChange={(event) => setWorkerCount(clampImportWorkerCount(event.target.value))}
                 disabled={importing}
-                className="mt-2 h-10 w-28 border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400 disabled:cursor-not-allowed disabled:text-slate-500"
+                className="mt-3 h-10 w-28 border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400 disabled:cursor-not-allowed disabled:text-slate-500"
               />
             </label>
             {inspectionError ? <p className="text-sm text-rose-300">{inspectionError}</p> : null}

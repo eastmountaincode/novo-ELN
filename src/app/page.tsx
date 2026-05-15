@@ -2463,7 +2463,7 @@ function AccountProfile({ user }: { user: AppUser }) {
   return (
     <section className="max-w-2xl border border-slate-200 bg-white p-5">
       <div className="mb-5 flex items-start gap-3">
-        <div className="grid size-10 place-items-center bg-slate-950 text-cyan-300">
+        <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
           <UserCircle size={22} />
         </div>
         <div className="min-w-0">
@@ -2523,7 +2523,7 @@ function PasswordPanel() {
   return (
     <section className="max-w-2xl border border-slate-200 bg-white p-5">
       <div className="mb-5 flex items-start gap-3">
-        <div className="grid size-10 place-items-center bg-slate-950 text-cyan-300">
+        <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
           <KeyRound size={21} />
         </div>
         <div>
@@ -2608,7 +2608,7 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
     <section className="max-w-5xl border border-slate-200 bg-white">
       <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
         <div className="flex items-start gap-3">
-          <div className="grid size-10 place-items-center bg-slate-950 text-cyan-300">
+          <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
             <Shield size={21} />
           </div>
           <div>
@@ -2736,7 +2736,7 @@ function DataAdminPanel() {
     <section className="max-w-6xl border border-slate-200 bg-white">
       <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
         <div className="flex items-start gap-3">
-          <div className="grid size-10 place-items-center bg-slate-950 text-cyan-300">
+          <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
             <Database size={21} />
           </div>
           <div>

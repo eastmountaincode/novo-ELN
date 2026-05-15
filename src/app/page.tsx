@@ -102,7 +102,7 @@ type EnexInspection = {
 
 type EnexImportJob = {
   id: string;
-  state: "queued" | "running" | "succeeded" | "failed";
+  state: "queued" | "running" | "canceling" | "canceled" | "succeeded" | "failed";
   error?: string;
   notebookId?: string;
   importedResources: number;
@@ -1054,7 +1054,8 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const description = getNameModalDescription(dialog);
   const submitLabel = dialog.kind.startsWith("rename") ? "Rename" : "Create";
   const isNotebookCreate = dialog.kind === "createNotebook";
-  const importing = job?.state === "queued" || job?.state === "running";
+  const importing = job?.state === "queued" || job?.state === "running" || job?.state === "canceling";
+  const cancelingImport = job?.state === "canceling";
   const disabled = !name.trim() || submitting || importing;
   const importDisabled = !isNotebookCreate || !serverPath.trim() || !name.trim() || inspecting || importing;
   const progressTotal = job?.progress.totalNotes ?? inspection?.noteCount ?? null;
@@ -1064,6 +1065,8 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const elapsedSeconds = job ? secondsBetween(job.startedAt, job.finishedAt) : 0;
   const predictedRemainingSeconds = job ? estimateRemainingSeconds(elapsedSeconds, progressPercent) : 0;
   const importFinished = job?.state === "succeeded";
+  const importCanceled = job?.state === "canceled";
+  const importTerminal = importFinished || importCanceled || job?.state === "failed";
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -1071,14 +1074,14 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   }, []);
 
   useEffect(() => {
-    if (!job || (job.state !== "queued" && job.state !== "running")) return;
+    if (!job || (job.state !== "queued" && job.state !== "running" && job.state !== "canceling")) return;
     let active = true;
     const timer = window.setInterval(async () => {
       const response = await fetch(`/api/import/enex/jobs/${job.id}`);
       if (!active || !response.ok) return;
       const nextJob = (await response.json()) as EnexImportJob;
       setJob(nextJob);
-      if (nextJob.state === "succeeded" || nextJob.state === "failed") window.clearInterval(timer);
+      if (nextJob.state === "succeeded" || nextJob.state === "failed" || nextJob.state === "canceled") window.clearInterval(timer);
     }, 1000);
     return () => {
       active = false;
@@ -1146,11 +1149,26 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
     setOpeningImportedNotebook(false);
   }
 
+  async function handleCancel() {
+    if (job && (job.state === "queued" || job.state === "running")) {
+      setImportError("");
+      const response = await fetch(`/api/import/enex/jobs/${job.id}`, { method: "DELETE" });
+      const body = await response.json().catch(() => null) as EnexImportJob | { error?: string } | null;
+      if (!response.ok || !body || "error" in body) {
+        setImportError((body as { error?: string } | null)?.error || "Unable to cancel import.");
+        return;
+      }
+      setJob(body as EnexImportJob);
+      return;
+    }
+    onCancel();
+  }
+
   return (
     <ModalFrame>
       <form onSubmit={(event) => void handleSubmit(event)}>
-        <h2 className="text-lg font-semibold text-white">{importFinished ? "Import complete" : title}</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-400">{importFinished ? "Review the imported notebook before opening it." : description}</p>
+        <h2 className="text-lg font-semibold text-white">{importFinished ? "Import complete" : importCanceled ? "Import canceled" : title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-400">{importFinished ? "Review the imported notebook before opening it." : importCanceled ? "The partial notebook and imported files were rolled back." : description}</p>
         {importFinished ? (
           <ImportFinishedSummary
             notebookName={name}
@@ -1221,13 +1239,15 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
                   <ImportProgressRow label="Data" value={`${formatBytes(job.progress.processedBytes)} / ${formatBytes(job.progress.totalBytes)}`} />
                 </div>
                 {job.state === "failed" ? <p className="text-sm text-rose-300">{job.error || "Import failed. Partial notebook and files were rolled back."}</p> : null}
+                {job.state === "canceling" ? <p className="text-sm text-amber-200">Canceling import and rolling back partial data...</p> : null}
+                {job.state === "canceled" ? <p className="text-sm text-slate-300">{job.error || "Import canceled. Partial notebook and files were rolled back."}</p> : null}
               </div>
             ) : null}
             {importError ? <p className="text-sm text-rose-300">{importError}</p> : null}
           </div>
         ) : null}
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">{importFinished ? "Close" : "Cancel"}</button>
+          <button type="button" onClick={() => void handleCancel()} disabled={cancelingImport} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500">{importTerminal ? "Close" : cancelingImport ? "Canceling" : importing ? "Cancel import" : "Cancel"}</button>
           {importFinished ? (
             <button type="button" onClick={() => void openImportedNotebook()} disabled={openingImportedNotebook || !job?.notebookId} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">
               {openingImportedNotebook ? "Opening" : "Open notebook"}

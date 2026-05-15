@@ -9,7 +9,7 @@ import type { EnexImportProgress } from "./enex";
 export type EnexImportJob = {
   id: string;
   userId: string;
-  state: "queued" | "running" | "succeeded" | "failed";
+  state: "queued" | "running" | "canceling" | "canceled" | "succeeded" | "failed";
   projectId: string;
   notebookName: string;
   filePath: string;
@@ -38,7 +38,7 @@ export function createEnexImportJob(input: {
     WHERE user_id = ${sql(input.userId)}
       AND project_id = ${sql(input.projectId)}
       AND file_path = ${sql(input.filePath)}
-      AND state IN ('queued', 'running')
+      AND state IN ('queued', 'running', 'canceling')
     ORDER BY created_at DESC
     LIMIT 1
   `);
@@ -73,6 +73,23 @@ export function getEnexImportJob(id: string) {
   return row ? toJob(row) : null;
 }
 
+export function cancelEnexImportJob(id: string, actorUserId: string) {
+  ensureDatabase();
+  const job = getEnexImportJob(id);
+  if (!job) throw new Error("Import job not found");
+  if (job.userId !== actorUserId && !isAdmin(actorUserId)) throw new Error("Forbidden");
+  if (job.state === "succeeded" || job.state === "failed" || job.state === "canceled") return job;
+  execSql(`
+    UPDATE import_jobs
+    SET state = 'canceling',
+        error = 'Cancel requested. Rolling back partial import.',
+        updated_at = datetime('now')
+    WHERE id = ${sql(id)}
+      AND state IN ('queued', 'running', 'canceling');
+  `);
+  return getEnexImportJob(id) ?? job;
+}
+
 function launchWorker(jobId: string) {
   const workerPath = path.join(process.cwd(), "scripts", "enex-import-worker.mjs");
   const child = spawn(process.execPath, [workerPath, jobId], {
@@ -94,6 +111,11 @@ function assertProjectImportAccess(userId: string, projectId: string) {
   if (user?.role === "admin") return;
   const row = queryOne(`SELECT role FROM project_members WHERE user_id = ${sql(userId)} AND project_id = ${sql(projectId)} LIMIT 1`);
   if (row?.role !== "owner" && row?.role !== "editor") throw new Error("Forbidden");
+}
+
+function isAdmin(userId: string) {
+  const row = queryOne(`SELECT role FROM users WHERE id = ${sql(userId)} LIMIT 1`);
+  return row?.role === "admin";
 }
 
 function toJob(row: Record<string, string>): EnexImportJob {
@@ -122,5 +144,5 @@ function toJob(row: Record<string, string>): EnexImportJob {
 }
 
 function normalizeState(value: string): EnexImportJob["state"] {
-  return value === "running" || value === "succeeded" || value === "failed" ? value : "queued";
+  return value === "running" || value === "canceling" || value === "canceled" || value === "succeeded" || value === "failed" ? value : "queued";
 }

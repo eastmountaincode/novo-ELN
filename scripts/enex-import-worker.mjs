@@ -13,15 +13,23 @@ const databasePath = process.env.ELN_DATABASE_PATH || path.join(cwd, "data", "el
 const uploadDir = process.env.ELN_UPLOAD_DIR || path.join(cwd, "storage", "uploads");
 const parser = new XMLParser({ ignoreAttributes: false, trimValues: false, cdataPropName: "__cdata", textNodeName: "#text" });
 
+class ImportCanceledError extends Error {
+  constructor() {
+    super("Import canceled by user.");
+    this.name = "ImportCanceledError";
+  }
+}
+
 try {
   await run();
 } catch (error) {
-  await rollbackFailedImport(error);
+  await rollbackImport(error);
 }
 
 async function run() {
   const job = getJob();
   if (!job) throw new Error(`Import job ${jobId} not found.`);
+  ensureNotCanceled();
   const absolutePath = normalizeServerPath(job.file_path);
   const stats = await fsp.stat(absolutePath);
   if (!stats.isFile()) throw new Error("ENEX path must point to a file.");
@@ -42,7 +50,9 @@ async function run() {
   let lastProgressAt = 0;
 
   await streamEnexNotes(absolutePath, async (noteXml, processedBytes) => {
+    ensureNotCanceled();
     const note = parseNoteXml(noteXml);
+    ensureNotCanceled();
     const pageId = crypto.randomUUID();
     const createdAt = note.createdAt || new Date().toISOString();
     const updatedAt = note.updatedAt || createdAt;
@@ -54,16 +64,19 @@ async function run() {
 
     const attachmentsByHash = new Map();
     for (const resource of note.resources) {
+      ensureNotCanceled();
       const storageKey = await writeImportedResource(pageId, resource);
       const attachment = insertAttachment({ pageId, resource, storageKey, createdAt });
       attachmentsByHash.set(resource.hash, attachment);
       importedResources += 1;
       if (Date.now() - lastProgressAt > 750) {
+        ensureNotCanceled();
         updateProgress({ processedBytes, importedNotes, importedResources });
         lastProgressAt = Date.now();
       }
     }
 
+    ensureNotCanceled();
     const { body, plainText } = enmlToEditorBody(note.body, attachmentsByHash);
     const tagSql = note.tags.map((tag) => `INSERT OR IGNORE INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n");
     execSql(`
@@ -76,9 +89,11 @@ async function run() {
     `);
 
     importedNotes += 1;
+    ensureNotCanceled();
     updateProgress({ processedBytes, importedNotes, importedResources });
   });
 
+  ensureNotCanceled();
   execSql(`
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
     UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(job.project_id)};
@@ -88,7 +103,8 @@ async function run() {
   `);
 }
 
-async function rollbackFailedImport(error) {
+async function rollbackImport(error) {
+  const canceled = error instanceof ImportCanceledError;
   const message = error instanceof Error ? error.message : "Import failed.";
   let notebookId = "";
   let storageKeys = [];
@@ -99,8 +115,8 @@ async function rollbackFailedImport(error) {
     execSql(`
       ${notebookId ? `DELETE FROM notebooks WHERE id = ${sql(notebookId)};` : ""}
       UPDATE import_jobs
-      SET state = 'failed',
-          error = ${sql(`${message} Partial import was rolled back.`)},
+      SET state = ${sql(canceled ? "canceled" : "failed")},
+          error = ${sql(canceled ? "Import canceled. Partial import was rolled back." : `${message} Partial import was rolled back.`)},
           notebook_id = NULL,
           finished_at = datetime('now'),
           updated_at = datetime('now')
@@ -110,12 +126,17 @@ async function rollbackFailedImport(error) {
   } catch (cleanupError) {
     const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : "Rollback cleanup failed.";
     updateJob(`
-      state = 'failed',
+      state = ${sql(canceled ? "canceled" : "failed")},
       error = ${sql(`${message} Rollback cleanup failed: ${cleanupMessage}`)},
       finished_at = datetime('now'),
       updated_at = datetime('now')
     `);
   }
+}
+
+function ensureNotCanceled() {
+  const row = querySql(`SELECT state FROM import_jobs WHERE id = ${sql(jobId)} LIMIT 1;`)[0];
+  if (row?.state === "canceling" || row?.state === "canceled") throw new ImportCanceledError();
 }
 
 function getNotebookStorageKeys(notebookId) {

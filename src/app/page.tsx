@@ -5,7 +5,6 @@ import {
   CalendarClock,
   CalendarPlus,
   Check,
-  CircleDot,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -14,6 +13,7 @@ import {
   FileArchive,
   FileImage,
   Filter,
+  Flag,
   FileSpreadsheet,
   FileText,
   FlaskConical,
@@ -2958,7 +2958,7 @@ function PageTagsBar({ tags, setPageTags }: { tags: string[]; setPageTags: (tags
 function PageStatusRow({ status, setStatus }: { status: PageStatus; setStatus: (status: PageStatus) => void }) {
   return (
     <div className="mt-1 flex min-h-8 flex-wrap items-center gap-1.5 text-sm">
-      <CircleDot size={15} className="mr-1 shrink-0 text-slate-400" />
+      <Flag size={15} className="mr-1 shrink-0 text-slate-400" />
       <select
         value={status}
         onChange={(event) => setStatus(event.target.value as PageStatus)}

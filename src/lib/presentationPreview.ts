@@ -84,7 +84,7 @@ async function renderPresentationSlides(options: { sourcePath: string; sourceNam
       "--nolockcheck",
       "--nodefault",
       "--nofirststartwizard",
-      `--env:UserInstallation=${pathToFileUrl(path.join(workDir, "lo-profile"))}`,
+      `-env:UserInstallation=${pathToFileUrl(path.join(workDir, "lo-profile"))}`,
       "--convert-to",
       "pdf",
       "--outdir",

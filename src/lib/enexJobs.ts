@@ -18,6 +18,7 @@ export type EnexImportJob = {
   error?: string;
   notebookId?: string;
   importedResources: number;
+  workerCount: number;
   workerPid?: number;
   progress: EnexImportProgress;
 };
@@ -29,6 +30,7 @@ export function createEnexImportJob(input: {
   filePath: string;
   totalNotes?: number | null;
   totalResources?: number | null;
+  workerCount?: number | null;
 }) {
   ensureDatabase();
   assertProjectImportAccess(input.userId, input.projectId);
@@ -50,9 +52,10 @@ export function createEnexImportJob(input: {
   const id = randomUUID();
   const totalNotes = Number.isFinite(Number(input.totalNotes)) ? Number(input.totalNotes) : null;
   const totalResources = Number.isFinite(Number(input.totalResources)) ? Number(input.totalResources) : null;
+  const workerCount = normalizeWorkerCount(input.workerCount);
   execSql(`
-    INSERT INTO import_jobs (id, user_id, project_id, notebook_name, file_path, state, total_notes, total_resources)
-    VALUES (${sql(id)}, ${sql(input.userId)}, ${sql(input.projectId)}, ${sql(input.notebookName)}, ${sql(input.filePath)}, 'queued', ${totalNotes ?? "NULL"}, ${totalResources ?? "NULL"});
+    INSERT INTO import_jobs (id, user_id, project_id, notebook_name, file_path, state, total_notes, total_resources, worker_count)
+    VALUES (${sql(id)}, ${sql(input.userId)}, ${sql(input.projectId)}, ${sql(input.notebookName)}, ${sql(input.filePath)}, 'queued', ${totalNotes ?? "NULL"}, ${totalResources ?? "NULL"}, ${workerCount});
   `);
 
   launchWorker(id);
@@ -65,7 +68,7 @@ export function getEnexImportJob(id: string) {
   ensureDatabase();
   const row = queryOne(`
     SELECT id, user_id, project_id, notebook_name, file_path, state, started_at, finished_at, error,
-           notebook_id, imported_resources, imported_notes, total_notes, total_resources, processed_bytes, total_bytes, worker_pid
+           notebook_id, imported_resources, imported_notes, total_notes, total_resources, processed_bytes, total_bytes, worker_count, worker_pid
     FROM import_jobs
     WHERE id = ${sql(id)}
     LIMIT 1
@@ -91,6 +94,8 @@ export function cancelEnexImportJob(id: string, actorUserId: string) {
 }
 
 function launchWorker(jobId: string) {
+  const row = queryOne(`SELECT worker_count FROM import_jobs WHERE id = ${sql(jobId)} LIMIT 1`);
+  const workerCount = normalizeWorkerCount(row?.worker_count);
   const workerPath = path.join(process.cwd(), "scripts", "enex-import-worker.mjs");
   const child = spawn(process.execPath, [workerPath, jobId], {
     cwd: process.cwd(),
@@ -100,6 +105,7 @@ function launchWorker(jobId: string) {
       ...process.env,
       ELN_DATABASE_PATH: databasePath,
       ELN_UPLOAD_DIR: uploadDir,
+      ENEX_IMPORT_WORKERS: String(workerCount),
     },
   });
   child.unref();
@@ -131,6 +137,7 @@ function toJob(row: Record<string, string>): EnexImportJob {
     error: row.error || undefined,
     notebookId: row.notebook_id || undefined,
     importedResources: Number(row.imported_resources || 0),
+    workerCount: normalizeWorkerCount(row.worker_count),
     workerPid: row.worker_pid ? Number(row.worker_pid) : undefined,
     progress: {
       processedBytes: Number(row.processed_bytes || 0),
@@ -145,4 +152,10 @@ function toJob(row: Record<string, string>): EnexImportJob {
 
 function normalizeState(value: string): EnexImportJob["state"] {
   return value === "running" || value === "canceling" || value === "canceled" || value === "succeeded" || value === "failed" ? value : "queued";
+}
+
+function normalizeWorkerCount(value: unknown) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 4;
+  return Math.min(parsed, 16);
 }

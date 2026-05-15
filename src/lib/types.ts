@@ -2,7 +2,6 @@ export type UserRole = "admin" | "member" | "viewer";
 export type AccessRole = "owner" | "editor" | "viewer";
 export type PageStatus = "Draft" | "Final";
 export type BlockType = "image" | "sheet" | "pdf" | "slides" | "sequence" | "file";
-export type TagSelectionMode = "single" | "multi";
 
 export type AppUser = {
   id: string;
@@ -71,34 +70,6 @@ export type Attachment = {
   updatedAt: string;
 };
 
-export type TagValue = {
-  id: string;
-  groupId: string;
-  label: string;
-  color: string;
-  position: number;
-  archivedAt: string | null;
-};
-
-export type TagGroup = {
-  id: string;
-  projectId: string;
-  name: string;
-  mode: TagSelectionMode;
-  createdAt: string;
-  updatedAt: string;
-  values: TagValue[];
-};
-
-export type PageTagAssignment = {
-  groupId: string;
-  groupName: string;
-  mode: TagSelectionMode;
-  valueId: string;
-  label: string;
-  color: string;
-};
-
 export type PageEntry = {
   id: string;
   notebookId: string;
@@ -110,7 +81,6 @@ export type PageEntry = {
   createdAt: string;
   updatedAt: string;
   tags: string[];
-  tagAssignments: PageTagAssignment[];
   attachments: Attachment[];
   versions: string[];
 };
@@ -137,7 +107,6 @@ export type Project = {
   accessScope: "project" | "notebook";
   accessRole: AccessRole | null;
   members: ShareMember[];
-  tagGroups: TagGroup[];
   notebooks: Notebook[];
 };
 

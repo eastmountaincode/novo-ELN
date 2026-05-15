@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
-import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, PageTagAssignment, Project, ShareMember, TagGroup, TagSelectionMode, TagValue, UserRole, Workspace } from "./types";
+import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
 import { removeAttachmentCardsFromBody } from "./editor";
 import { uploadDir } from "./paths";
 import { rebuildSearchIndex } from "./search";
@@ -74,36 +74,6 @@ export function ensureDatabase() {
       PRIMARY KEY (page_id, tag)
     );
 
-    CREATE TABLE IF NOT EXISTS tag_groups (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      mode TEXT NOT NULL DEFAULT 'multi',
-      created_by TEXT NOT NULL REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE (project_id, name)
-    );
-
-    CREATE TABLE IF NOT EXISTS tag_values (
-      id TEXT PRIMARY KEY,
-      group_id TEXT NOT NULL REFERENCES tag_groups(id) ON DELETE CASCADE,
-      label TEXT NOT NULL,
-      color TEXT NOT NULL DEFAULT '#64748b',
-      position INTEGER NOT NULL DEFAULT 0,
-      archived_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE (group_id, label)
-    );
-
-    CREATE TABLE IF NOT EXISTS page_tag_values (
-      page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-      tag_value_id TEXT NOT NULL REFERENCES tag_values(id) ON DELETE CASCADE,
-      assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (page_id, tag_value_id)
-    );
-
     CREATE TABLE IF NOT EXISTS attachments (
       id TEXT PRIMARY KEY,
       page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -141,6 +111,7 @@ export function ensureDatabase() {
       imported_resources INTEGER NOT NULL DEFAULT 0,
       processed_bytes INTEGER NOT NULL DEFAULT 0,
       total_bytes INTEGER NOT NULL DEFAULT 0,
+      worker_count INTEGER NOT NULL DEFAULT 4,
       worker_pid INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -162,6 +133,8 @@ export function ensureDatabase() {
   `);
   ensureProjectColorColumn();
   ensureImportJobsTotalResourcesColumn();
+  ensureImportJobsWorkerCountColumn();
+  migrateGroupedTagsToPageTags();
   seedIfEmpty();
   rebuildSearchIndex();
   initialized = true;
@@ -179,6 +152,31 @@ function ensureImportJobsTotalResourcesColumn() {
   execSql("ALTER TABLE import_jobs ADD COLUMN total_resources INTEGER;");
 }
 
+function ensureImportJobsWorkerCountColumn() {
+  const columns = querySql("PRAGMA table_info(import_jobs);");
+  if (columns.some((column) => column.name === "worker_count")) return;
+  execSql("ALTER TABLE import_jobs ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 4;");
+}
+
+function migrateGroupedTagsToPageTags() {
+  const tables = querySql("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tag_groups', 'tag_values', 'page_tag_values');");
+  const tableNames = new Set(tables.map((table) => table.name));
+  if (!tableNames.has("tag_groups") || !tableNames.has("tag_values") || !tableNames.has("page_tag_values")) return;
+
+  execSql(`
+    INSERT OR IGNORE INTO page_tags (page_id, tag)
+    SELECT ptv.page_id, tv.label
+    FROM page_tag_values ptv
+    JOIN tag_values tv ON tv.id = ptv.tag_value_id
+    WHERE tv.archived_at IS NULL
+      AND trim(tv.label) <> '';
+
+    DROP TABLE page_tag_values;
+    DROP TABLE tag_values;
+    DROP TABLE tag_groups;
+  `);
+}
+
 function seedIfEmpty() {
   const count = Number(queryOne("SELECT COUNT(*) AS count FROM users")?.count ?? 0);
   if (count > 0) return;
@@ -190,15 +188,6 @@ function seedIfEmpty() {
   const pageOneId = randomUUID();
   const pageTwoId = randomUUID();
   const pageThreeId = randomUUID();
-  const statusGroupId = randomUUID();
-  const categoryGroupId = randomUUID();
-  const runningStatusId = randomUUID();
-  const successStatusId = randomUUID();
-  const failedStatusId = randomUUID();
-  const redoStatusId = randomUUID();
-  const cloningCategoryId = randomUUID();
-  const prepCategoryId = randomUUID();
-  const meetingCategoryId = randomUUID();
 
   execSql(`
     INSERT INTO users (id, email, name, password_hash, role)
@@ -221,29 +210,15 @@ function seedIfEmpty() {
       (${sql(pageThreeId)}, ${sql(meetingNotebookId)}, 'ELN requirements from Slim', ${sql("The replacement should preserve Evernote-like workflows: projects, notebooks, pages, inline images, attachments, search, and history.")}, 'Draft', ${sql(userId)});
 
     INSERT INTO page_tags (page_id, tag)
-    VALUES (${sql(pageOneId)}, 'plasmid'), (${sql(pageOneId)}, 'sortseq'), (${sql(pageTwoId)}, 'prep'), (${sql(pageThreeId)}, 'requirements');
-
-    INSERT INTO tag_groups (id, project_id, name, mode, created_by)
-    VALUES (${sql(statusGroupId)}, ${sql(projectId)}, 'Status', 'single', ${sql(userId)}),
-           (${sql(categoryGroupId)}, ${sql(projectId)}, 'Category', 'multi', ${sql(userId)});
-
-    INSERT INTO tag_values (id, group_id, label, color, position)
     VALUES
-      (${sql(runningStatusId)}, ${sql(statusGroupId)}, 'Running', '#0891b2', 1),
-      (${sql(successStatusId)}, ${sql(statusGroupId)}, 'Success', '#16a34a', 2),
-      (${sql(failedStatusId)}, ${sql(statusGroupId)}, 'Failed', '#dc2626', 3),
-      (${sql(redoStatusId)}, ${sql(statusGroupId)}, 'Needs to be redone', '#ca8a04', 4),
-      (${sql(cloningCategoryId)}, ${sql(categoryGroupId)}, 'Cloning', '#7c3aed', 1),
-      (${sql(prepCategoryId)}, ${sql(categoryGroupId)}, 'Prep', '#2563eb', 2),
-      (${sql(meetingCategoryId)}, ${sql(categoryGroupId)}, 'Meeting', '#64748b', 3);
-
-    INSERT INTO page_tag_values (page_id, tag_value_id)
-    VALUES
-      (${sql(pageOneId)}, ${sql(runningStatusId)}),
-      (${sql(pageOneId)}, ${sql(cloningCategoryId)}),
-      (${sql(pageTwoId)}, ${sql(runningStatusId)}),
-      (${sql(pageTwoId)}, ${sql(prepCategoryId)}),
-      (${sql(pageThreeId)}, ${sql(meetingCategoryId)});
+      (${sql(pageOneId)}, 'plasmid'),
+      (${sql(pageOneId)}, 'sortseq'),
+      (${sql(pageOneId)}, 'Running'),
+      (${sql(pageOneId)}, 'Cloning'),
+      (${sql(pageTwoId)}, 'prep'),
+      (${sql(pageTwoId)}, 'Running'),
+      (${sql(pageThreeId)}, 'requirements'),
+      (${sql(pageThreeId)}, 'Meeting');
 
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageOneId)}, 'Created seed page', ${sql(userId)}),
@@ -484,31 +459,6 @@ export function getWorkspace(userId: string): Workspace {
     : [];
   const pageIds = pageRows.map((page) => page.id);
   const tagRows = pageIds.length ? querySql(`SELECT page_id, tag FROM page_tags WHERE page_id IN (${inList(pageIds)}) ORDER BY rowid ASC`) : [];
-  const tagGroupRows = projectIds.length
-    ? querySql(`SELECT id, project_id, name, mode, created_at, updated_at FROM tag_groups WHERE project_id IN (${inList(projectIds)}) ORDER BY lower(name) ASC`)
-    : [];
-  const tagGroupIds = tagGroupRows.map((group) => group.id);
-  const tagValueRows = tagGroupIds.length
-    ? querySql(`SELECT id, group_id, label, color, position, archived_at FROM tag_values WHERE group_id IN (${inList(tagGroupIds)}) ORDER BY position ASC, lower(label) ASC`)
-    : [];
-  const tagAssignmentRows = pageIds.length
-    ? querySql(`
-        SELECT
-          ptv.page_id,
-          tg.id AS group_id,
-          tg.name AS group_name,
-          tg.mode,
-          tv.id AS value_id,
-          tv.label,
-          tv.color
-        FROM page_tag_values ptv
-        JOIN tag_values tv ON tv.id = ptv.tag_value_id
-        JOIN tag_groups tg ON tg.id = tv.group_id
-        WHERE ptv.page_id IN (${inList(pageIds)})
-          AND tv.archived_at IS NULL
-        ORDER BY lower(tg.name) ASC, tv.position ASC, lower(tv.label) ASC
-      `)
-    : [];
   const attachmentRows = pageIds.length
     ? querySql(`SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, preview_text, created_at FROM attachments WHERE page_id IN (${inList(pageIds)}) ORDER BY created_at DESC`)
     : [];
@@ -535,14 +485,11 @@ export function getWorkspace(userId: string): Workspace {
     : [];
 
   const tagsByPage = groupBy(tagRows, "page_id");
-  const tagValuesByGroup = groupBy(tagValueRows, "group_id");
-  const tagAssignmentsByPage = groupBy(tagAssignmentRows, "page_id");
   const attachmentsByPage = groupBy(attachmentRows, "page_id");
   const versionsByPage = groupBy(versionRows, "page_id");
 
   const pagesByNotebook = groupBy(pageRows, "notebook_id");
   const notebooksByProject = groupBy(notebookRows, "project_id");
-  const tagGroupsByProject = groupBy(tagGroupRows, "project_id");
   const membersByProject = groupBy(projectMemberRows, "project_id");
   const membersByNotebook = groupBy(notebookMemberRows, "notebook_id");
 
@@ -557,15 +504,6 @@ export function getWorkspace(userId: string): Workspace {
     accessScope: project.access_scope === "project" ? "project" : "notebook",
     accessRole: project.project_role ? normalizeAccessRole(project.project_role) : null,
     members: (membersByProject[project.id] ?? []).map(toShareMember),
-    tagGroups: (tagGroupsByProject[project.id] ?? []).map((group): TagGroup => ({
-      id: group.id,
-      projectId: group.project_id,
-      name: group.name,
-      mode: normalizeTagMode(group.mode),
-      createdAt: group.created_at,
-      updatedAt: group.updated_at,
-      values: (tagValuesByGroup[group.id] ?? []).map(toTagValue),
-    })),
     notebooks: (notebooksByProject[project.id] ?? []).map((notebook): Notebook => ({
       id: notebook.id,
       projectId: notebook.project_id,
@@ -585,7 +523,6 @@ export function getWorkspace(userId: string): Workspace {
         createdAt: page.created_at,
         updatedAt: page.updated_at,
         tags: pageTagRowsToList(tagsByPage[page.id] ?? []),
-        tagAssignments: (tagAssignmentsByPage[page.id] ?? []).map(toPageTagAssignment),
         attachments: (attachmentsByPage[page.id] ?? []).map(toAttachment),
         versions: (versionsByPage[page.id] ?? []).map((version) => version.summary),
       })),
@@ -735,85 +672,6 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
     UPDATE projects SET updated_at = datetime('now') WHERE id = (
       SELECT n.project_id FROM notebooks n JOIN pages p ON p.notebook_id = n.id WHERE p.id = ${sql(pageId)}
     );
-  `);
-  rebuildSearchIndex();
-}
-
-export function createTagGroup(userId: string, projectId: string, input: { name: string; mode?: TagSelectionMode }) {
-  ensureDatabase();
-  assertTagSchemaAccess(userId, projectId);
-  const name = input.name.trim();
-  const mode = normalizeTagMode(input.mode ?? "multi");
-  if (!name) throw new Error("Tag group name is required");
-  const id = randomUUID();
-  execSql(`
-    INSERT INTO tag_groups (id, project_id, name, mode, created_by)
-    VALUES (${sql(id)}, ${sql(projectId)}, ${sql(name)}, ${sql(mode)}, ${sql(userId)});
-    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(projectId)};
-  `);
-  rebuildSearchIndex();
-  return id;
-}
-
-export function createTagValue(userId: string, groupId: string, input: { label: string; color?: string }) {
-  ensureDatabase();
-  const group = getTagGroupForUser(userId, groupId);
-  if (!group) throw new Error("Tag group not found");
-  assertTagSchemaAccess(userId, group.projectId);
-  const label = input.label.trim();
-  if (!label) throw new Error("Tag label is required");
-  const id = randomUUID();
-  const color = normalizeProjectColor(input.color ?? defaultProjectColor(id));
-  const nextPosition = Number(queryOne(`SELECT COALESCE(MAX(position), 0) + 1 AS position FROM tag_values WHERE group_id = ${sql(groupId)}`)?.position ?? 1);
-  execSql(`
-    INSERT INTO tag_values (id, group_id, label, color, position)
-    VALUES (${sql(id)}, ${sql(groupId)}, ${sql(label)}, ${sql(color)}, ${nextPosition});
-    UPDATE tag_groups SET updated_at = datetime('now') WHERE id = ${sql(groupId)};
-    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(group.projectId)};
-  `);
-  rebuildSearchIndex();
-  return id;
-}
-
-export function setPageTagValue(userId: string, pageId: string, groupId: string, valueId: string | null) {
-  ensureDatabase();
-  assertPageEditAccess(userId, pageId);
-  const group = getTagGroupForUser(userId, groupId);
-  if (!group) throw new Error("Tag group not found");
-  const pageProject = queryOne(`
-    SELECT n.project_id
-    FROM pages p
-    JOIN notebooks n ON n.id = p.notebook_id
-    WHERE p.id = ${sql(pageId)}
-    LIMIT 1
-  `);
-  if (!pageProject || pageProject.project_id !== group.projectId) throw new Error("Tag group does not belong to this page's project");
-
-  if (valueId) {
-    const value = queryOne(`SELECT id FROM tag_values WHERE id = ${sql(valueId)} AND group_id = ${sql(groupId)} AND archived_at IS NULL LIMIT 1`);
-    if (!value) throw new Error("Tag value not found");
-  }
-
-  const existingAssignment = valueId
-    ? queryOne(`SELECT 1 AS ok FROM page_tag_values WHERE page_id = ${sql(pageId)} AND tag_value_id = ${sql(valueId)} LIMIT 1`)
-    : null;
-  const removeSingleMultiAssignment = group.mode === "multi" && valueId && existingAssignment;
-  const deleteGroupAssignments = group.mode === "single" || valueId === null;
-  execSql(`
-    ${deleteGroupAssignments ? `
-      DELETE FROM page_tag_values
-      WHERE page_id = ${sql(pageId)}
-        AND tag_value_id IN (SELECT id FROM tag_values WHERE group_id = ${sql(groupId)});
-    ` : ""}
-    ${removeSingleMultiAssignment ? `
-      DELETE FROM page_tag_values WHERE page_id = ${sql(pageId)} AND tag_value_id = ${sql(valueId)};
-    ` : valueId ? `
-      INSERT OR IGNORE INTO page_tag_values (page_id, tag_value_id)
-      VALUES (${sql(pageId)}, ${sql(valueId)});
-    ` : ""}
-    UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(pageId)};
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(pageId)}, ${sql(`Updated ${group.name}`)}, ${sql(userId)});
   `);
   rebuildSearchIndex();
 }
@@ -1076,21 +934,6 @@ export function importNotebook(input: {
   return notebookId;
 }
 
-function assertProjectViewAccess(userId: string, projectId: string) {
-  if (isAdmin(userId)) return;
-  const row = queryOne(`
-    SELECT 1 AS ok
-    FROM projects p
-    LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ${sql(userId)}
-    LEFT JOIN notebooks n ON n.project_id = p.id
-    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
-    WHERE p.id = ${sql(projectId)}
-      AND (pm.user_id IS NOT NULL OR nm.user_id IS NOT NULL)
-    LIMIT 1
-  `);
-  if (!row) throw new Error("Forbidden");
-}
-
 function assertProjectEditAccess(userId: string, projectId: string) {
   if (isAdmin(userId)) return;
   const role = queryOne(`SELECT role FROM project_members WHERE user_id = ${sql(userId)} AND project_id = ${sql(projectId)} LIMIT 1`)?.role;
@@ -1161,12 +1004,6 @@ function assertAttachmentEditAccess(userId: string, attachmentId: string) {
   assertPageEditAccess(userId, row.page_id);
 }
 
-function assertTagSchemaAccess(userId: string, projectId: string) {
-  if (isAdmin(userId)) return;
-  const membership = queryOne(`SELECT role FROM project_members WHERE user_id = ${sql(userId)} AND project_id = ${sql(projectId)} LIMIT 1`)?.role;
-  if (membership !== "owner") throw new Error("Only project owners can edit tag schema");
-}
-
 function assertAdmin(userId: string) {
   if (!isAdmin(userId)) throw new Error("Forbidden");
 }
@@ -1174,27 +1011,6 @@ function assertAdmin(userId: string) {
 function isAdmin(userId: string) {
   const role = queryOne(`SELECT role FROM users WHERE id = ${sql(userId)} LIMIT 1`)?.role;
   return role === "admin";
-}
-
-function getTagGroupForUser(userId: string, groupId: string): TagGroup | null {
-  const group = queryOne(`
-    SELECT tg.id, tg.project_id, tg.name, tg.mode, tg.created_at, tg.updated_at
-    FROM tag_groups tg
-    WHERE tg.id = ${sql(groupId)}
-    LIMIT 1
-  `);
-  if (!group) return null;
-  assertProjectViewAccess(userId, group.project_id);
-  const values = querySql(`SELECT id, group_id, label, color, position, archived_at FROM tag_values WHERE group_id = ${sql(groupId)} ORDER BY position ASC, lower(label) ASC`).map(toTagValue);
-  return {
-    id: group.id,
-    projectId: group.project_id,
-    name: group.name,
-    mode: normalizeTagMode(group.mode),
-    createdAt: group.created_at,
-    updatedAt: group.updated_at,
-    values,
-  };
 }
 
 function updateUserPassword(userId: string, nextPassword: string) {
@@ -1208,10 +1024,6 @@ function inList(values: string[]) {
 
 function normalizeProjectColor(value: string | undefined) {
   return /^#[0-9a-f]{6}$/i.test(value ?? "") ? value!.toLowerCase() : "#0891b2";
-}
-
-function normalizeTagMode(value: string | undefined): TagSelectionMode {
-  return value === "single" ? "single" : "multi";
 }
 
 function normalizeAccessRole(value: string | undefined | null): AccessRole {
@@ -1249,28 +1061,6 @@ function groupBy<T extends Record<string, unknown>>(rows: T[], key: string) {
     groups[value].push(row);
     return groups;
   }, {});
-}
-
-function toTagValue(row: Record<string, string>): TagValue {
-  return {
-    id: row.id,
-    groupId: row.group_id,
-    label: row.label,
-    color: normalizeProjectColor(row.color),
-    position: Number(row.position),
-    archivedAt: row.archived_at ?? null,
-  };
-}
-
-function toPageTagAssignment(row: Record<string, string>): PageTagAssignment {
-  return {
-    groupId: row.group_id,
-    groupName: row.group_name,
-    mode: normalizeTagMode(row.mode),
-    valueId: row.value_id,
-    label: row.label,
-    color: normalizeProjectColor(row.color),
-  };
 }
 
 function pageTagRowsToList(rows: Record<string, string>[]) {

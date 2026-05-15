@@ -106,6 +106,7 @@ type EnexImportJob = {
   error?: string;
   notebookId?: string;
   importedResources: number;
+  workerCount: number;
   startedAt: string;
   finishedAt?: string;
   progress: {
@@ -1043,6 +1044,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const [submitting, setSubmitting] = useState(false);
   const [mode, setMode] = useState<"blank" | "import">("blank");
   const [serverPath, setServerPath] = useState("");
+  const [workerCount, setWorkerCount] = useState(4);
   const [inspection, setInspection] = useState<EnexInspection | null>(null);
   const [inspectionError, setInspectionError] = useState("");
   const [inspecting, setInspecting] = useState(false);
@@ -1132,6 +1134,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
         path: serverPath.trim(),
         totalNotes: inspection?.noteCount,
         totalResources: inspection?.resourceCount,
+        workerCount,
       }),
     });
     const body = await response.json().catch(() => null) as { job?: EnexImportJob; error?: string } | null;
@@ -1211,6 +1214,18 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
             <button type="button" onClick={() => void inspectEnex()} disabled={!serverPath.trim() || inspecting || importing} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500">
               {inspecting ? "Inspecting" : "Inspect file"}
             </button>
+            <label className="block text-sm font-medium text-slate-200">
+              Cores to use
+              <input
+                type="number"
+                min={1}
+                max={16}
+                value={workerCount}
+                onChange={(event) => setWorkerCount(clampImportWorkerCount(event.target.value))}
+                disabled={importing}
+                className="mt-2 h-10 w-28 border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400 disabled:cursor-not-allowed disabled:text-slate-500"
+              />
+            </label>
             {inspectionError ? <p className="text-sm text-rose-300">{inspectionError}</p> : null}
             {inspection ? (
               <div className="border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
@@ -1235,6 +1250,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
                 <div className="grid gap-1 text-xs text-slate-400">
                   <ImportProgressRow label="Elapsed time" value={formatDuration(elapsedSeconds)} />
                   <ImportProgressRow label="Predicted remaining time" value={predictedRemainingSeconds ? formatDuration(predictedRemainingSeconds) : "Calculating"} />
+                  <ImportProgressRow label="Cores" value={(job.workerCount || workerCount).toLocaleString()} />
                   <ImportProgressRow label="ENEX resources" value={`${job.progress.importedResources.toLocaleString()}${resourceProgressTotal ? ` / ${resourceProgressTotal.toLocaleString()}` : ""}`} />
                   <ImportProgressRow label="Data" value={`${formatBytes(job.progress.processedBytes)} / ${formatBytes(job.progress.totalBytes)}`} />
                 </div>
@@ -1782,7 +1798,6 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
   project.notebooks.forEach((notebook) => {
     notebook.pages.forEach((page) => {
       page.tags.forEach((tag) => associatedTags.set(tag, "#64748b"));
-      page.tagAssignments.forEach((assignment) => associatedTags.set(assignment.label, assignment.color));
     });
   });
 
@@ -2719,6 +2734,12 @@ function estimateRemainingSeconds(elapsedSeconds: number, progressPercent: numbe
   if (!elapsedSeconds || progressPercent <= 0 || progressPercent >= 100) return 0;
   const estimatedTotalSeconds = Math.round(elapsedSeconds / (progressPercent / 100));
   return Math.max(0, estimatedTotalSeconds - elapsedSeconds);
+}
+
+function clampImportWorkerCount(value: string | number) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed)) return 4;
+  return Math.min(16, Math.max(1, parsed));
 }
 
 function formatDuration(totalSeconds: number) {

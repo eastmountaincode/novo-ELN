@@ -63,6 +63,13 @@ const parser = new XMLParser({
   cdataPropName: "__cdata",
   textNodeName: "#text",
 });
+const enmlParser = new XMLParser({
+  ignoreAttributes: false,
+  preserveOrder: true,
+  trimValues: false,
+  cdataPropName: "__cdata",
+  textNodeName: "#text",
+});
 
 export function parseEnex(xml: string): ParsedEnexNote[] {
   const parsed = parser.parse(xml) as { "en-export"?: { note?: unknown } };
@@ -219,53 +226,289 @@ function parseResource(rawResource: unknown): ParsedEnexResource | null {
 }
 
 function enmlToEditorBody(enml: string, attachmentsByHash: Map<string, Attachment>) {
-  const cleaned = unwrapCdata(enml)
-    .replace(/<\?xml[^>]*>/gi, "")
-    .replace(/<!DOCTYPE[^>]*>/gi, "")
-    .replace(/<\/?en-note[^>]*>/gi, "");
-  const content: JSONContent[] = [];
-  let paragraphParts: JSONContent[] = [];
-  const tokenPattern = /<en-media\b[^>]*>|<br\s*\/?>|<\/(?:div|p|li|h[1-6])>/gi;
-  let cursor = 0;
-  let match: RegExpExecArray | null;
+  return editorDocumentToBody(enmlToEditorDocument(enml, attachmentsByHash));
+}
 
-  while ((match = tokenPattern.exec(cleaned))) {
-    pushText(cleaned.slice(cursor, match.index));
-    const token = match[0];
-    if (/^<en-media/i.test(token)) {
-      flushParagraph();
-      const hash = attrValue(token, "hash");
-      const attachment = hash ? attachmentsByHash.get(hash.toLowerCase()) : undefined;
-      if (attachment) content.push(attachmentNode(attachment));
-    } else {
-      paragraphParts.push({ type: "hardBreak" });
-      flushParagraph();
+function enmlToEditorDocument(enml: string, attachmentsByHash: Map<string, Attachment>): JSONContent {
+  try {
+    const rootNodes = parseEnmlNodes(enml);
+    const content = normalizeBlocks(nodesToBlocks(rootNodes, attachmentsByHash, []));
+    return { type: "doc", content: content.length ? content : [{ type: "paragraph" }] };
+  } catch {
+    const fallback = decodeXmlEntities(stripTags(cleanEnml(enml))).replace(/\s+/g, " ").trim();
+    return { type: "doc", content: fallback ? [{ type: "paragraph", content: [{ type: "text", text: fallback }] }] : [{ type: "paragraph" }] };
+  }
+}
+
+function parseEnmlNodes(enml: string): EnmlNode[] {
+  const cleaned = cleanEnml(enml);
+  const wrapped = /^<en-note\b/i.test(cleaned) ? cleaned : `<en-note>${cleaned}</en-note>`;
+  const parsed = enmlParser.parse(wrapped) as EnmlNode[];
+  const root = parsed.find((node) => getNodeTag(node) === "en-note");
+  return root ? getNodeChildren(root) : parsed;
+}
+
+type EnmlNode = Record<string, unknown>;
+type Mark = NonNullable<JSONContent["marks"]>[number];
+
+function nodesToBlocks(nodes: EnmlNode[], attachmentsByHash: Map<string, Attachment>, marks: Mark[]): JSONContent[] {
+  const blocks: JSONContent[] = [];
+  let inline: JSONContent[] = [];
+  const flushParagraph = () => {
+    const content = normalizeInline(inline);
+    if (content.length) blocks.push({ type: "paragraph", content });
+    inline = [];
+  };
+
+  for (const node of nodes) {
+    const tag = getNodeTag(node);
+    if (tag === "#text" || tag === "__cdata") {
+      appendText(inline, textValue(node[tag]), marks);
+      continue;
     }
-    cursor = match.index + token.length;
+    if (tag === ":@") continue;
+    const children = getNodeChildren(node);
+    const attrs = getNodeAttrs(node);
+    if (isInlineTag(tag)) {
+      inline.push(...nodesToInline(children, attachmentsByHash, marksForTag(tag, attrs, marks)));
+      continue;
+    }
+    if (tag === "br") {
+      inline.push({ type: "hardBreak" });
+      continue;
+    }
+    if (tag === "en-todo") {
+      appendText(inline, attrs["@_checked"] === "true" ? "[x] " : "[ ] ", marks);
+      continue;
+    }
+    if (tag === "en-media") {
+      flushParagraph();
+      const attachment = attachmentForMedia(attrs, attachmentsByHash);
+      if (attachment) blocks.push(attachmentNode(attachment));
+      continue;
+    }
+    if (tag === "p" || tag === "div") {
+      flushParagraph();
+      if (hasBlockChildren(children)) {
+        blocks.push(...nodesToBlocks(children, attachmentsByHash, marks));
+        continue;
+      }
+      const content = normalizeInline(nodesToInline(children, attachmentsByHash, marks));
+      if (content.length) blocks.push({ type: "paragraph", content });
+      continue;
+    }
+    if (/^h[1-6]$/.test(tag)) {
+      flushParagraph();
+      const content = normalizeInline(nodesToInline(children, attachmentsByHash, marks));
+      if (content.length) blocks.push({ type: "heading", attrs: { level: Number(tag.slice(1)) }, content });
+      continue;
+    }
+    if (tag === "blockquote") {
+      flushParagraph();
+      const content = normalizeBlocks(nodesToBlocks(children, attachmentsByHash, marks));
+      if (content.length) blocks.push({ type: "blockquote", content: ensureParagraphBlocks(content) });
+      continue;
+    }
+    if (tag === "ul" || tag === "ol") {
+      flushParagraph();
+      const items = children.filter((child) => getNodeTag(child) === "li").map((child) => listItemNode(getNodeChildren(child), attachmentsByHash, marks));
+      if (items.length) blocks.push({ type: tag === "ul" ? "bulletList" : "orderedList", content: items });
+      continue;
+    }
+    if (tag === "table") {
+      flushParagraph();
+      const table = tableNode(children, attachmentsByHash, marks);
+      if (table) blocks.push(table);
+      continue;
+    }
+    inline.push(...nodesToInline(children, attachmentsByHash, marks));
   }
 
-  pushText(cleaned.slice(cursor));
   flushParagraph();
+  return blocks;
+}
 
-  return editorDocumentToBody({
-    type: "doc",
-    content: content.length ? content : [{ type: "paragraph" }],
+function nodesToInline(nodes: EnmlNode[], attachmentsByHash: Map<string, Attachment>, marks: Mark[]): JSONContent[] {
+  const inline: JSONContent[] = [];
+  for (const node of nodes) {
+    const tag = getNodeTag(node);
+    if (tag === "#text" || tag === "__cdata") {
+      appendText(inline, textValue(node[tag]), marks);
+      continue;
+    }
+    if (tag === ":@") continue;
+    const attrs = getNodeAttrs(node);
+    const children = getNodeChildren(node);
+    if (isInlineTag(tag)) {
+      inline.push(...nodesToInline(children, attachmentsByHash, marksForTag(tag, attrs, marks)));
+      continue;
+    }
+    if (tag === "br") {
+      inline.push({ type: "hardBreak" });
+      continue;
+    }
+    if (tag === "en-todo") {
+      appendText(inline, attrs["@_checked"] === "true" ? "[x] " : "[ ] ", marks);
+      continue;
+    }
+    if (tag === "en-media") {
+      const attachment = attachmentForMedia(attrs, attachmentsByHash);
+      if (attachment) appendText(inline, `[${attachment.originalName}]`, marks);
+      continue;
+    }
+    const childInline = nodesToInline(children, attachmentsByHash, marks);
+    if (childInline.length) {
+      if (inline.length) inline.push({ type: "hardBreak" });
+      inline.push(...childInline);
+    }
+  }
+  return normalizeInline(inline);
+}
+
+function listItemNode(nodes: EnmlNode[], attachmentsByHash: Map<string, Attachment>, marks: Mark[]): JSONContent {
+  const content = normalizeBlocks(nodesToBlocks(nodes, attachmentsByHash, marks));
+  return { type: "listItem", content: content.length ? ensureParagraphBlocks(content) : [{ type: "paragraph" }] };
+}
+
+function tableNode(nodes: EnmlNode[], attachmentsByHash: Map<string, Attachment>, marks: Mark[]): JSONContent | null {
+  const rows = collectRows(nodes);
+  const content: JSONContent[] = rows.map((row): JSONContent | null => {
+    const cells = getNodeChildren(row)
+      .filter((cell) => ["td", "th"].includes(getNodeTag(cell)))
+      .map((cell) => tableCellNode(cell, attachmentsByHash, marks));
+    return cells.length ? { type: "tableRow", content: cells } : null;
+  }).filter((row): row is JSONContent => row !== null);
+  return content.length ? { type: "table", content } : null;
+}
+
+function tableCellNode(node: EnmlNode, attachmentsByHash: Map<string, Attachment>, marks: Mark[]): JSONContent {
+  const tag = getNodeTag(node);
+  const attrs = getNodeAttrs(node);
+  const content = normalizeBlocks(nodesToBlocks(getNodeChildren(node), attachmentsByHash, marks));
+  return {
+    type: tag === "th" ? "tableHeader" : "tableCell",
+    attrs: {
+      colspan: positiveInteger(attrs["@_colspan"], 1),
+      rowspan: positiveInteger(attrs["@_rowspan"], 1),
+      colwidth: null,
+    },
+    content: content.length ? ensureParagraphBlocks(content) : [{ type: "paragraph" }],
+  };
+}
+
+function collectRows(nodes: EnmlNode[]): EnmlNode[] {
+  const rows: EnmlNode[] = [];
+  for (const node of nodes) {
+    const tag = getNodeTag(node);
+    if (tag === "tr") rows.push(node);
+    else if (["thead", "tbody", "tfoot"].includes(tag)) rows.push(...collectRows(getNodeChildren(node)));
+  }
+  return rows;
+}
+
+function appendText(content: JSONContent[], rawText: string, marks: Mark[]) {
+  const text = decodeXmlEntities(rawText).replace(/[ \t\r\n\f]+/g, " ");
+  if (!text.trim()) {
+    if (content.length && !inlineEndsWithSpace(content)) content.push({ type: "text", text: " " });
+    return;
+  }
+  const node: JSONContent = { type: "text", text };
+  if (marks.length) node.marks = marks;
+  content.push(node);
+}
+
+function marksForTag(tag: string, attrs: Record<string, string>, marks: Mark[]): Mark[] {
+  const next = [...marks];
+  const style = attrs["@_style"] || "";
+  if (tag === "b" || tag === "strong" || /font-weight\s*:\s*(bold|[6-9]00)/i.test(style)) next.push({ type: "bold" });
+  if (tag === "i" || tag === "em" || /font-style\s*:\s*italic/i.test(style)) next.push({ type: "italic" });
+  if (tag === "u" || /text-decoration[^;]*underline/i.test(style)) next.push({ type: "underline" });
+  if (tag === "s" || tag === "strike" || tag === "del" || /text-decoration[^;]*(line-through|strike)/i.test(style)) next.push({ type: "strike" });
+  if (tag === "code") next.push({ type: "code" });
+  if (tag === "a" && attrs["@_href"]) next.push({ type: "link", attrs: { href: attrs["@_href"] } });
+  return dedupeMarks(next);
+}
+
+function dedupeMarks(marks: Mark[]) {
+  const seen = new Set<string>();
+  return marks.filter((mark) => {
+    const key = `${mark.type}:${JSON.stringify(mark.attrs ?? {})}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
+}
 
-  function pushText(rawText: string) {
-    const text = decodeXmlEntities(stripTags(rawText)).replace(/\s+/g, " ").trim();
-    if (!text) return;
-    paragraphParts.push({ type: "text", text });
-  }
+function normalizeBlocks(blocks: JSONContent[]) {
+  return blocks.filter((block) => block.type === "attachmentCard" || block.type === "table" || block.type === "bulletList" || block.type === "orderedList" || block.type === "blockquote" || block.content?.length);
+}
 
-  function flushParagraph() {
-    const compactParts = paragraphParts.filter((part, index, parts) => {
-      if (part.type !== "hardBreak") return true;
-      return index > 0 && index < parts.length - 1;
-    });
-    if (compactParts.length) content.push({ type: "paragraph", content: compactParts });
-    paragraphParts = [];
-  }
+function ensureParagraphBlocks(blocks: JSONContent[]) {
+  return blocks.map((block) => block.type === "attachmentCard" ? { type: "paragraph", content: [{ type: "text", text: String(block.attrs?.filename ?? "attachment") }] } : block);
+}
+
+function normalizeInline(content: JSONContent[]) {
+  const normalized = content.filter((node) => node.type !== "text" || Boolean(node.text));
+  trimInlineEdge(normalized, "start");
+  trimInlineEdge(normalized, "end");
+  return normalized.filter((node) => node.type !== "text" || Boolean(node.text));
+}
+
+function trimInlineEdge(content: JSONContent[], edge: "start" | "end") {
+  const index = edge === "start" ? content.findIndex((node) => node.type === "text") : findLastIndex(content, (node) => node.type === "text");
+  if (index === -1) return;
+  const text = content[index].text ?? "";
+  content[index] = { ...content[index], text: edge === "start" ? text.replace(/^ +/, "") : text.replace(/ +$/, "") };
+}
+
+function findLastIndex<T>(items: T[], predicate: (item: T) => boolean) {
+  for (let index = items.length - 1; index >= 0; index -= 1) if (predicate(items[index])) return index;
+  return -1;
+}
+
+function inlineEndsWithSpace(content: JSONContent[]) {
+  const lastText = [...content].reverse().find((node) => node.type === "text");
+  return Boolean(lastText?.text?.endsWith(" "));
+}
+
+function attachmentForMedia(attrs: Record<string, string>, attachmentsByHash: Map<string, Attachment>) {
+  const hash = attrs["@_hash"] || attrs.hash;
+  return hash ? attachmentsByHash.get(hash.toLowerCase()) : undefined;
+}
+
+function getNodeTag(node: EnmlNode) {
+  return Object.keys(node).find((key) => key !== ":@") ?? "";
+}
+
+function getNodeChildren(node: EnmlNode): EnmlNode[] {
+  const tag = getNodeTag(node);
+  const value = node[tag];
+  return Array.isArray(value) ? value as EnmlNode[] : [];
+}
+
+function getNodeAttrs(node: EnmlNode): Record<string, string> {
+  return (node[":@"] ?? {}) as Record<string, string>;
+}
+
+function isInlineTag(tag: string) {
+  return ["a", "b", "strong", "i", "em", "u", "s", "strike", "del", "code", "span", "font"].includes(tag);
+}
+
+function hasBlockChildren(nodes: EnmlNode[]) {
+  return nodes.some((node) => isBlockTag(getNodeTag(node)));
+}
+
+function isBlockTag(tag: string) {
+  return tag === "en-media" || tag === "table" || tag === "ul" || tag === "ol" || tag === "blockquote" || tag === "div" || tag === "p" || /^h[1-6]$/.test(tag);
+}
+
+function positiveInteger(value: unknown, fallback: number) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function cleanEnml(enml: string) {
+  return unwrapCdata(enml).replace(/<\?xml[^>]*>/gi, "").replace(/<!DOCTYPE[^>]*>/gi, "").trim();
 }
 
 function attachmentNode(attachment: Attachment): JSONContent {
@@ -395,11 +638,6 @@ function countInlineMedia(enml: string) {
 
 function unwrapCdata(value: string) {
   return value.replace(/<!\[CDATA\[/g, "").replace(/\]\]>/g, "");
-}
-
-function attrValue(tag: string, name: string) {
-  const match = tag.match(new RegExp(`${name}=["']([^"']+)["']`, "i"));
-  return match?.[1] ?? "";
 }
 
 function stripTags(value: string) {

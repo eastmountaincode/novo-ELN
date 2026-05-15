@@ -12,6 +12,7 @@ export async function POST(request: Request) {
     path?: string;
     totalNotes?: number;
     totalResources?: number;
+    workerCount?: number;
   } | null;
 
   if (!body?.projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
       filePath: body.path,
       totalNotes: Number.isFinite(body.totalNotes) ? body.totalNotes : null,
       totalResources: Number.isFinite(body.totalResources) ? body.totalResources : null,
+      workerCount: Number.isFinite(body.workerCount) ? body.workerCount : null,
     });
 
     return NextResponse.json({ jobId: job.id, job });

@@ -25,6 +25,7 @@ import {
   Plus,
   Search,
   Shield,
+  SlidersHorizontal,
   Tag,
   Trash2,
   Users,
@@ -60,6 +61,12 @@ type DragState = {
 };
 
 type PageSortKey = "updated" | "created" | "title";
+
+const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
+  { key: "updated", label: "Date updated" },
+  { key: "created", label: "Date created" },
+  { key: "title", label: "Title" },
+];
 
 type NameDialogState =
   | { kind: "createProject" }
@@ -1572,46 +1579,113 @@ function UnifiedSidebar({ workspace, activeView, selectedProject, selectedNotebo
 function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, deletePage }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; deletePage: (page: PageEntry) => void }) {
   const pages = selectedNotebook?.pages;
   const [sortKey, setSortKey] = useState<PageSortKey>("updated");
+  const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
+  const sortOptionsRef = useRef<HTMLDivElement>(null);
   const sortedPages = useMemo(() => sortNotebookPages(pages ?? [], sortKey), [pages, sortKey]);
   const color = projectColor(selectedProject);
+
+  useEffect(() => {
+    if (!sortOptionsOpen) return;
+
+    function isInsideSortOptions(target: EventTarget | null) {
+      return target instanceof Element && Boolean(sortOptionsRef.current?.contains(target));
+    }
+
+    function closeSortOptions() {
+      setSortOptionsOpen(false);
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      if (!isInsideSortOptions(event.target)) closeSortOptions();
+    }
+
+    function onFocusIn(event: FocusEvent) {
+      if (!isInsideSortOptions(event.target)) closeSortOptions();
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeSortOptions();
+    }
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sortOptionsOpen]);
+
   return (
     <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>{selectedProject?.name ?? "Project"}</p>
-          <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
+            <span className="shrink-0 text-sm font-medium text-slate-500">{sortedPages.length}</span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 px-3 text-sm font-medium text-white hover:opacity-90" style={{ backgroundColor: color }}><Plus size={15} />Page</button>
-          <label className="flex h-9 min-w-0 items-center gap-2 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600">
-            Sort
-            <select
-              value={sortKey}
-              onChange={(event) => setSortKey(event.target.value as PageSortKey)}
-              className="min-w-0 bg-transparent text-sm text-slate-800 outline-none"
+        <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 px-3 text-sm font-medium text-white hover:opacity-90" style={{ backgroundColor: color }}><Plus size={15} />Page</button>
+        <div ref={sortOptionsRef} data-transient-menu="true" className="relative mt-3">
+          <button
+            type="button"
+            onClick={() => setSortOptionsOpen((open) => !open)}
+            className="flex h-9 w-full items-center gap-2 border border-slate-300 bg-white px-3 text-left text-sm text-slate-700 hover:border-slate-400"
+            aria-haspopup="dialog"
+            aria-expanded={sortOptionsOpen}
+          >
+            <SlidersHorizontal size={16} className="shrink-0 text-slate-500" />
+            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Sort</span>
+            <span className="min-w-0 flex-1 truncate font-medium text-slate-900">{PAGE_SORT_OPTIONS.find((option) => option.key === sortKey)?.label}</span>
+            <ChevronDown size={16} className={`shrink-0 text-slate-500 transition-transform ${sortOptionsOpen ? "rotate-180" : ""}`} />
+          </button>
+          {sortOptionsOpen ? (
+            <section
+              role="dialog"
+              aria-label="Sort pages"
+              className="absolute left-0 top-11 z-30 w-full border border-slate-800 bg-slate-950 p-2 text-slate-100 shadow-2xl shadow-slate-950/35"
             >
-              <option value="updated">Date updated</option>
-              <option value="created">Date created</option>
-              <option value="title">Title</option>
-            </select>
-          </label>
+              <p className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Sort by</p>
+              <div className="space-y-1">
+                {PAGE_SORT_OPTIONS.map((option) => {
+                  const selected = option.key === sortKey;
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => {
+                        setSortKey(option.key);
+                        setSortOptionsOpen(false);
+                      }}
+                      className={`flex h-10 w-full items-center justify-between gap-3 px-3 text-left text-sm font-medium ${selected ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
+                    >
+                      <span>{option.label}</span>
+                      {selected ? <span className="text-xs uppercase tracking-[0.12em]" style={{ color }}>Selected</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
         </div>
       </div>
 
       <div className="overflow-y-auto scroll-contained py-3">
         <div className="space-y-2 px-4">
-            {sortedPages.map((page) => (
-              <PageCard
-                key={page.id}
-                page={page}
-                active={selectedPage?.id === page.id}
-                accentColor={color}
-                menuOpen={pageMenuId === page.id}
-                setMenuOpen={(open) => setPageMenuId(open ? page.id : null)}
-                onClick={() => selectedProject && selectedNotebook && selectPage(selectedProject, selectedNotebook, page)}
-                onDelete={() => deletePage(page)}
-              />
-            ))}
+          {sortedPages.map((page) => (
+            <PageCard
+              key={page.id}
+              page={page}
+              active={selectedPage?.id === page.id}
+              accentColor={color}
+              menuOpen={pageMenuId === page.id}
+              setMenuOpen={(open) => setPageMenuId(open ? page.id : null)}
+              onClick={() => selectedProject && selectedNotebook && selectPage(selectedProject, selectedNotebook, page)}
+              onDelete={() => deletePage(page)}
+            />
+          ))}
           {sortedPages.length === 0 ? <p className="p-3 text-sm text-slate-500">No pages yet.</p> : null}
         </div>
       </div>

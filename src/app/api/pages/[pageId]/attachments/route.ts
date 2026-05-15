@@ -3,9 +3,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
+import { attachmentPreviewText, resolveAttachmentBlockType } from "@/lib/attachmentTypes";
 import { uploadDir } from "@/lib/paths";
 import { createAttachment } from "@/lib/store";
-import type { Attachment, BlockType } from "@/lib/types";
+import type { Attachment } from "@/lib/types";
 
 export async function POST(request: Request, context: { params: Promise<{ pageId: string }> }) {
   const user = await currentUser();
@@ -16,7 +17,11 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
   const file = form.get("file");
   if (!(file instanceof File)) return NextResponse.json({ error: "file is required" }, { status: 400 });
 
-  const blockType = normalizeBlockType(String(form.get("blockType") ?? inferBlockType(file.name, file.type)));
+  const blockType = resolveAttachmentBlockType({
+    name: file.name,
+    mimeType: file.type,
+    requestedBlockType: form.get("blockType"),
+  });
   const bytes = Buffer.from(await file.arrayBuffer());
   const safeName = sanitizeFileName(file.name || "attachment.bin");
   const storageKey = path.join(pageId, `${randomUUID()}-${safeName}`);
@@ -33,7 +38,7 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
     size: bytes.length,
     storageKey,
     blockType,
-    previewText: previewFor(file.name, file.type),
+    previewText: attachmentPreviewText(blockType, "upload"),
   });
 
   const createdAt = new Date().toISOString();
@@ -45,7 +50,7 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
     size: bytes.length,
     storageKey,
     blockType,
-    previewText: previewFor(file.name, file.type),
+    previewText: attachmentPreviewText(blockType, "upload"),
     createdAt,
     updatedAt: createdAt,
   };
@@ -55,32 +60,4 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
 
 function sanitizeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
-}
-
-function normalizeBlockType(value: string): BlockType {
-  const allowed = new Set(["image", "sheet", "pdf", "slides", "sequence", "file"]);
-  return allowed.has(value) ? (value as BlockType) : "file";
-}
-
-function inferBlockType(name: string, mimeType: string): BlockType {
-  const lower = name.toLowerCase();
-  if (mimeType.startsWith("image/") || /\.(png|jpe?g|gif|tiff?|webp)$/.test(lower)) return "image";
-  if (/\.(xlsx?|csv|tsv)$/.test(lower)) return "sheet";
-  if (/\.pdf$/.test(lower)) return "pdf";
-  if (/\.(pptx?|key)$/.test(lower)) return "slides";
-  if (/\.(gb|gbk|fasta|fa|dna|seq)$/.test(lower)) return "sequence";
-  return "file";
-}
-
-function previewFor(name: string, mimeType: string) {
-  const type = inferBlockType(name, mimeType);
-  const labels: Record<BlockType, string> = {
-    image: "Image stored inline with this page.",
-    sheet: "Spreadsheet uploaded; table preview/parser is the next integration step.",
-    pdf: "PDF uploaded; text extraction is the next integration step.",
-    slides: "Slide deck uploaded; preview rendering is the next integration step.",
-    sequence: "Sequence file uploaded; sequence viewer is the next integration step.",
-    file: "File uploaded and attached to this page.",
-  };
-  return labels[type];
 }

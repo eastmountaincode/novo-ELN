@@ -4,10 +4,11 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { XMLParser } from "fast-xml-parser";
 import type { JSONContent } from "@tiptap/react";
+import { attachmentPreviewText, inferAttachmentBlockType } from "./attachmentTypes";
 import { editorDocumentToBody } from "./editor";
 import { uploadDir } from "./paths";
 import { createImportedAttachment, createImportedNotebook, createImportedPage, finishImportedNotebook } from "./store";
-import type { Attachment, BlockType } from "./types";
+import type { Attachment } from "./types";
 
 export type ParsedEnexResource = {
   hash: string;
@@ -138,14 +139,15 @@ export async function importEnexFile(input: {
     const attachmentsByHash = new Map<string, Attachment>();
     for (const resource of note.resources) {
       const storageKey = await writeImportedResource(pageId, resource);
+      const blockType = inferAttachmentBlockType(resource.fileName, resource.mimeType);
       const attachment = createImportedAttachment({
         pageId,
         originalName: resource.fileName,
         mimeType: resource.mimeType,
         size: resource.data.length,
         storageKey,
-        blockType: inferBlockType(resource.fileName, resource.mimeType),
-        previewText: previewFor(resource.fileName, resource.mimeType),
+        blockType,
+        previewText: attachmentPreviewText(blockType, "evernote"),
         createdAt: note.createdAt,
       });
       attachmentsByHash.set(resource.hash, attachment);
@@ -670,29 +672,6 @@ function normalizeEvernoteDate(value: string) {
   const match = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
   if (!match) return undefined;
   return `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}.000Z`;
-}
-
-function inferBlockType(name: string, mimeType: string): BlockType {
-  const lower = name.toLowerCase();
-  if (mimeType.startsWith("image/") || /\.(png|jpe?g|gif|tiff?|webp)$/.test(lower)) return "image";
-  if (/\.(xlsx?|csv|tsv)$/.test(lower)) return "sheet";
-  if (/\.pdf$/.test(lower)) return "pdf";
-  if (/\.(pptx?|key)$/.test(lower)) return "slides";
-  if (/\.(gb|gbk|fasta|fa|dna|seq)$/.test(lower)) return "sequence";
-  return "file";
-}
-
-function previewFor(name: string, mimeType: string) {
-  const type = inferBlockType(name, mimeType);
-  const labels: Record<BlockType, string> = {
-    image: "Image imported inline from Evernote.",
-    sheet: "Spreadsheet imported from Evernote.",
-    pdf: "PDF imported from Evernote.",
-    slides: "Slide deck imported from Evernote.",
-    sequence: "Sequence file imported from Evernote.",
-    file: "File imported from Evernote.",
-  };
-  return labels[type];
 }
 
 function extensionForMime(mimeType: string) {

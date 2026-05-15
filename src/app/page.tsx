@@ -5,6 +5,7 @@ import {
   CalendarClock,
   CalendarPlus,
   Check,
+  CircleDot,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -2956,12 +2957,13 @@ function PageTagsBar({ tags, setPageTags }: { tags: string[]; setPageTags: (tags
 
 function PageStatusRow({ status, setStatus }: { status: PageStatus; setStatus: (status: PageStatus) => void }) {
   return (
-    <div className="mt-1 grid min-h-8 grid-cols-[22px_minmax(0,1fr)] items-center gap-x-1.5 text-sm">
-      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Status</span>
+    <div className="mt-1 flex min-h-8 flex-wrap items-center gap-1.5 text-sm">
+      <CircleDot size={15} className="mr-1 shrink-0 text-slate-400" />
       <select
         value={status}
         onChange={(event) => setStatus(event.target.value as PageStatus)}
         className="h-8 w-40 border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500"
+        aria-label="Page status"
       >
         {PAGE_STATUS_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
       </select>

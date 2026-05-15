@@ -1966,24 +1966,6 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
           </div>
 
           <aside className="space-y-6">
-            {canEditProject ? (
-              <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
-                <div className="mb-4 flex items-center gap-2">
-                  <FileArchive size={17} style={{ color }} />
-                  <h2 className="text-base font-semibold text-slate-950">Import</h2>
-                </div>
-                <p className="mb-4 text-sm leading-6 text-slate-500">Create a new notebook from an Evernote ENEX export.</p>
-                <button
-                  type="button"
-                  onClick={importEnexNotebook}
-                  className="flex h-9 w-full items-center justify-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:border-slate-500"
-                >
-                  <FileArchive size={15} />
-                  Import ENEX notebook
-                </button>
-              </section>
-            ) : null}
-
             {canManageProject ? (
               <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
                 <div className="mb-4 flex items-center gap-2">
@@ -2007,6 +1989,23 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
                 await refreshWorkspace();
               } : undefined} />
             </section>
+            {canEditProject ? (
+              <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
+                <div className="mb-4 flex items-center gap-2">
+                  <FileArchive size={17} style={{ color }} />
+                  <h2 className="text-base font-semibold text-slate-950">Import</h2>
+                </div>
+                <p className="mb-4 text-sm leading-6 text-slate-500">Create a new notebook from an Evernote ENEX export.</p>
+                <button
+                  type="button"
+                  onClick={importEnexNotebook}
+                  className="flex h-9 w-full items-center justify-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:border-slate-500"
+                >
+                  <FileArchive size={15} />
+                  Import ENEX notebook
+                </button>
+              </section>
+            ) : null}
           </aside>
         </div>
       </div>

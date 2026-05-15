@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileException } from "node:child_process";
 import { promisify } from "node:util";
 import { previewDir } from "./paths";
 
@@ -78,30 +78,31 @@ async function renderPresentationSlides(options: { sourcePath: string; sourceNam
     const inputPath = path.join(workDir, `input${extensionForLibreOffice(options.sourceName)}`);
     await fs.copyFile(options.sourcePath, inputPath);
 
-    await execFileAsync("libreoffice", [
+    await runPreviewCommand("libreoffice", [
       "--headless",
       "--nologo",
       "--nolockcheck",
       "--nodefault",
       "--nofirststartwizard",
+      `--env:UserInstallation=${pathToFileUrl(path.join(workDir, "lo-profile"))}`,
       "--convert-to",
       "pdf",
       "--outdir",
       workDir,
       inputPath,
-    ], { timeout: 120_000, maxBuffer: 1024 * 1024 * 8 });
+    ], "LibreOffice could not convert this presentation to PDF.");
 
     const pdfPath = path.join(workDir, "input.pdf");
     await fs.access(pdfPath);
 
     const outputPrefix = path.join(workDir, SLIDE_PREFIX);
-    await execFileAsync("pdftoppm", [
+    await runPreviewCommand("pdftoppm", [
       "-png",
       "-r",
       String(RENDER_DPI),
       pdfPath,
       outputPrefix,
-    ], { timeout: 120_000, maxBuffer: 1024 * 1024 * 8 });
+    ], "Could not render presentation slides.");
 
     const renderedFiles = await listRenderedFiles(workDir);
     if (!renderedFiles.length) throw new Error("No slides were rendered from this presentation.");
@@ -149,4 +150,22 @@ function extensionForLibreOffice(fileName: string) {
 
 function safePathSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
+}
+
+
+async function runPreviewCommand(command: string, args: string[], fallbackMessage: string) {
+  try {
+    await execFileAsync(command, args, { timeout: 120_000, maxBuffer: 1024 * 1024 * 8 });
+  } catch (error) {
+    const commandError = error as ExecFileException & { stdout?: string; stderr?: string };
+    const details = [commandError.stderr, commandError.stdout]
+      .filter((value) => typeof value === "string" && value.trim())
+      .map((value) => value!.trim())
+      .join("\n");
+    throw new Error(details ? `${fallbackMessage} ${details}` : fallbackMessage);
+  }
+}
+
+function pathToFileUrl(value: string) {
+  return `file://${value.split(path.sep).map(encodeURIComponent).join("/")}`;
 }

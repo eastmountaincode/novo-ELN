@@ -55,6 +55,7 @@ export type InlineAttachmentAttrs = {
   createdAt: string;
   updatedAt?: string;
   displayWidth?: number;
+  previewSize?: "compact" | "medium" | "large";
 };
 
 type RichTextEditorProps = {
@@ -72,6 +73,11 @@ const spreadsheetAccept = ".csv,.tsv,.xls,.xlsx,.xlsb,.ods";
 const presentationAccept = ".ppt,.pptx,.pps,.ppsx,.odp";
 const imageAccept = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/tiff";
 const IMAGE_MIN_WIDTH = 180;
+const PDF_PREVIEW_HEIGHTS = {
+  compact: 260,
+  medium: 420,
+  large: 640,
+} as const;
 const TAB_INDENT = "    ";
 
 const EditorTabBehavior = Extension.create({
@@ -262,6 +268,7 @@ function createAttachmentCardExtension(actions: { openSpreadsheet: (attachment: 
         createdAt: { default: "" },
         updatedAt: { default: "" },
         displayWidth: { default: null },
+        previewSize: { default: "compact" },
       };
     },
     parseHTML() {
@@ -295,6 +302,7 @@ function parseInlineAttachmentDrag(dataTransfer: DataTransfer): InlineAttachment
       createdAt: typeof payload.createdAt === "string" ? payload.createdAt : "",
       updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : "",
       displayWidth: normalizeDisplayWidth(payload.displayWidth),
+      previewSize: normalizePdfPreviewSize(payload.previewSize),
     };
   } catch {
     return null;
@@ -309,6 +317,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
   const updatedAt = attrs.updatedAt || attrs.createdAt;
   const imageWrapperRef = useRef<HTMLDivElement>(null);
   const viewUrl = `/api/attachments/${attrs.attachmentId}/view`;
+  const pdfViewUrl = `${viewUrl}#toolbar=0&navpanes=0`;
   const downloadUrl = `/api/attachments/${attrs.attachmentId}/download`;
 
   function handleSpreadsheetSaved(attachment: InlineAttachmentAttrs) {
@@ -383,6 +392,46 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
             className="absolute -bottom-2 -right-2 grid size-4 cursor-ew-resize place-items-center border border-cyan-500 bg-white opacity-0 shadow-sm transition-opacity group-hover/inline-image:opacity-100 focus:opacity-100"
             title="Resize image"
             aria-label="Resize image"
+          />
+        </div>
+      </NodeViewWrapper>
+    );
+  }
+
+  if (kind === "pdf") {
+    const previewSize = normalizePdfPreviewSize(attrs.previewSize);
+    const previewHeight = PDF_PREVIEW_HEIGHTS[previewSize];
+
+    return (
+      <NodeViewWrapper className="my-4" data-attachment-card="true">
+        <div className={`max-w-3xl border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
+          <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
+            <FileText size={17} className="shrink-0 text-rose-600" />
+            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
+            <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
+            <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Download size={13} />Download</a>
+          </div>
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-1.5">
+            <div className="text-xs font-medium text-slate-600">Preview</div>
+            <div className="flex overflow-hidden border border-slate-300 bg-slate-50">
+              {(["compact", "medium", "large"] as const).map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => updateAttributes({ previewSize: size })}
+                  className={`h-7 border-r border-slate-300 px-2 text-xs capitalize last:border-r-0 ${previewSize === size ? "bg-slate-800 text-white" : "text-slate-700 hover:bg-white"}`}
+                >
+                  {size}
+                </button>
+              ))}
+            </div>
+          </div>
+          <iframe
+            src={pdfViewUrl}
+            title={attrs.filename}
+            className="block w-full bg-white"
+            style={{ height: `${previewHeight}px` }}
           />
         </div>
       </NodeViewWrapper>
@@ -502,6 +551,10 @@ function formatBytes(value: number) {
 function normalizeDisplayWidth(value: unknown) {
   const width = Number(value);
   return Number.isFinite(width) && width >= IMAGE_MIN_WIDTH ? Math.round(width) : undefined;
+}
+
+function normalizePdfPreviewSize(value: unknown): "compact" | "medium" | "large" {
+  return value === "medium" || value === "large" ? value : "compact";
 }
 
 function clamp(value: number, min: number, max: number) {

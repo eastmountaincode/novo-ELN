@@ -1223,8 +1223,8 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
             <button type="button" onClick={() => void inspectEnex()} disabled={!serverPath.trim() || inspecting || importing} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500">
               {inspecting ? "Inspecting" : "Inspect file"}
             </button>
-            <label className="block text-sm font-medium text-slate-200">
-              <span className="block">Cores to use</span>
+            <label className="flex items-center gap-4 text-sm font-medium text-slate-200">
+              <span>Cores to use</span>
               <input
                 type="number"
                 min={1}
@@ -1232,7 +1232,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
                 value={workerCount}
                 onChange={(event) => setWorkerCount(clampImportWorkerCount(event.target.value))}
                 disabled={importing}
-                className="mt-3 h-10 w-28 border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400 disabled:cursor-not-allowed disabled:text-slate-500"
+                className="h-10 w-28 border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400 disabled:cursor-not-allowed disabled:text-slate-500"
               />
             </label>
             {inspectionError ? <p className="text-sm text-rose-300">{inspectionError}</p> : null}

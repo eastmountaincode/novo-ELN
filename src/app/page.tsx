@@ -70,7 +70,7 @@ const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
 
 type NameDialogState =
   | { kind: "createProject" }
-  | { kind: "createNotebook"; projectId: string; projectName: string }
+  | { kind: "createNotebook"; projectId: string; projectName: string; initialMode?: "blank" | "import" }
   | { kind: "renameProject"; project: Project }
   | { kind: "renameNotebook"; notebook: Notebook };
 
@@ -670,14 +670,14 @@ export default function Home() {
     setNameDialog({ kind: "createProject" });
   }
 
-  function createNewNotebook(projectId = selectedProject?.id) {
+  function createNewNotebook(projectId = selectedProject?.id, initialMode: "blank" | "import" = "blank") {
     if (!projectId) return;
     setProjectMenuId(null);
     setNotebookMenuId(null);
     setPageMenuId(null);
     setAccountOpen(false);
     const projectName = workspace?.projects.find((project) => project.id === projectId)?.name ?? "Project";
-    setNameDialog({ kind: "createNotebook", projectId, projectName });
+    setNameDialog({ kind: "createNotebook", projectId, projectName, initialMode });
   }
 
   async function submitNameDialog(name: string) {
@@ -923,6 +923,7 @@ export default function Home() {
             selectNotebook={selectNotebook}
             selectPage={selectPage}
             refreshWorkspace={() => refreshWorkspace({ projectId: selectedProject.id })}
+            importEnexNotebook={() => createNewNotebook(selectedProject.id, "import")}
           />
         ) : (
           <>
@@ -1051,7 +1052,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const initialValue = dialog.kind === "renameProject" ? dialog.project.name : dialog.kind === "renameNotebook" ? dialog.notebook.name : "";
   const [name, setName] = useState(initialValue);
   const [submitting, setSubmitting] = useState(false);
-  const [mode, setMode] = useState<"blank" | "import">("blank");
+  const [mode] = useState<"blank" | "import">(dialog.kind === "createNotebook" ? dialog.initialMode ?? "blank" : "blank");
   const [serverPath, setServerPath] = useState("");
   const [workerCount, setWorkerCount] = useState(4);
   const [inspection, setInspection] = useState<EnexInspection | null>(null);
@@ -1189,11 +1190,6 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
             job={job}
             elapsedSeconds={elapsedSeconds}
           />
-        ) : isNotebookCreate ? (
-          <div className="mt-5 grid grid-cols-2 border border-white/10 bg-white/5 p-1 text-sm">
-            <button type="button" onClick={() => setMode("blank")} className={`h-9 ${mode === "blank" ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-white/10"}`}>Blank</button>
-            <button type="button" onClick={() => setMode("import")} className={`h-9 ${mode === "import" ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-white/10"}`}>Import ENEX</button>
-          </div>
         ) : null}
         {!importFinished ? <label className="mt-5 block text-sm font-medium text-slate-200">
           {mode === "import" && isNotebookCreate ? "Notebook name" : "Name"}
@@ -1336,14 +1332,14 @@ function ImportFinishedSummary({ notebookName, serverPath, inspection, job, elap
 
 function getNameModalTitle(dialog: NameDialogState) {
   if (dialog.kind === "createProject") return "New project";
-  if (dialog.kind === "createNotebook") return "New notebook";
+  if (dialog.kind === "createNotebook") return dialog.initialMode === "import" ? "Import ENEX notebook" : "New notebook";
   if (dialog.kind === "renameProject") return "Rename project";
   return "Rename notebook";
 }
 
 function getNameModalDescription(dialog: NameDialogState) {
   if (dialog.kind === "createProject") return "Create a project to group related notebooks.";
-  if (dialog.kind === "createNotebook") return `Create a notebook inside ${dialog.projectName}.`;
+  if (dialog.kind === "createNotebook") return dialog.initialMode === "import" ? `Create a new notebook in ${dialog.projectName} from an Evernote ENEX export.` : `Create a notebook inside ${dialog.projectName}.`;
   if (dialog.kind === "renameProject") return "Update the project name shown in the sidebar.";
   return "Update the notebook name shown under its project.";
 }
@@ -1882,8 +1878,9 @@ function HomeView({ recentPages, selectPage }: { recentPages: Array<{ page: Page
   );
 }
 
-function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPage, refreshWorkspace }: { user: AppUser; project: Project; recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; selectNotebook: (project: Project, notebook: Notebook) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; refreshWorkspace: () => Promise<void> }) {
+function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPage, refreshWorkspace, importEnexNotebook }: { user: AppUser; project: Project; recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; selectNotebook: (project: Project, notebook: Notebook) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; refreshWorkspace: () => Promise<void>; importEnexNotebook: () => void }) {
   const canManageProject = user.role === "admin" || project.accessRole === "owner";
+  const canEditProject = canManageProject || project.accessRole === "editor";
   const color = projectColor(project);
   const totalPages = project.notebooks.reduce((sum, notebook) => sum + notebook.pages.length, 0);
   const totalAttachments = project.notebooks.reduce((sum, notebook) => sum + notebook.pages.reduce((pageSum, page) => pageSum + page.attachments.length, 0), 0);
@@ -1898,12 +1895,11 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 flex items-start justify-between gap-6">
-          <div className="min-w-0 border-l-4 pl-4" style={{ borderColor: color }}>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>Project</p>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>Project Home</p>
             <h1 className="mt-1 text-2xl font-semibold text-slate-950">{project.name}</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{project.description || "Project workspace for notebooks, pages, members, and templates."}</p>
           </div>
-          <div className="border px-3 py-2 text-sm" style={{ borderColor: colorWithAlpha(color, 0.25), backgroundColor: colorWithAlpha(color, 0.06), color }}>
+          <div className="border bg-white px-3 py-2 text-sm text-slate-700" style={{ borderColor: colorWithAlpha(color, 0.35) }}>
             {project.accessScope === "project" ? `${project.accessRole ?? "viewer"} project access` : "Notebook-only access"}
           </div>
         </div>
@@ -1932,8 +1928,8 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
                   <button
                     key={notebook.id}
                     onClick={() => selectNotebook(project, notebook)}
-                    className="flex items-center justify-between gap-3 border border-l-4 bg-white p-3 text-left hover:border-slate-400"
-                    style={{ borderColor: colorWithAlpha(color, 0.24), borderLeftColor: color, backgroundColor: colorWithAlpha(color, 0.025) }}
+                    className="flex items-center justify-between gap-3 border bg-white p-3 text-left hover:border-slate-400"
+                    style={{ borderColor: colorWithAlpha(color, 0.24) }}
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -1960,7 +1956,6 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
                     key={page.id}
                     page={page}
                     accentColor={color}
-                    tinted
                     contextLabel={notebook.name}
                     onClick={() => selectPage(project, notebook, page)}
                   />
@@ -1971,6 +1966,24 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
           </div>
 
           <aside className="space-y-6">
+            {canEditProject ? (
+              <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
+                <div className="mb-4 flex items-center gap-2">
+                  <FileArchive size={17} style={{ color }} />
+                  <h2 className="text-base font-semibold text-slate-950">Import</h2>
+                </div>
+                <p className="mb-4 text-sm leading-6 text-slate-500">Create a new notebook from an Evernote ENEX export.</p>
+                <button
+                  type="button"
+                  onClick={importEnexNotebook}
+                  className="flex h-9 w-full items-center justify-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:border-slate-500"
+                >
+                  <FileArchive size={15} />
+                  Import ENEX notebook
+                </button>
+              </section>
+            ) : null}
+
             {canManageProject ? (
               <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
                 <div className="mb-4 flex items-center gap-2">
@@ -2003,9 +2016,8 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
 
 function ProjectSummary({ notebooks, pages, attachments, createdAt, updatedAt, accentColor, tags }: { notebooks: number; pages: number; attachments: number; createdAt: string; updatedAt: string; accentColor: string; tags: Array<{ label: string; color: string }> }) {
   return (
-    <section className="border border-l-4 bg-white p-4" style={{ borderColor: colorWithAlpha(accentColor, 0.22), borderLeftColor: accentColor, backgroundColor: colorWithAlpha(accentColor, 0.018) }}>
+    <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(accentColor, 0.22) }}>
       <div className="mb-4 flex items-center gap-2">
-        <span className="block size-2.5 shrink-0" style={{ backgroundColor: accentColor }} />
         <h2 className="text-base font-semibold text-slate-950">Summary</h2>
       </div>
       <dl className="space-y-2.5">

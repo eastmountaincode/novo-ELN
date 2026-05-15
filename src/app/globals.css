@@ -101,6 +101,14 @@ button {
   line-height: 1.7;
 }
 
+.rich-text-surface p,
+.rich-text-surface h1,
+.rich-text-surface h2,
+.rich-text-surface ul,
+.rich-text-surface ol {
+  margin: 0;
+}
+
 .rich-text-surface > * + * {
   margin-top: 0.75rem;
 }

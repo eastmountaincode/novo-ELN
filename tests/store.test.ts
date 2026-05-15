@@ -1,0 +1,172 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+describe("store", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "eln-store-"));
+    process.env.ELN_DATA_DIR = path.join(tempDir, "data");
+    process.env.ELN_UPLOAD_DIR = path.join(tempDir, "uploads");
+    process.env.ELN_DATABASE_PATH = path.join(tempDir, "data", "test.sqlite3");
+    process.env.ELN_BOOTSTRAP_EMAIL = "test@example.local";
+    process.env.ELN_BOOTSTRAP_PASSWORD = "secret-password";
+  });
+
+  it("seeds an admin user and a queryable workspace", async () => {
+    const { verifyCredentials, getWorkspace } = await import("../src/lib/store");
+    const user = verifyCredentials("test@example.local", "secret-password");
+
+    expect(user?.role).toBe("admin");
+    const workspace = getWorkspace(user!.id);
+    expect(workspace.projects[0].notebooks.length).toBeGreaterThan(0);
+    expect(workspace.projects[0].notebooks[0].pages.length).toBeGreaterThan(0);
+  });
+
+  it("creates and updates pages through the repository API", async () => {
+    const { verifyCredentials, getWorkspace, createPage, updatePage } = await import("../src/lib/store");
+    const user = verifyCredentials("test@example.local", "secret-password")!;
+    const notebookId = getWorkspace(user.id).projects[0].notebooks[0].id;
+    const pageId = createPage(user.id, notebookId);
+
+    updatePage(user.id, pageId, { title: "Edited title", body: "Edited body", status: "Final" });
+
+    const page = getWorkspace(user.id).projects[0].notebooks[0].pages.find((candidate) => candidate.id === pageId);
+    expect(page?.title).toBe("Edited title");
+    expect(page?.body).toBe("Edited body");
+    expect(page?.status).toBe("Final");
+    expect(page?.versions[0]).toBe("Status changed to Final");
+  });
+
+  it("registers a member with a private starter workspace", async () => {
+    const { createUser, verifyCredentials, getWorkspace } = await import("../src/lib/store");
+    const user = createUser({ email: "new.user@example.local", name: "New User", password: "strong-password" });
+
+    expect(user.role).toBe("member");
+    expect(verifyCredentials("new.user@example.local", "strong-password")?.id).toBe(user.id);
+
+    const workspace = getWorkspace(user.id);
+    expect(workspace.user.email).toBe("new.user@example.local");
+    expect(workspace.projects).toHaveLength(1);
+    expect(workspace.projects[0].notebooks[0].pages[0].ownerId).toBe(user.id);
+  });
+
+  it("deletes pages from a notebook", async () => {
+    const { verifyCredentials, getWorkspace, createPage, deletePage } = await import("../src/lib/store");
+    const user = verifyCredentials("test@example.local", "secret-password")!;
+    const notebookId = getWorkspace(user.id).projects[0].notebooks[0].id;
+    const pageId = createPage(user.id, notebookId);
+
+    deletePage(user.id, pageId);
+
+    const pages = getWorkspace(user.id).projects[0].notebooks[0].pages;
+    expect(pages.some((page) => page.id === pageId)).toBe(false);
+  });
+
+  it("searches pages with FTS ranking and fuzzy fallback", async () => {
+    const { verifyCredentials, getWorkspace, createPage, updatePage } = await import("../src/lib/store");
+    const { searchWorkspace } = await import("../src/lib/search");
+    const user = verifyCredentials("test@example.local", "secret-password")!;
+    const notebookId = getWorkspace(user.id).projects[0].notebooks[0].id;
+    const pageId = createPage(user.id, notebookId);
+
+    updatePage(user.id, pageId, {
+      title: "GPA33 Search 2026",
+      body: "Looking for expression in neurons and antibody half-life notes.",
+    });
+
+    const titleResults = searchWorkspace(user.id, "GPA33");
+    expect(titleResults[0]?.pageId).toBe(pageId);
+    expect(titleResults[0]?.matchType).toBe("title");
+
+    const fuzzyResults = searchWorkspace(user.id, "neuronn");
+    expect(fuzzyResults.some((result) => result.pageId === pageId)).toBe(true);
+  });
+
+  it("adds and removes simple page tags", async () => {
+    const { verifyCredentials, getWorkspace, setPageTags } = await import("../src/lib/store");
+    const user = verifyCredentials("test@example.local", "secret-password")!;
+    const workspace = getWorkspace(user.id);
+    const pageId = workspace.projects[0].notebooks[0].pages[0].id;
+
+    setPageTags(user.id, pageId, ["cells", "success", "cells", "  needs review  "]);
+
+    const page = getWorkspace(user.id).projects[0].notebooks[0].pages.find((candidate) => candidate.id === pageId)!;
+    expect(page.tags).toEqual(["cells", "success", "needs review"]);
+
+    setPageTags(user.id, pageId, ["success"]);
+    const updatedPage = getWorkspace(user.id).projects[0].notebooks[0].pages.find((candidate) => candidate.id === pageId)!;
+    expect(updatedPage.tags).toEqual(["success"]);
+  });
+
+  it("lets a user change their own password with the current password", async () => {
+    const { verifyCredentials, changeOwnPassword } = await import("../src/lib/store");
+    const user = verifyCredentials("test@example.local", "secret-password")!;
+
+    expect(() => changeOwnPassword(user.id, "wrong-password", "new-secret-password")).toThrow("Current password is incorrect.");
+
+    changeOwnPassword(user.id, "secret-password", "new-secret-password");
+
+    expect(verifyCredentials("test@example.local", "secret-password")).toBeNull();
+    expect(verifyCredentials("test@example.local", "new-secret-password")?.id).toBe(user.id);
+  });
+
+  it("lets admins list users and set another user's password", async () => {
+    const { createUser, verifyCredentials, listUsersForAdmin, adminSetUserPassword } = await import("../src/lib/store");
+    const admin = verifyCredentials("test@example.local", "secret-password")!;
+    const member = createUser({ email: "lab.member@example.local", name: "Lab Member", password: "member-password" });
+
+    const users = listUsersForAdmin(admin.id);
+    expect(users.some((user) => user.email === "lab.member@example.local" && user.projectCount === 1)).toBe(true);
+
+    adminSetUserPassword(admin.id, member.id, "temporary-password");
+
+    expect(verifyCredentials("lab.member@example.local", "member-password")).toBeNull();
+    expect(verifyCredentials("lab.member@example.local", "temporary-password")?.id).toBe(member.id);
+  });
+
+  it("blocks non-admins from listing users or setting passwords", async () => {
+    const { createUser, listUsersForAdmin, adminSetUserPassword } = await import("../src/lib/store");
+    const member = createUser({ email: "member@example.local", name: "Member", password: "member-password" });
+    const other = createUser({ email: "other@example.local", name: "Other", password: "other-password" });
+
+    expect(() => listUsersForAdmin(member.id)).toThrow("Forbidden");
+    expect(() => adminSetUserPassword(member.id, other.id, "temporary-password")).toThrow("Forbidden");
+  });
+
+  it("shares full projects with all notebooks", async () => {
+    const { createNotebook, createUser, getWorkspace, shareProject, verifyCredentials } = await import("../src/lib/store");
+    const owner = verifyCredentials("test@example.local", "secret-password")!;
+    const viewer = createUser({ email: "project.viewer@example.local", name: "Project Viewer", password: "viewer-password" });
+    const ownerWorkspace = getWorkspace(owner.id);
+    const project = ownerWorkspace.projects[0];
+    const originalNotebookCount = project.notebooks.length;
+
+    createNotebook(owner.id, project.id, "Second Notebook");
+    shareProject({ actorUserId: owner.id, projectId: project.id, email: viewer.email, role: "editor" });
+
+    const viewerProject = getWorkspace(viewer.id).projects.find((candidate) => candidate.id === project.id)!;
+    expect(viewerProject.accessScope).toBe("project");
+    expect(viewerProject.accessRole).toBe("editor");
+    expect(viewerProject.notebooks.length).toBe(originalNotebookCount + 1);
+  });
+
+  it("shares individual notebooks without exposing sibling notebooks", async () => {
+    const { createNotebook, createUser, getWorkspace, shareNotebook, verifyCredentials } = await import("../src/lib/store");
+    const owner = verifyCredentials("test@example.local", "secret-password")!;
+    const viewer = createUser({ email: "notebook.viewer@example.local", name: "Notebook Viewer", password: "viewer-password" });
+    const ownerWorkspace = getWorkspace(owner.id);
+    const project = ownerWorkspace.projects[0];
+    const sharedNotebookId = createNotebook(owner.id, project.id, "Shared Notebook").notebookId;
+    createNotebook(owner.id, project.id, "Private Notebook");
+
+    shareNotebook({ actorUserId: owner.id, notebookId: sharedNotebookId, email: viewer.email, role: "viewer" });
+
+    const viewerProject = getWorkspace(viewer.id).projects.find((candidate) => candidate.id === project.id)!;
+    expect(viewerProject.accessScope).toBe("notebook");
+    expect(viewerProject.accessRole).toBeNull();
+    expect(viewerProject.notebooks).toHaveLength(1);
+    expect(viewerProject.notebooks[0]).toEqual(expect.objectContaining({ id: sharedNotebookId, accessRole: "viewer" }));
+  });
+});

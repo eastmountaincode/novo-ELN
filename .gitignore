@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local dev server
+dev.log
+dev.pid
+
+# Local runtime data
+data/
+storage/

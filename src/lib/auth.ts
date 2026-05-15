@@ -1,0 +1,78 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { cookies } from "next/headers";
+import { createUser, findUserById, verifyCredentials } from "./store";
+
+const cookieName = "eln_session";
+const maxAgeSeconds = 60 * 60 * 12;
+const secret = process.env.ELN_SESSION_SECRET ?? "local-development-session-secret-change-me";
+
+type SessionPayload = {
+  userId: string;
+  expiresAt: number;
+};
+
+export async function login(email: string, password: string) {
+  const user = verifyCredentials(email, password);
+  if (!user) return null;
+  await setSession(user.id);
+  return user;
+}
+
+export async function register(input: { email: string; name: string; password: string }) {
+  const user = createUser(input);
+  await setSession(user.id);
+  return user;
+}
+
+export async function logout() {
+  const cookieStore = await cookies();
+  cookieStore.set(cookieName, "", { path: "/", maxAge: 0 });
+}
+
+export async function currentUser() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(cookieName)?.value;
+  const payload = token ? verifySession(token) : null;
+  if (!payload) return null;
+  return findUserById(payload.userId);
+}
+
+function signSession(payload: SessionPayload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${body}.${signature(body)}`;
+}
+
+async function setSession(userId: string) {
+  const cookieStore = await cookies();
+  cookieStore.set(cookieName, signSession({ userId, expiresAt: Date.now() + maxAgeSeconds * 1000 }), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: maxAgeSeconds,
+  });
+}
+
+function verifySession(token: string): SessionPayload | null {
+  const [body, actualSignature] = token.split(".");
+  if (!body || !actualSignature) return null;
+  const expectedSignature = signature(body);
+  if (!safeEqual(actualSignature, expectedSignature)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as SessionPayload;
+    if (!payload.userId || payload.expiresAt < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function signature(body: string) {
+  return createHmac("sha256", secret).update(body).digest("base64url");
+}
+
+function safeEqual(a: string, b: string) {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}

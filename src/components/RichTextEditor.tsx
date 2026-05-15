@@ -76,6 +76,7 @@ const IMAGE_MIN_WIDTH = 180;
 const PDF_DEFAULT_WIDTH = 360;
 const PDF_MIN_WIDTH = 260;
 const PDF_PAGE_ASPECT = 11 / 8.5;
+const INLINE_ATTACHMENT_DRAGGING_CLASS = "inline-attachment-dragging";
 const TAB_INDENT = "    ";
 
 const EditorTabBehavior = Extension.create({
@@ -331,37 +332,20 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
     const displayWidth = normalizeDisplayWidth(attrs.displayWidth);
 
     function startImageResize(event: ReactPointerEvent<HTMLButtonElement>) {
-      event.preventDefault();
-      event.stopPropagation();
       const wrapper = imageWrapperRef.current;
       if (!wrapper) return;
       const parentWidth = wrapper.parentElement?.getBoundingClientRect().width ?? wrapper.getBoundingClientRect().width;
-      const startX = event.clientX;
-      const startWidth = wrapper.getBoundingClientRect().width;
       const maxWidth = Math.max(IMAGE_MIN_WIDTH, Math.floor(parentWidth));
-      const previousCursor = document.body.style.cursor;
-      const previousUserSelect = document.body.style.userSelect;
-      document.body.style.cursor = "ew-resize";
-      document.body.style.userSelect = "none";
-
-      function resize(pointerEvent: PointerEvent) {
-        const nextWidth = clamp(Math.round(startWidth + pointerEvent.clientX - startX), IMAGE_MIN_WIDTH, maxWidth);
-        updateAttributes({ displayWidth: nextWidth });
-      }
-
-      function stopResize() {
-        document.body.style.cursor = previousCursor;
-        document.body.style.userSelect = previousUserSelect;
-        window.removeEventListener("pointermove", resize);
-        window.removeEventListener("pointerup", stopResize);
-      }
-
-      window.addEventListener("pointermove", resize);
-      window.addEventListener("pointerup", stopResize, { once: true });
+      startHorizontalAttachmentResize(event, {
+        minWidth: IMAGE_MIN_WIDTH,
+        maxWidth,
+        startWidth: wrapper.getBoundingClientRect().width,
+        onResize: (displayWidth) => updateAttributes({ displayWidth }),
+      });
     }
 
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true">
+      <NodeViewWrapper className="my-4" data-attachment-card="true" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
         <div
           ref={imageWrapperRef}
           className={`group/inline-image relative inline-block max-w-full align-top ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
@@ -400,37 +384,20 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
     const previewHeight = Math.round(displayWidth * PDF_PAGE_ASPECT);
 
     function startPdfResize(event: ReactPointerEvent<HTMLButtonElement>) {
-      event.preventDefault();
-      event.stopPropagation();
       const wrapper = pdfWrapperRef.current;
       if (!wrapper) return;
       const parentWidth = wrapper.parentElement?.getBoundingClientRect().width ?? wrapper.getBoundingClientRect().width;
-      const startX = event.clientX;
-      const startWidth = wrapper.getBoundingClientRect().width;
       const maxWidth = Math.max(PDF_MIN_WIDTH, Math.floor(parentWidth));
-      const previousCursor = document.body.style.cursor;
-      const previousUserSelect = document.body.style.userSelect;
-      document.body.style.cursor = "ew-resize";
-      document.body.style.userSelect = "none";
-
-      function resize(pointerEvent: PointerEvent) {
-        const nextWidth = clamp(Math.round(startWidth + pointerEvent.clientX - startX), PDF_MIN_WIDTH, maxWidth);
-        updateAttributes({ displayWidth: nextWidth });
-      }
-
-      function stopResize() {
-        document.body.style.cursor = previousCursor;
-        document.body.style.userSelect = previousUserSelect;
-        window.removeEventListener("pointermove", resize);
-        window.removeEventListener("pointerup", stopResize);
-      }
-
-      window.addEventListener("pointermove", resize);
-      window.addEventListener("pointerup", stopResize, { once: true });
+      startHorizontalAttachmentResize(event, {
+        minWidth: PDF_MIN_WIDTH,
+        maxWidth,
+        startWidth: wrapper.getBoundingClientRect().width,
+        onResize: (displayWidth) => updateAttributes({ displayWidth }),
+      });
     }
 
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true">
+      <NodeViewWrapper className="my-4" data-attachment-card="true" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
         <div
           ref={pdfWrapperRef}
           className={`group/pdf-preview relative max-w-full border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
@@ -473,7 +440,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
   }
 
   return (
-    <NodeViewWrapper className="my-3">
+    <NodeViewWrapper className="my-3" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
       <div data-attachment-card="true" className="max-w-lg border border-slate-300 border-l-cyan-500 border-l-4 bg-slate-50 px-3 py-2.5 text-sm">
         <div className="flex items-start gap-2.5">
           {renderKindIcon(kind)}
@@ -518,6 +485,80 @@ function AttachmentMeta({ icon, label, value }: { icon: ReactNode; label: string
       <dd className="min-w-0 truncate">{value}</dd>
     </div>
   );
+}
+
+function startHorizontalAttachmentResize(event: ReactPointerEvent<HTMLButtonElement>, options: { minWidth: number; maxWidth: number; startWidth: number; onResize: (width: number) => void }) {
+  event.preventDefault();
+  event.stopPropagation();
+  const handle = event.currentTarget;
+  const pointerId = event.pointerId;
+  const startX = event.clientX;
+  const previousCursor = document.body.style.cursor;
+  const previousUserSelect = document.body.style.userSelect;
+  let stopped = false;
+
+  document.body.style.cursor = "ew-resize";
+  document.body.style.userSelect = "none";
+
+  try {
+    handle.setPointerCapture(pointerId);
+  } catch {
+    // Some browsers do not allow capture if the pointer has already ended.
+  }
+
+  function resize(pointerEvent: PointerEvent) {
+    const nextWidth = clamp(Math.round(options.startWidth + pointerEvent.clientX - startX), options.minWidth, options.maxWidth);
+    options.onResize(nextWidth);
+  }
+
+  function cleanup() {
+    if (stopped) return;
+    stopped = true;
+    document.body.style.cursor = previousCursor;
+    document.body.style.userSelect = previousUserSelect;
+    window.removeEventListener("pointermove", resize);
+    window.removeEventListener("pointerup", cleanup);
+    window.removeEventListener("pointercancel", cleanup);
+    window.removeEventListener("blur", cleanup);
+    document.removeEventListener("visibilitychange", cleanupIfHidden);
+    handle.removeEventListener("lostpointercapture", cleanup);
+    try {
+      if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+    } catch {
+      // Pointer capture may already be released by the browser.
+    }
+  }
+
+  function cleanupIfHidden() {
+    if (document.hidden) cleanup();
+  }
+
+  window.addEventListener("pointermove", resize);
+  window.addEventListener("pointerup", cleanup);
+  window.addEventListener("pointercancel", cleanup);
+  window.addEventListener("blur", cleanup);
+  document.addEventListener("visibilitychange", cleanupIfHidden);
+  handle.addEventListener("lostpointercapture", cleanup);
+}
+
+function startInlineAttachmentDrag() {
+  document.body.classList.add(INLINE_ATTACHMENT_DRAGGING_CLASS);
+  window.addEventListener("dragend", clearInlineAttachmentDragState);
+  window.addEventListener("drop", clearInlineAttachmentDragState);
+  window.addEventListener("blur", clearInlineAttachmentDragState);
+  document.addEventListener("visibilitychange", clearInlineAttachmentDragStateIfHidden);
+}
+
+function clearInlineAttachmentDragState() {
+  document.body.classList.remove(INLINE_ATTACHMENT_DRAGGING_CLASS);
+  window.removeEventListener("dragend", clearInlineAttachmentDragState);
+  window.removeEventListener("drop", clearInlineAttachmentDragState);
+  window.removeEventListener("blur", clearInlineAttachmentDragState);
+  document.removeEventListener("visibilitychange", clearInlineAttachmentDragStateIfHidden);
+}
+
+function clearInlineAttachmentDragStateIfHidden() {
+  if (document.hidden) clearInlineAttachmentDragState();
 }
 
 function ToolbarButton({ active = false, label, onClick, children }: { active?: boolean; label: string; onClick: () => void; children: ReactNode }) {

@@ -1062,7 +1062,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const byteProgressPercent = job?.progress.totalBytes ? Math.min(100, Math.round((job.progress.processedBytes / job.progress.totalBytes) * 100)) : 0;
   const progressPercent = byteProgressPercent || (progressTotal && job ? Math.min(100, Math.round((job.progress.importedNotes / progressTotal) * 100)) : 0);
   const elapsedSeconds = job ? secondsBetween(job.startedAt, job.finishedAt) : 0;
-  const projectedTotalSeconds = job ? estimateTotalSeconds(elapsedSeconds, progressPercent) : 0;
+  const predictedRemainingSeconds = job ? estimateRemainingSeconds(elapsedSeconds, progressPercent) : 0;
   const importFinished = job?.state === "succeeded";
 
   useEffect(() => {
@@ -1216,7 +1216,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
                 </div>
                 <div className="grid gap-1 text-xs text-slate-400">
                   <ImportProgressRow label="Elapsed time" value={formatDuration(elapsedSeconds)} />
-                  <ImportProgressRow label="Predicted total time" value={projectedTotalSeconds ? formatDuration(projectedTotalSeconds) : "Calculating"} />
+                  <ImportProgressRow label="Predicted remaining time" value={predictedRemainingSeconds ? formatDuration(predictedRemainingSeconds) : "Calculating"} />
                   <ImportProgressRow label="ENEX resources" value={`${job.progress.importedResources.toLocaleString()}${resourceProgressTotal ? ` / ${resourceProgressTotal.toLocaleString()}` : ""}`} />
                   <ImportProgressRow label="Data" value={`${formatBytes(job.progress.processedBytes)} / ${formatBytes(job.progress.totalBytes)}`} />
                 </div>
@@ -2695,10 +2695,10 @@ function secondsBetween(startedAt: string, finishedAt?: string) {
   return Math.max(0, Math.floor((end - start) / 1000));
 }
 
-function estimateTotalSeconds(elapsedSeconds: number, progressPercent: number) {
-  if (!elapsedSeconds || progressPercent <= 0) return 0;
-  if (progressPercent >= 100) return elapsedSeconds;
-  return Math.max(elapsedSeconds, Math.round(elapsedSeconds / (progressPercent / 100)));
+function estimateRemainingSeconds(elapsedSeconds: number, progressPercent: number) {
+  if (!elapsedSeconds || progressPercent <= 0 || progressPercent >= 100) return 0;
+  const estimatedTotalSeconds = Math.round(elapsedSeconds / (progressPercent / 100));
+  return Math.max(0, estimatedTotalSeconds - elapsedSeconds);
 }
 
 function formatDuration(totalSeconds: number) {

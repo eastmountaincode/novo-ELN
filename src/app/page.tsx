@@ -2855,22 +2855,15 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
         <div className="mb-2 flex items-center gap-2 text-sm text-slate-500"><span>{selectedProject?.name}</span><ChevronRight size={14} /><span>{selectedNotebook?.name}</span>{saving ? <span className="ml-2 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}</div>
         <div className="flex items-center gap-3">
           <input value={page.title} onChange={(event) => patchSelectedPage({ title: event.target.value })} onBlur={(event) => void savePage({ title: event.target.value })} className="min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none" />
-          <label className="shrink-0 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-            Status
-            <select
-              value={page.status}
-              onChange={(event) => {
-                const status = event.target.value as PageStatus;
-                patchSelectedPage({ status });
-                void savePage({ status });
-              }}
-              className="mt-1 h-9 border border-slate-300 bg-white px-2 text-sm font-medium normal-case tracking-normal text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500"
-            >
-              {PAGE_STATUS_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
         </div>
         <PageTagsBar tags={page.tags} setPageTags={setPageTags} />
+        <PageStatusRow
+          status={page.status}
+          setStatus={(status) => {
+            patchSelectedPage({ status });
+            void savePage({ status });
+          }}
+        />
       </header>
       <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-white px-6 pb-6 pt-4">
         <RichTextEditor
@@ -2914,12 +2907,12 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
 }
 
 function PageTagsBar({ tags, setPageTags }: { tags: string[]; setPageTags: (tags: string[]) => Promise<void> }) {
-  const [draft, setDraft] = useState("");
+  const [tagInput, setTagInput] = useState("");
   const normalizedTags = useMemo(() => normalizeTagList(tags), [tags]);
 
-  function addDraftTag() {
-    const nextTags = normalizeTagList([...normalizedTags, draft]);
-    setDraft("");
+  function addTagInput() {
+    const nextTags = normalizeTagList([...normalizedTags, tagInput]);
+    setTagInput("");
     if (nextTags.length !== normalizedTags.length) void setPageTags(nextTags);
   }
 
@@ -2930,9 +2923,9 @@ function PageTagsBar({ tags, setPageTags }: { tags: string[]; setPageTags: (tags
   function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter" || event.key === ",") {
       event.preventDefault();
-      addDraftTag();
+      addTagInput();
     }
-    if (event.key === "Backspace" && !draft && normalizedTags.length) {
+    if (event.key === "Backspace" && !tagInput && normalizedTags.length) {
       event.preventDefault();
       removeTag(normalizedTags[normalizedTags.length - 1]);
     }
@@ -2950,13 +2943,28 @@ function PageTagsBar({ tags, setPageTags }: { tags: string[]; setPageTags: (tags
         </span>
       ))}
       <input
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        value={tagInput}
+        onChange={(event) => setTagInput(event.target.value)}
         onKeyDown={handleKeyDown}
-        onBlur={addDraftTag}
+        onBlur={addTagInput}
         className="h-7 min-w-36 flex-1 border-0 bg-transparent px-1 text-sm text-slate-700 outline-none placeholder:text-slate-400"
         placeholder="Type to add..."
       />
+    </div>
+  );
+}
+
+function PageStatusRow({ status, setStatus }: { status: PageStatus; setStatus: (status: PageStatus) => void }) {
+  return (
+    <div className="mt-2 flex min-h-8 flex-wrap items-center gap-2 text-sm">
+      <span className="w-[22px] shrink-0 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Status</span>
+      <select
+        value={status}
+        onChange={(event) => setStatus(event.target.value as PageStatus)}
+        className="h-8 min-w-40 border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500"
+      >
+        {PAGE_STATUS_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
+      </select>
     </div>
   );
 }

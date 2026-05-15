@@ -1060,6 +1060,8 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const resourceProgressTotal = job?.progress.totalResources ?? inspection?.resourceCount ?? null;
   const byteProgressPercent = job?.progress.totalBytes ? Math.min(100, Math.round((job.progress.processedBytes / job.progress.totalBytes) * 100)) : 0;
   const progressPercent = byteProgressPercent || (progressTotal && job ? Math.min(100, Math.round((job.progress.importedNotes / progressTotal) * 100)) : 0);
+  const elapsedSeconds = job ? secondsBetween(job.startedAt, job.finishedAt) : 0;
+  const projectedTotalSeconds = job ? estimateTotalSeconds(elapsedSeconds, progressPercent) : 0;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -1187,9 +1189,6 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
                   <ImportMetric label="Inline media refs" value={inspection.inlineMediaCount.toLocaleString()} />
                   <ImportMetric label="File size" value={formatBytes(inspection.sizeBytes)} />
                 </div>
-                <p className="mt-3 text-xs leading-5 text-slate-400">
-                  ENEX resources are unique stored file blobs. Novo saves each imported resource as an attachment. Inline media refs are placements inside note content, so they can differ from the resource count.
-                </p>
                 {inspection.tags.length ? <p className="mt-3 text-xs text-slate-400">Top tags: {inspection.tags.slice(0, 6).map((tag) => `${tag.tag} (${tag.count})`).join(", ")}</p> : null}
               </div>
             ) : null}
@@ -1202,9 +1201,12 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
                 <div className="h-2 overflow-hidden bg-slate-800">
                   <div className="h-full bg-cyan-400 transition-all" style={{ width: `${progressPercent}%` }} />
                 </div>
-                <p className="text-xs text-slate-400">
-                  Elapsed {formatElapsed(job.startedAt, job.finishedAt)} · {job.progress.importedResources.toLocaleString()}{resourceProgressTotal ? ` / ${resourceProgressTotal.toLocaleString()}` : ""} ENEX resources saved as Novo attachments · {formatBytes(job.progress.processedBytes)} / {formatBytes(job.progress.totalBytes)}
-                </p>
+                <div className="grid gap-1 text-xs text-slate-400">
+                  <ImportProgressRow label="Elapsed time" value={formatDuration(elapsedSeconds)} />
+                  <ImportProgressRow label="Predicted total time" value={projectedTotalSeconds ? formatDuration(projectedTotalSeconds) : "Calculating"} />
+                  <ImportProgressRow label="ENEX resources" value={`${job.progress.importedResources.toLocaleString()}${resourceProgressTotal ? ` / ${resourceProgressTotal.toLocaleString()}` : ""}`} />
+                  <ImportProgressRow label="Data" value={`${formatBytes(job.progress.processedBytes)} / ${formatBytes(job.progress.totalBytes)}`} />
+                </div>
                 {job.state === "failed" ? <p className="text-sm text-rose-300">{job.error || "Import failed. Partial notebook and files were rolled back."}</p> : null}
               </div>
             ) : null}
@@ -1233,6 +1235,15 @@ function ImportMetric({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</p>
       <p className="mt-1 font-medium text-white">{value}</p>
+    </div>
+  );
+}
+
+function ImportProgressRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[minmax(120px,1fr)_auto] gap-3">
+      <span>{label}</span>
+      <span className="text-right font-medium text-slate-200">{value}</span>
     </div>
   );
 }
@@ -2636,14 +2647,29 @@ function formatBytes(value: number) {
   return `${size >= 10 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`;
 }
 
-function formatElapsed(startedAt: string, finishedAt?: string) {
-  const start = Date.parse(startedAt);
-  const end = finishedAt ? Date.parse(finishedAt) : Date.now();
-  if (Number.isNaN(start) || Number.isNaN(end)) return "0s";
-  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+function secondsBetween(startedAt: string, finishedAt?: string) {
+  const start = parseServerTimestamp(startedAt);
+  const end = finishedAt ? parseServerTimestamp(finishedAt) : Date.now();
+  if (Number.isNaN(start) || Number.isNaN(end)) return 0;
+  return Math.max(0, Math.floor((end - start) / 1000));
+}
+
+function estimateTotalSeconds(elapsedSeconds: number, progressPercent: number) {
+  if (!elapsedSeconds || progressPercent <= 0) return 0;
+  if (progressPercent >= 100) return elapsedSeconds;
+  return Math.max(elapsedSeconds, Math.round(elapsedSeconds / (progressPercent / 100)));
+}
+
+function formatDuration(totalSeconds: number) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return "0s";
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function parseServerTimestamp(value: string) {
+  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  return Date.parse(normalized);
 }
 
 function ResizeHandle({ onPointerDown, disabled = false }: { onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void; disabled?: boolean }) {

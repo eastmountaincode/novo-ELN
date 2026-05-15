@@ -1792,6 +1792,7 @@ function HomeView({ recentPages, selectPage }: { recentPages: Array<{ page: Page
 
 function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPage, refreshWorkspace }: { user: AppUser; project: Project; recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; selectNotebook: (project: Project, notebook: Notebook) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; refreshWorkspace: () => Promise<void> }) {
   const canManageProject = user.role === "admin" || project.accessRole === "owner";
+  const color = projectColor(project);
   const totalPages = project.notebooks.reduce((sum, notebook) => sum + notebook.pages.length, 0);
   const totalAttachments = project.notebooks.reduce((sum, notebook) => sum + notebook.pages.reduce((pageSum, page) => pageSum + page.attachments.length, 0), 0);
   const associatedTags = new Map<string, string>();
@@ -1805,12 +1806,12 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 flex items-start justify-between gap-6">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Project</p>
+          <div className="min-w-0 border-l-4 pl-4" style={{ borderColor: color }}>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>Project</p>
             <h1 className="mt-1 text-2xl font-semibold text-slate-950">{project.name}</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{project.description || "Project workspace for notebooks, pages, members, and templates."}</p>
           </div>
-          <div className="border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          <div className="border px-3 py-2 text-sm" style={{ borderColor: colorWithAlpha(color, 0.25), backgroundColor: colorWithAlpha(color, 0.06), color }}>
             {project.accessScope === "project" ? `${project.accessRole ?? "viewer"} project access` : "Notebook-only access"}
           </div>
         </div>
@@ -1823,10 +1824,11 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
               attachments={totalAttachments}
               createdAt={project.createdAt}
               updatedAt={project.updatedAt}
+              accentColor={color}
               tags={Array.from(associatedTags, ([label, color]) => ({ label, color }))}
             />
 
-            <section className="border border-slate-200 bg-white p-4">
+            <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-semibold text-slate-950">Notebooks</h2>
@@ -1838,11 +1840,12 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
                   <button
                     key={notebook.id}
                     onClick={() => selectNotebook(project, notebook)}
-                    className="flex items-center justify-between gap-3 border border-slate-200 bg-white p-3 text-left hover:border-slate-400"
+                    className="flex items-center justify-between gap-3 border border-l-4 bg-white p-3 text-left hover:border-slate-400"
+                    style={{ borderColor: colorWithAlpha(color, 0.24), borderLeftColor: color, backgroundColor: colorWithAlpha(color, 0.025) }}
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <NotebookIcon size={16} className="shrink-0 text-slate-500" />
+                        <NotebookIcon size={16} className="shrink-0" style={{ color }} />
                         <span className="truncate text-sm font-semibold text-slate-950">{notebook.name}</span>
                       </div>
                       <p className="mt-1 text-xs text-slate-500">{notebook.pages.length} pages · {notebook.accessRole} access</p>
@@ -1854,7 +1857,7 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
               </div>
             </section>
 
-            <section className="border border-slate-200 bg-white p-4">
+            <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
               <div className="mb-4">
                 <h2 className="text-base font-semibold text-slate-950">Recent pages</h2>
                 <p className="mt-1 text-sm text-slate-500">Latest edits inside this project.</p>
@@ -1864,7 +1867,8 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
                   <PageCard
                     key={page.id}
                     page={page}
-                    accentColor={project.color}
+                    accentColor={color}
+                    tinted
                     contextLabel={notebook.name}
                     onClick={() => selectPage(project, notebook, page)}
                   />
@@ -1876,18 +1880,18 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
 
           <aside className="space-y-6">
             {canManageProject ? (
-              <section className="border border-slate-200 bg-white p-4">
+              <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
                 <div className="mb-4 flex items-center gap-2">
-                  <Users size={17} />
+                  <Users size={17} style={{ color }} />
                   <h2 className="text-base font-semibold text-slate-950">Share project</h2>
                 </div>
                 <ShareProjectPanel project={project} refreshWorkspace={refreshWorkspace} />
               </section>
             ) : null}
 
-            <section className="border border-slate-200 bg-white p-4">
+            <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
               <div className="mb-4 flex items-center gap-2">
-                <Users size={17} />
+                <Users size={17} style={{ color }} />
                 <h2 className="text-base font-semibold text-slate-950">Project members</h2>
               </div>
               {project.accessScope === "notebook" ? (
@@ -1905,10 +1909,11 @@ function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPag
   );
 }
 
-function ProjectSummary({ notebooks, pages, attachments, createdAt, updatedAt, tags }: { notebooks: number; pages: number; attachments: number; createdAt: string; updatedAt: string; tags: Array<{ label: string; color: string }> }) {
+function ProjectSummary({ notebooks, pages, attachments, createdAt, updatedAt, accentColor, tags }: { notebooks: number; pages: number; attachments: number; createdAt: string; updatedAt: string; accentColor: string; tags: Array<{ label: string; color: string }> }) {
   return (
-    <section className="border border-slate-200 bg-white p-4">
-      <div className="mb-4">
+    <section className="border border-l-4 bg-white p-4" style={{ borderColor: colorWithAlpha(accentColor, 0.22), borderLeftColor: accentColor, backgroundColor: colorWithAlpha(accentColor, 0.018) }}>
+      <div className="mb-4 flex items-center gap-2">
+        <span className="block size-2.5 shrink-0" style={{ backgroundColor: accentColor }} />
         <h2 className="text-base font-semibold text-slate-950">Summary</h2>
       </div>
       <dl className="space-y-2.5">

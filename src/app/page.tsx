@@ -1258,7 +1258,7 @@ function ImportMetric({ label, value }: { label: string; value: string }) {
 
 function ImportProgressRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[minmax(120px,1fr)_minmax(0,2fr)] gap-3">
+    <div className="grid grid-cols-[minmax(170px,1fr)_minmax(0,1fr)] gap-3">
       <span>{label}</span>
       <span className="truncate text-right font-medium text-slate-200" title={value}>{value}</span>
     </div>

@@ -41,8 +41,9 @@ import {
   Undo2,
   Unlink,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { bodyToEditorDocument, editorDocumentToBody } from "@/lib/editor";
+import type { SpreadsheetPreview } from "@/lib/spreadsheetPreview";
 import type { Attachment, BlockType } from "@/lib/types";
 
 export const INLINE_ATTACHMENT_DRAG_TYPE = "application/x-novo-attachment";
@@ -317,6 +318,34 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
   const viewUrl = `/api/attachments/${attrs.attachmentId}/view`;
   const pdfViewUrl = `${viewUrl}#toolbar=0&navpanes=0`;
   const downloadUrl = `/api/attachments/${attrs.attachmentId}/download`;
+  const [sheetPreview, setSheetPreview] = useState<SpreadsheetPreview | null>(null);
+  const [sheetPreviewStatus, setSheetPreviewStatus] = useState("");
+
+  useEffect(() => {
+    if (kind !== "sheet") return;
+    let active = true;
+    async function loadSheetPreview() {
+      setSheetPreviewStatus("Loading preview");
+      try {
+        const response = await fetch(`/api/attachments/${attrs.attachmentId}/preview/spreadsheet?rows=20&columns=8`, { cache: "no-store" });
+        const body = (await response.json().catch(() => null)) as { preview?: SpreadsheetPreview; error?: string } | null;
+        if (!response.ok || !body?.preview) throw new Error(body?.error || `Preview failed (${response.status})`);
+        if (active) {
+          setSheetPreview(body.preview);
+          setSheetPreviewStatus("");
+        }
+      } catch (error) {
+        if (active) {
+          setSheetPreview(null);
+          setSheetPreviewStatus(error instanceof Error ? error.message : "Unable to preview spreadsheet");
+        }
+      }
+    }
+    void loadSheetPreview();
+    return () => {
+      active = false;
+    };
+  }, [attrs.attachmentId, attrs.size, attrs.updatedAt, kind]);
 
   function handleSpreadsheetSaved(attachment: InlineAttachmentAttrs) {
     updateAttributes({
@@ -434,6 +463,53 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
             title="Resize PDF preview"
             aria-label="Resize PDF preview"
           />
+        </div>
+      </NodeViewWrapper>
+    );
+  }
+
+  if (kind === "sheet") {
+    return (
+      <NodeViewWrapper className="my-4" data-attachment-card="true" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
+        <div className={`max-w-3xl border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
+          <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
+            <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move spreadsheet" aria-label="Move spreadsheet">
+              <GripVertical size={16} />
+            </button>
+            <FileSpreadsheet size={17} className="shrink-0 text-emerald-700" />
+            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
+            <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
+            <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs, handleSpreadsheetSaved)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Edit3 size={13} />Edit</button>
+            <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Download size={13} />Download</a>
+          </div>
+          {sheetPreview ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600">
+                <span className="min-w-0 truncate font-medium">{sheetPreview.sheetName}</span>
+                <span className="shrink-0 tabular-nums">
+                  {sheetPreview.rowCount.toLocaleString()} rows x {sheetPreview.columnCount.toLocaleString()} columns
+                  {sheetPreview.truncatedRows || sheetPreview.truncatedColumns ? ` · showing ${sheetPreview.previewRowCount} x ${sheetPreview.previewColumnCount}` : ""}
+                </span>
+              </div>
+              <div className="max-h-72 overflow-auto scroll-contained bg-white">
+                <table className="min-w-full border-collapse text-xs leading-5">
+                  <tbody>
+                    {sheetPreview.rows.map((row, rowIndex) => (
+                      <tr key={rowIndex}>
+                        {row.map((cell, columnIndex) => (
+                          <td key={columnIndex} className={`max-w-56 border border-slate-200 px-2 py-1 align-top text-slate-800 ${rowIndex === 0 ? "bg-slate-100 font-medium text-slate-950" : "bg-white"}`}>
+                            <div className="max-h-20 overflow-hidden whitespace-pre-wrap break-words">{formatSpreadsheetCell(cell)}</div>
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <div className="border-t border-slate-200 bg-white px-3 py-4 text-sm text-slate-500">{sheetPreviewStatus || "No spreadsheet preview available."}</div>
+          )}
         </div>
       </NodeViewWrapper>
     );
@@ -621,6 +697,12 @@ function formatBytes(value: number) {
   if (!Number.isFinite(value) || value <= 0) return "0 KB";
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatSpreadsheetCell(value: string | number | boolean | null) {
+  if (value === null) return "";
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  return String(value);
 }
 
 function normalizeDisplayWidth(value: unknown) {

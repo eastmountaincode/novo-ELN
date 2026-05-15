@@ -1048,6 +1048,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const [inspecting, setInspecting] = useState(false);
   const [job, setJob] = useState<EnexImportJob | null>(null);
   const [importError, setImportError] = useState("");
+  const [openingImportedNotebook, setOpeningImportedNotebook] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const title = getNameModalTitle(dialog);
   const description = getNameModalDescription(dialog);
@@ -1062,6 +1063,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const progressPercent = byteProgressPercent || (progressTotal && job ? Math.min(100, Math.round((job.progress.importedNotes / progressTotal) * 100)) : 0);
   const elapsedSeconds = job ? secondsBetween(job.startedAt, job.finishedAt) : 0;
   const projectedTotalSeconds = job ? estimateTotalSeconds(elapsedSeconds, progressPercent) : 0;
+  const importFinished = job?.state === "succeeded";
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -1076,11 +1078,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
       if (!active || !response.ok) return;
       const nextJob = (await response.json()) as EnexImportJob;
       setJob(nextJob);
-      if (nextJob.state === "succeeded" && nextJob.notebookId && dialog.kind === "createNotebook") {
-        window.clearInterval(timer);
-        await onImportComplete?.(dialog.projectId, nextJob.notebookId);
-      }
-      if (nextJob.state === "failed") window.clearInterval(timer);
+      if (nextJob.state === "succeeded" || nextJob.state === "failed") window.clearInterval(timer);
     }, 1000);
     return () => {
       active = false;
@@ -1141,18 +1139,33 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
     setJob(body.job);
   }
 
+  async function openImportedNotebook() {
+    if (dialog.kind !== "createNotebook" || !job?.notebookId) return;
+    setOpeningImportedNotebook(true);
+    await onImportComplete?.(dialog.projectId, job.notebookId);
+    setOpeningImportedNotebook(false);
+  }
+
   return (
     <ModalFrame>
       <form onSubmit={(event) => void handleSubmit(event)}>
-        <h2 className="text-lg font-semibold text-white">{title}</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-400">{description}</p>
-        {isNotebookCreate ? (
+        <h2 className="text-lg font-semibold text-white">{importFinished ? "Import complete" : title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-400">{importFinished ? "Review the imported notebook before opening it." : description}</p>
+        {importFinished ? (
+          <ImportFinishedSummary
+            notebookName={name}
+            serverPath={serverPath}
+            inspection={inspection}
+            job={job}
+            elapsedSeconds={elapsedSeconds}
+          />
+        ) : isNotebookCreate ? (
           <div className="mt-5 grid grid-cols-2 border border-white/10 bg-white/5 p-1 text-sm">
             <button type="button" onClick={() => setMode("blank")} className={`h-9 ${mode === "blank" ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-white/10"}`}>Blank</button>
             <button type="button" onClick={() => setMode("import")} className={`h-9 ${mode === "import" ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-white/10"}`}>Import ENEX</button>
           </div>
         ) : null}
-        <label className="mt-5 block text-sm font-medium text-slate-200">
+        {!importFinished ? <label className="mt-5 block text-sm font-medium text-slate-200">
           {mode === "import" && isNotebookCreate ? "Notebook name" : "Name"}
           <input
             ref={inputRef}
@@ -1161,8 +1174,8 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
             className="mt-2 h-10 w-full border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
             placeholder="Name"
           />
-        </label>
-        {mode === "import" && isNotebookCreate ? (
+        </label> : null}
+        {!importFinished && mode === "import" && isNotebookCreate ? (
           <div className="mt-4 space-y-4">
             <label className="block text-sm font-medium text-slate-200">
               ENEX server path
@@ -1214,8 +1227,12 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
           </div>
         ) : null}
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">Cancel</button>
-          {mode === "import" && isNotebookCreate ? (
+          <button type="button" onClick={onCancel} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">{importFinished ? "Close" : "Cancel"}</button>
+          {importFinished ? (
+            <button type="button" onClick={() => void openImportedNotebook()} disabled={openingImportedNotebook || !job?.notebookId} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">
+              {openingImportedNotebook ? "Opening" : "Open notebook"}
+            </button>
+          ) : mode === "import" && isNotebookCreate ? (
             <button type="button" onClick={() => void startImport()} disabled={importDisabled} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">
               {importing ? "Importing" : "Import"}
             </button>
@@ -1241,9 +1258,33 @@ function ImportMetric({ label, value }: { label: string; value: string }) {
 
 function ImportProgressRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[minmax(120px,1fr)_auto] gap-3">
+    <div className="grid grid-cols-[minmax(120px,1fr)_minmax(0,2fr)] gap-3">
       <span>{label}</span>
-      <span className="text-right font-medium text-slate-200">{value}</span>
+      <span className="truncate text-right font-medium text-slate-200" title={value}>{value}</span>
+    </div>
+  );
+}
+
+function ImportFinishedSummary({ notebookName, serverPath, inspection, job, elapsedSeconds }: { notebookName: string; serverPath: string; inspection: EnexInspection | null; job: EnexImportJob; elapsedSeconds: number }) {
+  const resourceTotal = job.progress.totalResources ?? inspection?.resourceCount ?? null;
+  const noteTotal = job.progress.totalNotes ?? inspection?.noteCount ?? null;
+  return (
+    <div className="mt-5 space-y-4">
+      <div className="border border-emerald-400/30 bg-emerald-400/10 p-3">
+        <p className="text-sm font-semibold text-emerald-200">Notebook created</p>
+        <p className="mt-1 text-sm text-slate-300">{notebookName || job.notebookId || "Imported notebook"}</p>
+      </div>
+      <div className="grid gap-1 border border-white/10 bg-white/5 p-3 text-xs text-slate-400">
+        <ImportProgressRow label="Notes imported" value={`${job.progress.importedNotes.toLocaleString()}${noteTotal ? ` / ${noteTotal.toLocaleString()}` : ""}`} />
+        <ImportProgressRow label="ENEX resources" value={`${job.progress.importedResources.toLocaleString()}${resourceTotal ? ` / ${resourceTotal.toLocaleString()}` : ""}`} />
+        {inspection ? <ImportProgressRow label="Inline media refs" value={inspection.inlineMediaCount.toLocaleString()} /> : null}
+        <ImportProgressRow label="Elapsed time" value={formatDuration(elapsedSeconds)} />
+        <ImportProgressRow label="Data" value={formatBytes(job.progress.processedBytes || job.progress.totalBytes)} />
+        <ImportProgressRow label="Source file" value={serverPath || job.id} />
+      </div>
+      {inspection?.tags.length ? (
+        <p className="text-xs leading-5 text-slate-400">Top tags: {inspection.tags.slice(0, 6).map((tag) => `${tag.tag} (${tag.count})`).join(", ")}</p>
+      ) : null}
     </div>
   );
 }

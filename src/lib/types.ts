@@ -1,6 +1,6 @@
 export type UserRole = "admin" | "member" | "viewer";
 export type AccessRole = "owner" | "editor" | "viewer";
-export type PageStatus = "Draft" | "Final";
+export type PageStatus = "" | "Working" | "Needs review" | "Completed" | "Failed";
 export type BlockType = "image" | "sheet" | "pdf" | "slides" | "sequence" | "file";
 
 export type AppUser = {

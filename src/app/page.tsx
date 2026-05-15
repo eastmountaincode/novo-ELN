@@ -4,6 +4,7 @@ import {
   Beaker,
   CalendarClock,
   CalendarPlus,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -11,6 +12,7 @@ import {
   Download,
   FileArchive,
   FileImage,
+  Filter,
   FileSpreadsheet,
   FileText,
   FlaskConical,
@@ -37,7 +39,7 @@ import { PresentationModal } from "@/components/PresentationModal";
 import { INLINE_ATTACHMENT_DRAG_TYPE, RichTextEditor, attachmentToInlineAttrs, type InlineAttachmentAttrs } from "@/components/RichTextEditor";
 import { SpreadsheetModal } from "@/components/SpreadsheetModal";
 import { bodyToEditorText } from "@/lib/editor";
-import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
+import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
 
 const blockIcons: Record<BlockType, typeof ImageIcon> = {
   image: ImageIcon,
@@ -66,6 +68,14 @@ const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
   { key: "updated", label: "Date updated" },
   { key: "created", label: "Date created" },
   { key: "title", label: "Title" },
+];
+
+const PAGE_STATUS_OPTIONS: Array<{ value: PageStatus; label: string }> = [
+  { value: "", label: "No status" },
+  { value: "Working", label: "Working" },
+  { value: "Needs review", label: "Needs review" },
+  { value: "Completed", label: "Completed" },
+  { value: "Failed", label: "Failed" },
 ];
 
 type NameDialogState =
@@ -519,7 +529,7 @@ export default function Home() {
     } : current);
   }
 
-  async function savePage(patch: { title?: string; body?: string; status?: "Draft" | "Final" }) {
+  async function savePage(patch: { title?: string; body?: string; status?: PageStatus }) {
     if (!selectedPage) return;
     const pageId = selectedPage.id;
     setSaving("Saving");
@@ -1573,11 +1583,24 @@ function UnifiedSidebar({ workspace, activeView, selectedProject, selectedNotebo
 }
 
 function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, deletePage }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; deletePage: (page: PageEntry) => void }) {
-  const pages = selectedNotebook?.pages;
+  const pages = selectedNotebook?.pages ?? [];
   const [sortKey, setSortKey] = useState<PageSortKey>("updated");
   const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
+  const [filterOptionsOpen, setFilterOptionsOpen] = useState(false);
+  const [tagQuery, setTagQuery] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedStatuses, setSelectedStatuses] = useState<PageStatus[]>([]);
   const sortOptionsRef = useRef<HTMLDivElement>(null);
-  const sortedPages = useMemo(() => sortNotebookPages(pages ?? [], sortKey), [pages, sortKey]);
+  const filterOptionsRef = useRef<HTMLDivElement>(null);
+  const availableTags = useMemo(() => normalizeTagList(pages.flatMap((page) => page.tags)).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })), [pages]);
+  const filteredPages = useMemo(() => filterNotebookPages(pages, selectedTags, selectedStatuses), [pages, selectedTags, selectedStatuses]);
+  const sortedPages = useMemo(() => sortNotebookPages(filteredPages, sortKey), [filteredPages, sortKey]);
+  const filterActive = selectedTags.length > 0 || selectedStatuses.length > 0;
+  const filterCount = selectedTags.length + selectedStatuses.length;
+  const visibleTags = useMemo(() => {
+    const query = tagQuery.trim().toLowerCase();
+    return query ? availableTags.filter((tag) => tag.toLowerCase().includes(query)) : availableTags;
+  }, [availableTags, tagQuery]);
   const color = projectColor(selectedProject);
 
   useEffect(() => {
@@ -1613,6 +1636,53 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
     };
   }, [sortOptionsOpen]);
 
+  useEffect(() => {
+    if (!filterOptionsOpen) return;
+
+    function isInsideFilterOptions(target: EventTarget | null) {
+      return target instanceof Element && Boolean(filterOptionsRef.current?.contains(target));
+    }
+
+    function closeFilterOptions() {
+      setFilterOptionsOpen(false);
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      if (!isInsideFilterOptions(event.target)) closeFilterOptions();
+    }
+
+    function onFocusIn(event: FocusEvent) {
+      if (!isInsideFilterOptions(event.target)) closeFilterOptions();
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeFilterOptions();
+    }
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [filterOptionsOpen]);
+
+  function toggleTagFilter(tag: string) {
+    setSelectedTags((current) => current.some((selected) => selected.toLowerCase() === tag.toLowerCase()) ? current.filter((selected) => selected.toLowerCase() !== tag.toLowerCase()) : [...current, tag]);
+  }
+
+  function toggleStatusFilter(status: PageStatus) {
+    setSelectedStatuses((current) => current.includes(status) ? current.filter((selected) => selected !== status) : [...current, status]);
+  }
+
+  function clearFilters() {
+    setSelectedTags([]);
+    setSelectedStatuses([]);
+    setTagQuery("");
+  }
+
   return (
     <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
@@ -1620,52 +1690,145 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
           <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>{selectedProject?.name ?? "Project"}</p>
           <div className="flex min-w-0 items-center justify-between gap-3">
             <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
-            <span className="shrink-0 text-sm font-medium text-slate-500">{sortedPages.length}</span>
+            <span className="shrink-0 text-sm font-medium text-slate-500">{filterActive ? `${sortedPages.length} / ${pages.length}` : sortedPages.length}</span>
           </div>
         </div>
         <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 px-3 text-sm font-medium text-white hover:opacity-90" style={{ backgroundColor: color }}><Plus size={15} />Page</button>
-        <div ref={sortOptionsRef} data-transient-menu="true" className="relative mt-3">
-          <button
-            type="button"
-            onClick={() => setSortOptionsOpen((open) => !open)}
-            className="flex h-9 w-full items-center gap-2 border border-slate-300 bg-white px-3 text-left text-sm text-slate-700 hover:border-slate-400"
-            aria-haspopup="dialog"
-            aria-expanded={sortOptionsOpen}
-          >
-            <SlidersHorizontal size={16} className="shrink-0 text-slate-500" />
-            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Sort</span>
-            <span className="min-w-0 flex-1 truncate font-medium text-slate-900">{PAGE_SORT_OPTIONS.find((option) => option.key === sortKey)?.label}</span>
-            <ChevronDown size={16} className={`shrink-0 text-slate-500 transition-transform ${sortOptionsOpen ? "rotate-180" : ""}`} />
-          </button>
-          {sortOptionsOpen ? (
-            <section
-              role="dialog"
-              aria-label="Sort pages"
-              className="absolute left-0 top-11 z-30 w-full border border-slate-800 bg-slate-950 p-2 text-slate-100 shadow-2xl shadow-slate-950/35"
+        <div className="mt-3 grid grid-cols-[minmax(0,1fr)_40px] gap-2">
+          <div ref={sortOptionsRef} data-transient-menu="true" className="relative">
+            <button
+              type="button"
+              onClick={() => setSortOptionsOpen((open) => !open)}
+              className="flex h-9 w-full items-center gap-2 border border-slate-300 bg-white px-3 text-left text-sm text-slate-700 hover:border-slate-400"
+              aria-haspopup="dialog"
+              aria-expanded={sortOptionsOpen}
             >
-              <p className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Sort by</p>
-              <div className="space-y-1">
-                {PAGE_SORT_OPTIONS.map((option) => {
-                  const selected = option.key === sortKey;
-                  return (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => {
-                        setSortKey(option.key);
-                        setSortOptionsOpen(false);
-                      }}
-                      className={`flex h-10 w-full items-center justify-between gap-3 px-3 text-left text-sm font-medium ${selected ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
-                    >
-                      <span>{option.label}</span>
-                      {selected ? <span className="text-xs uppercase tracking-[0.12em]" style={{ color }}>Selected</span> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ) : null}
+              <SlidersHorizontal size={16} className="shrink-0 text-slate-500" />
+              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Sort</span>
+              <span className="min-w-0 flex-1 truncate font-medium text-slate-900">{PAGE_SORT_OPTIONS.find((option) => option.key === sortKey)?.label}</span>
+              <ChevronDown size={16} className={`shrink-0 text-slate-500 transition-transform ${sortOptionsOpen ? "rotate-180" : ""}`} />
+            </button>
+            {sortOptionsOpen ? (
+              <section
+                role="dialog"
+                aria-label="Sort pages"
+                className="absolute left-0 top-11 z-30 w-full border border-slate-800 bg-slate-950 p-2 text-slate-100 shadow-2xl shadow-slate-950/35"
+              >
+                <p className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Sort by</p>
+                <div className="space-y-1">
+                  {PAGE_SORT_OPTIONS.map((option) => {
+                    const selected = option.key === sortKey;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => {
+                          setSortKey(option.key);
+                          setSortOptionsOpen(false);
+                        }}
+                        className={`flex h-10 w-full items-center justify-between gap-3 px-3 text-left text-sm font-medium ${selected ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
+                      >
+                        <span>{option.label}</span>
+                        {selected ? <span className="text-xs uppercase tracking-[0.12em]" style={{ color }}>Selected</span> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+          </div>
+
+          <div ref={filterOptionsRef} data-transient-menu="true" className="relative">
+            <button
+              type="button"
+              onClick={() => setFilterOptionsOpen((open) => !open)}
+              className={`relative grid h-9 w-10 place-items-center border bg-white text-slate-600 hover:border-slate-400 ${filterActive ? "border-slate-500" : "border-slate-300"}`}
+              aria-haspopup="dialog"
+              aria-expanded={filterOptionsOpen}
+              title="Filter pages"
+            >
+              <Filter size={16} />
+              {filterCount ? <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center bg-slate-950 px-1 text-[10px] font-semibold leading-4 text-white">{filterCount}</span> : null}
+            </button>
+            {filterOptionsOpen ? (
+              <section
+                role="dialog"
+                aria-label="Filter pages"
+                className="absolute right-0 top-11 z-30 w-80 border border-slate-800 bg-slate-950 p-3 text-slate-100 shadow-2xl shadow-slate-950/35"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Filter by</p>
+                  {filterActive ? <button type="button" onClick={clearFilters} className="text-xs font-medium text-cyan-300 hover:text-cyan-200">Clear all</button> : null}
+                </div>
+
+                <div className="mt-3 border-t border-white/10 pt-3">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-200"><Tag size={15} style={{ color }} />Tags</div>
+                  <input
+                    value={tagQuery}
+                    onChange={(event) => setTagQuery(event.target.value)}
+                    className="mb-2 h-9 w-full border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
+                    placeholder="Search tags..."
+                  />
+                  <div className="max-h-40 space-y-1 overflow-y-auto scroll-contained pr-1">
+                    {visibleTags.map((tag) => {
+                      const selected = selectedTags.some((candidate) => candidate.toLowerCase() === tag.toLowerCase());
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => toggleTagFilter(tag)}
+                          className={`flex h-9 w-full items-center gap-2 px-2 text-left text-sm ${selected ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
+                        >
+                          <span className={`grid size-5 shrink-0 place-items-center border ${selected ? "border-cyan-300 bg-cyan-400 text-slate-950" : "border-slate-600"}`}>{selected ? <Check size={13} /> : null}</span>
+                          <span className="truncate">{tag}</span>
+                        </button>
+                      );
+                    })}
+                    {visibleTags.length === 0 ? <p className="px-2 py-2 text-sm text-slate-500">No matching tags.</p> : null}
+                  </div>
+                </div>
+
+                <div className="mt-3 border-t border-white/10 pt-3">
+                  <p className="mb-2 text-sm font-semibold text-slate-200">Status</p>
+                  <div className="space-y-1">
+                    {PAGE_STATUS_OPTIONS.map((option) => {
+                      const selected = selectedStatuses.includes(option.value);
+                      return (
+                        <button
+                          key={option.label}
+                          type="button"
+                          onClick={() => toggleStatusFilter(option.value)}
+                          className={`flex h-9 w-full items-center gap-2 px-2 text-left text-sm ${selected ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
+                        >
+                          <span className={`grid size-5 shrink-0 place-items-center border ${selected ? "border-cyan-300 bg-cyan-400 text-slate-950" : "border-slate-600"}`}>{selected ? <Check size={13} /> : null}</span>
+                          <span>{option.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+            ) : null}
+          </div>
         </div>
+
+        {filterActive ? (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            {selectedTags.map((tag) => (
+              <button key={tag} type="button" onClick={() => toggleTagFilter(tag)} className="inline-flex h-7 max-w-full items-center gap-1 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:border-slate-500">
+                <Tag size={12} />
+                <span className="truncate">{tag}</span>
+                <X size={12} />
+              </button>
+            ))}
+            {selectedStatuses.map((status) => (
+              <button key={status || "no-status"} type="button" onClick={() => toggleStatusFilter(status)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:border-slate-500">
+                {getPageStatusLabel(status)}
+                <X size={12} />
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="overflow-y-auto scroll-contained py-3">
@@ -1682,7 +1845,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
               onDelete={() => deletePage(page)}
             />
           ))}
-          {sortedPages.length === 0 ? <p className="p-3 text-sm text-slate-500">No pages yet.</p> : null}
+          {sortedPages.length === 0 ? <p className="p-3 text-sm text-slate-500">{filterActive ? "No pages match these filters." : "No pages yet."}</p> : null}
         </div>
       </div>
     </aside>
@@ -1781,6 +1944,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   const fileLabel = page.attachments.length ? `${page.attachments.length} files` : "No files";
   const color = normalizeColor(accentColor);
   const cardStyle = active || tinted ? pageCardTintStyle(color) : undefined;
+  const visibleTags = page.tags.slice(0, 3);
   return (
     <div className="group relative">
       <button
@@ -1792,6 +1956,13 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
           <h3 className="text-sm font-semibold leading-5 text-slate-900">{page.title || "Untitled"}</h3>
         </div>
         <p className="mt-2 max-h-10 overflow-hidden text-sm leading-5 text-slate-500">{bodyToEditorText(page.body) || "Empty page"}</p>
+        {(page.status || visibleTags.length > 0) ? (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {page.status ? <span className="inline-flex h-6 items-center border px-2 text-[11px] font-medium" style={pageStatusStyle(page.status)}>{getPageStatusLabel(page.status)}</span> : null}
+            {visibleTags.map((tag) => <span key={tag} className="inline-flex h-6 max-w-full items-center truncate border border-slate-200 bg-slate-100 px-2 text-[11px] font-medium text-slate-600">{tag}</span>)}
+            {page.tags.length > visibleTags.length ? <span className="inline-flex h-6 items-center px-1 text-[11px] font-medium text-slate-400">+{page.tags.length - visibleTags.length}</span> : null}
+          </div>
+        ) : null}
         <div className="mt-3 space-y-1 text-[11px] leading-4 text-slate-500">
           {contextLabel ? (
             <div className="truncate font-medium text-slate-600">{contextLabel}</div>
@@ -2672,7 +2843,7 @@ function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCa
   );
 }
 
-function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, setPageTags, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: "Draft" | "Final" }) => Promise<void>; setPageTags: (tags: string[]) => Promise<void>; openFilePicker: () => void }) {
+function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, setPageTags, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; setPageTags: (tags: string[]) => Promise<void>; openFilePicker: () => void }) {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const attachmentCount = page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
@@ -2684,6 +2855,20 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
         <div className="mb-2 flex items-center gap-2 text-sm text-slate-500"><span>{selectedProject?.name}</span><ChevronRight size={14} /><span>{selectedNotebook?.name}</span>{saving ? <span className="ml-2 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}</div>
         <div className="flex items-center gap-3">
           <input value={page.title} onChange={(event) => patchSelectedPage({ title: event.target.value })} onBlur={(event) => void savePage({ title: event.target.value })} className="min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none" />
+          <label className="shrink-0 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+            Status
+            <select
+              value={page.status}
+              onChange={(event) => {
+                const status = event.target.value as PageStatus;
+                patchSelectedPage({ status });
+                void savePage({ status });
+              }}
+              className="mt-1 h-9 border border-slate-300 bg-white px-2 text-sm font-medium normal-case tracking-normal text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500"
+            >
+              {PAGE_STATUS_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
         </div>
         <PageTagsBar tags={page.tags} setPageTags={setPageTags} />
       </header>
@@ -2896,6 +3081,28 @@ function pageCardTintStyle(value: string | undefined) {
     backgroundColor: colorWithAlpha(value, PAGE_CARD_TINT_ALPHA),
     borderColor: "#e2e8f0",
   };
+}
+
+function filterNotebookPages(pages: PageEntry[], selectedTags: string[], selectedStatuses: PageStatus[]) {
+  const tagKeys = selectedTags.map((tag) => tag.toLowerCase());
+  return pages.filter((page) => {
+    const pageTagKeys = new Set(page.tags.map((tag) => tag.toLowerCase()));
+    const matchesTags = tagKeys.every((tag) => pageTagKeys.has(tag));
+    const matchesStatus = selectedStatuses.length === 0 || selectedStatuses.includes(page.status);
+    return matchesTags && matchesStatus;
+  });
+}
+
+function getPageStatusLabel(status: PageStatus) {
+  return PAGE_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? "No status";
+}
+
+function pageStatusStyle(status: PageStatus) {
+  if (status === "Failed") return { borderColor: "#fecdd3", backgroundColor: "#fff1f2", color: "#be123c" };
+  if (status === "Needs review") return { borderColor: "#fde68a", backgroundColor: "#fffbeb", color: "#a16207" };
+  if (status === "Completed") return { borderColor: "#bbf7d0", backgroundColor: "#f0fdf4", color: "#15803d" };
+  if (status === "Working") return { borderColor: "#bfdbfe", backgroundColor: "#eff6ff", color: "#1d4ed8" };
+  return { borderColor: "#e2e8f0", backgroundColor: "#f8fafc", color: "#64748b" };
 }
 
 function sortNotebookPages(pages: PageEntry[], sortKey: PageSortKey) {

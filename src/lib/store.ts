@@ -62,7 +62,7 @@ export function ensureDatabase() {
       notebook_id TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       body TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'Draft',
+      status TEXT NOT NULL DEFAULT '',
       owner_id TEXT NOT NULL REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -134,6 +134,7 @@ export function ensureDatabase() {
   ensureProjectColorColumn();
   ensureImportJobsTotalResourcesColumn();
   ensureImportJobsWorkerCountColumn();
+  migratePageStatusValues();
   migrateGroupedTagsToPageTags();
   seedIfEmpty();
   rebuildSearchIndex();
@@ -156,6 +157,13 @@ function ensureImportJobsWorkerCountColumn() {
   const columns = querySql("PRAGMA table_info(import_jobs);");
   if (columns.some((column) => column.name === "worker_count")) return;
   execSql("ALTER TABLE import_jobs ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 4;");
+}
+
+function migratePageStatusValues() {
+  execSql(`
+    UPDATE pages SET status = '' WHERE status = 'Draft';
+    UPDATE pages SET status = 'Completed' WHERE status = 'Final';
+  `);
 }
 
 function migrateGroupedTagsToPageTags() {
@@ -205,9 +213,9 @@ function seedIfEmpty() {
 
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES
-      (${sql(pageOneId)}, ${sql(constructNotebookId)}, 'SortSeq plasmid assembly notes', ${sql("Summary of the SortSeq construct changes. The key need is keeping protocol text, source files, and analysis artifacts together without turning this into a full LIMS.")}, 'Draft', ${sql(userId)}),
-      (${sql(pageTwoId)}, ${sql(constructNotebookId)}, 'Competent cell prep', ${sql("Prep notes should behave like normal pages, not special experiments. A lightweight checklist is enough for repeatable work; scheduling and bookable resources are intentionally out of scope.")}, 'Draft', ${sql(userId)}),
-      (${sql(pageThreeId)}, ${sql(meetingNotebookId)}, 'ELN requirements from Slim', ${sql("The replacement should preserve Evernote-like workflows: projects, notebooks, pages, inline images, attachments, search, and history.")}, 'Draft', ${sql(userId)});
+      (${sql(pageOneId)}, ${sql(constructNotebookId)}, 'SortSeq plasmid assembly notes', ${sql("Summary of the SortSeq construct changes. The key need is keeping protocol text, source files, and analysis artifacts together without turning this into a full LIMS.")}, '', ${sql(userId)}),
+      (${sql(pageTwoId)}, ${sql(constructNotebookId)}, 'Competent cell prep', ${sql("Prep notes should behave like normal pages, not special experiments. A lightweight checklist is enough for repeatable work; scheduling and bookable resources are intentionally out of scope.")}, '', ${sql(userId)}),
+      (${sql(pageThreeId)}, ${sql(meetingNotebookId)}, 'ELN requirements from Slim', ${sql("The replacement should preserve Evernote-like workflows: projects, notebooks, pages, inline images, attachments, search, and history.")}, '', ${sql(userId)});
 
     INSERT INTO page_tags (page_id, tag)
     VALUES
@@ -285,7 +293,7 @@ export function createUser(input: { email: string; name: string; password: strin
     VALUES (${sql(notebookId)}, ${sql(projectId)}, 'Notebook');
 
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', 'Draft', ${sql(userId)});
+    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
 
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created account', ${sql(userId)});
@@ -517,7 +525,7 @@ export function getWorkspace(userId: string): Workspace {
         notebookId: page.notebook_id,
         title: page.title,
         body: page.body,
-        status: page.status as PageStatus,
+        status: normalizePageStatus(page.status),
         ownerId: page.owner_id,
         ownerName: page.owner_name,
         createdAt: page.created_at,
@@ -571,7 +579,7 @@ export function createProject(userId: string, name = "New Project") {
     INSERT INTO notebooks (id, project_id, name)
     VALUES (${sql(notebookId)}, ${sql(projectId)}, 'Notebook');
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', 'Draft', ${sql(userId)});
+    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created project', ${sql(userId)});
   `);
@@ -588,7 +596,7 @@ export function createNotebook(userId: string, projectId: string, name = "New No
     INSERT INTO notebooks (id, project_id, name)
     VALUES (${sql(notebookId)}, ${sql(projectId)}, ${sql(name)});
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', 'Draft', ${sql(userId)});
+    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created notebook', ${sql(userId)});
     UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(projectId)};
@@ -625,7 +633,7 @@ export function createPage(userId: string, notebookId: string) {
   const pageId = randomUUID();
   execSql(`
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', 'Draft', ${sql(userId)});
+    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created page', ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
@@ -641,11 +649,11 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
   const assignments: string[] = [];
   if (patch.title !== undefined) assignments.push(`title = ${sql(patch.title)}`);
   if (patch.body !== undefined) assignments.push(`body = ${sql(patch.body)}`);
-  if (patch.status !== undefined) assignments.push(`status = ${sql(patch.status)}`);
+  if (patch.status !== undefined) assignments.push(`status = ${sql(normalizePageStatus(patch.status))}`);
   if (!assignments.length) return;
   assignments.push("updated_at = datetime('now')");
 
-  const summary = patch.status ? `Status changed to ${patch.status}` : "Edited page";
+  const summary = patch.status !== undefined ? `Status changed to ${normalizePageStatus(patch.status) || "No status"}` : "Edited page";
   execSql(`
     UPDATE pages SET ${assignments.join(", ")} WHERE id = ${sql(pageId)};
     INSERT INTO page_versions (id, page_id, summary, created_by)
@@ -803,7 +811,7 @@ export function createImportedPage(input: {
 
   execSql(`
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id, created_at, updated_at)
-    VALUES (${sql(pageId)}, ${sql(input.notebookId)}, ${sql(title)}, ${sql(input.body)}, 'Draft', ${sql(input.userId)}, ${sql(createdAt)}, ${sql(updatedAt)});
+    VALUES (${sql(pageId)}, ${sql(input.notebookId)}, ${sql(title)}, ${sql(input.body)}, '', ${sql(input.userId)}, ${sql(createdAt)}, ${sql(updatedAt)});
     ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
   `);
   return pageId;
@@ -923,7 +931,7 @@ export function importNotebook(input: {
     const pageId = randomUUID();
     execSql(`
       INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-      VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title || "Untitled Evernote note")}, ${sql(note.body)}, 'Draft', ${sql(input.userId)});
+      VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title || "Untitled Evernote note")}, ${sql(note.body)}, '', ${sql(input.userId)});
       ${note.tags.map((tag) => `INSERT OR IGNORE INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
       INSERT INTO page_versions (id, page_id, summary, created_by)
       VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Imported from ENEX', ${sql(input.userId)});
@@ -932,6 +940,13 @@ export function importNotebook(input: {
   execSql(`UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(input.projectId)};`);
   rebuildSearchIndex();
   return notebookId;
+}
+
+function normalizePageStatus(value: unknown): PageStatus {
+  if (value === "Final") return "Completed";
+  if (value === "Draft" || value === null || value === undefined) return "";
+  if (value === "Working" || value === "Needs review" || value === "Completed" || value === "Failed") return value;
+  return "";
 }
 
 function assertProjectEditAccess(userId: string, projectId: string) {

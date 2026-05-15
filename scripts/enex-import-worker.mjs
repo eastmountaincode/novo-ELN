@@ -359,7 +359,7 @@ function insertImportedNote({ job, notebookId, pageId, note, body, plainText, at
   execSql(`
     BEGIN IMMEDIATE;
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id, created_at, updated_at)
-    VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title)}, ${sql(body)}, 'Draft', ${sql(job.user_id)}, ${sql(createdAt)}, ${sql(updatedAt)});
+    VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title)}, ${sql(body)}, '', ${sql(job.user_id)}, ${sql(createdAt)}, ${sql(updatedAt)});
     ${attachmentSql}
     ${tagSql}
     INSERT INTO page_versions (id, page_id, summary, created_by, created_at)

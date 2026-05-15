@@ -30,13 +30,13 @@ describe("store", () => {
     const notebookId = getWorkspace(user.id).projects[0].notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
 
-    updatePage(user.id, pageId, { title: "Edited title", body: "Edited body", status: "Final" });
+    updatePage(user.id, pageId, { title: "Edited title", body: "Edited body", status: "Completed" });
 
     const page = getWorkspace(user.id).projects[0].notebooks[0].pages.find((candidate) => candidate.id === pageId);
     expect(page?.title).toBe("Edited title");
     expect(page?.body).toBe("Edited body");
-    expect(page?.status).toBe("Final");
-    expect(page?.versions[0]).toBe("Status changed to Final");
+    expect(page?.status).toBe("Completed");
+    expect(page?.versions[0]).toBe("Status changed to Completed");
   });
 
   it("registers a member with a private starter workspace", async () => {

@@ -1588,6 +1588,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   const [sortKey, setSortKey] = useState<PageSortKey>("updated");
   const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
   const [filterOptionsOpen, setFilterOptionsOpen] = useState(false);
+  const [activeFilterPanel, setActiveFilterPanel] = useState<"tags" | "status">("tags");
   const [tagQuery, setTagQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<PageStatus[]>([]);
@@ -1685,7 +1686,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   }
 
   return (
-    <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
+    <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>{selectedProject?.name ?? "Project"}</p>
@@ -1694,122 +1695,157 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
             <span className="shrink-0 text-sm font-medium text-slate-500">{filterActive ? `${sortedPages.length} / ${pages.length}` : sortedPages.length}</span>
           </div>
         </div>
-        <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 px-3 text-sm font-medium text-white hover:opacity-90" style={{ backgroundColor: color }}><Plus size={15} />Page</button>
-        <div className="mt-3 grid grid-cols-[minmax(0,1fr)_40px] gap-2">
-          <div ref={sortOptionsRef} data-transient-menu="true" className="relative">
-            <button
-              type="button"
-              onClick={() => setSortOptionsOpen((open) => !open)}
-              className="flex h-9 w-full items-center gap-2 border border-slate-300 bg-white px-3 text-left text-sm text-slate-700 hover:border-slate-400"
-              aria-haspopup="dialog"
-              aria-expanded={sortOptionsOpen}
-            >
-              <SlidersHorizontal size={16} className="shrink-0 text-slate-500" />
-              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Sort</span>
-              <span className="min-w-0 flex-1 truncate font-medium text-slate-900">{PAGE_SORT_OPTIONS.find((option) => option.key === sortKey)?.label}</span>
-              <ChevronDown size={16} className={`shrink-0 text-slate-500 transition-transform ${sortOptionsOpen ? "rotate-180" : ""}`} />
-            </button>
-            {sortOptionsOpen ? (
-              <section
-                role="dialog"
+        <div className="flex items-center justify-between gap-2">
+          <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 px-3 text-sm font-medium text-white hover:opacity-90" style={{ backgroundColor: color }}><Plus size={15} />Page</button>
+          <div className="flex items-center gap-2">
+            <div ref={sortOptionsRef} data-transient-menu="true" className="relative">
+              <button
+                type="button"
+                onClick={() => setSortOptionsOpen((open) => !open)}
+                className="grid h-9 w-10 place-items-center border border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900"
                 aria-label="Sort pages"
-                className="absolute left-0 top-11 z-30 w-full border border-slate-800 bg-slate-950 p-2 text-slate-100 shadow-2xl shadow-slate-950/35"
+                aria-haspopup="dialog"
+                aria-expanded={sortOptionsOpen}
+                title={`Sort: ${PAGE_SORT_OPTIONS.find((option) => option.key === sortKey)?.label}`}
               >
-                <p className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Sort by</p>
-                <div className="space-y-1">
-                  {PAGE_SORT_OPTIONS.map((option) => {
-                    const selected = option.key === sortKey;
-                    return (
-                      <button
-                        key={option.key}
-                        type="button"
-                        onClick={() => {
-                          setSortKey(option.key);
-                          setSortOptionsOpen(false);
-                        }}
-                        className={`flex h-10 w-full items-center justify-between gap-3 px-3 text-left text-sm font-medium ${selected ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
-                      >
-                        <span>{option.label}</span>
-                        {selected ? <span className="text-xs uppercase tracking-[0.12em]" style={{ color }}>Selected</span> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            ) : null}
-          </div>
-
-          <div ref={filterOptionsRef} data-transient-menu="true" className="relative">
-            <button
-              type="button"
-              onClick={() => setFilterOptionsOpen((open) => !open)}
-              className={`relative grid h-9 w-10 place-items-center border bg-white text-slate-600 hover:border-slate-400 ${filterActive ? "border-slate-500" : "border-slate-300"}`}
-              aria-haspopup="dialog"
-              aria-expanded={filterOptionsOpen}
-              title="Filter pages"
-            >
-              <Filter size={16} />
-              {filterCount ? <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center bg-slate-950 px-1 text-[10px] font-semibold leading-4 text-white">{filterCount}</span> : null}
-            </button>
-            {filterOptionsOpen ? (
-              <section
-                role="dialog"
-                aria-label="Filter pages"
-                className="absolute right-0 top-11 z-30 w-80 border border-slate-800 bg-slate-950 p-3 text-slate-100 shadow-2xl shadow-slate-950/35"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Filter by</p>
-                  {filterActive ? <button type="button" onClick={clearFilters} className="text-xs font-medium text-cyan-300 hover:text-cyan-200">Clear all</button> : null}
-                </div>
-
-                <div className="mt-3 border-t border-white/10 pt-3">
-                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-200"><Tag size={15} style={{ color }} />Tags</div>
-                  <input
-                    value={tagQuery}
-                    onChange={(event) => setTagQuery(event.target.value)}
-                    className="mb-2 h-9 w-full border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
-                    placeholder="Search tags..."
-                  />
-                  <div className="max-h-40 space-y-1 overflow-y-auto scroll-contained pr-1">
-                    {visibleTags.map((tag) => {
-                      const selected = selectedTags.some((candidate) => candidate.toLowerCase() === tag.toLowerCase());
-                      return (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => toggleTagFilter(tag)}
-                          className={`flex h-9 w-full items-center gap-2 px-2 text-left text-sm ${selected ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
-                        >
-                          <span className={`grid size-5 shrink-0 place-items-center border ${selected ? "border-cyan-300 bg-cyan-400 text-slate-950" : "border-slate-600"}`}>{selected ? <Check size={13} /> : null}</span>
-                          <span className="truncate">{tag}</span>
-                        </button>
-                      );
-                    })}
-                    {visibleTags.length === 0 ? <p className="px-2 py-2 text-sm text-slate-500">No matching tags.</p> : null}
-                  </div>
-                </div>
-
-                <div className="mt-3 border-t border-white/10 pt-3">
-                  <p className="mb-2 text-sm font-semibold text-slate-200">Status</p>
+                <SlidersHorizontal size={16} />
+              </button>
+              {sortOptionsOpen ? (
+                <section
+                  role="dialog"
+                  aria-label="Sort pages"
+                  className="absolute right-0 top-11 z-30 w-52 border border-slate-200 bg-white p-1 text-slate-900 shadow-2xl shadow-slate-950/15"
+                >
+                  <p className="px-3 pb-1.5 pt-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Sort by</p>
                   <div className="space-y-1">
-                    {PAGE_STATUS_OPTIONS.map((option) => {
-                      const selected = selectedStatuses.includes(option.value);
+                    {PAGE_SORT_OPTIONS.map((option) => {
+                      const selected = option.key === sortKey;
                       return (
                         <button
-                          key={option.label}
+                          key={option.key}
                           type="button"
-                          onClick={() => toggleStatusFilter(option.value)}
-                          className={`flex h-9 w-full items-center gap-2 px-2 text-left text-sm ${selected ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
+                          onClick={() => {
+                            setSortKey(option.key);
+                            setSortOptionsOpen(false);
+                          }}
+                          className={`flex h-9 w-full items-center justify-between gap-3 px-3 text-left text-sm font-medium ${selected ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}
                         >
-                          <span className={`grid size-5 shrink-0 place-items-center border ${selected ? "border-cyan-300 bg-cyan-400 text-slate-950" : "border-slate-600"}`}>{selected ? <Check size={13} /> : null}</span>
                           <span>{option.label}</span>
+                          {selected ? <Check size={14} style={{ color }} /> : null}
                         </button>
                       );
                     })}
                   </div>
-                </div>
-              </section>
-            ) : null}
+                </section>
+              ) : null}
+            </div>
+
+            <div ref={filterOptionsRef} data-transient-menu="true" className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterOptionsOpen((open) => !open);
+                  setActiveFilterPanel("tags");
+                }}
+                className={`relative grid h-9 w-10 place-items-center border bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900 ${filterActive ? "border-slate-500" : "border-slate-300"}`}
+                aria-label="Filter pages"
+                aria-haspopup="dialog"
+                aria-expanded={filterOptionsOpen}
+                title="Filter pages"
+              >
+                <Filter size={16} />
+                {filterCount ? <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center bg-slate-950 px-1 text-[10px] font-semibold leading-4 text-white">{filterCount}</span> : null}
+              </button>
+              {filterOptionsOpen ? (
+                <section
+                  role="dialog"
+                  aria-label="Filter pages"
+                  className="absolute left-0 top-11 z-30 flex items-start gap-2 text-slate-900"
+                >
+                  <div className="w-52 border border-slate-200 bg-white p-1 shadow-2xl shadow-slate-950/15">
+                    <div className="flex items-center justify-between gap-3 px-3 pb-1.5 pt-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Filter by</p>
+                      {filterActive ? <button type="button" onClick={clearFilters} className="text-xs font-medium text-cyan-700 hover:text-cyan-900">Clear all</button> : null}
+                    </div>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setActiveFilterPanel("tags")}
+                      onFocus={() => setActiveFilterPanel("tags")}
+                      onClick={() => setActiveFilterPanel("tags")}
+                      className={`flex h-10 w-full items-center gap-2 px-3 text-left text-sm font-medium ${activeFilterPanel === "tags" ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}
+                    >
+                      <Tag size={15} style={{ color }} />
+                      <span className="min-w-0 flex-1">Tags</span>
+                      {selectedTags.length ? <span className="text-xs text-slate-500">{selectedTags.length}</span> : null}
+                      <ChevronRight size={15} className="text-slate-400" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setActiveFilterPanel("status")}
+                      onFocus={() => setActiveFilterPanel("status")}
+                      onClick={() => setActiveFilterPanel("status")}
+                      className={`flex h-10 w-full items-center gap-2 px-3 text-left text-sm font-medium ${activeFilterPanel === "status" ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}
+                    >
+                      <Flag size={15} style={{ color }} />
+                      <span className="min-w-0 flex-1">Status</span>
+                      {selectedStatuses.length ? <span className="text-xs text-slate-500">{selectedStatuses.length}</span> : null}
+                      <ChevronRight size={15} className="text-slate-400" />
+                    </button>
+                  </div>
+
+                  <div className="w-80 border border-slate-200 bg-white p-3 shadow-2xl shadow-slate-950/15">
+                    {activeFilterPanel === "tags" ? (
+                      <>
+                        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900"><Tag size={15} style={{ color }} />Tags</div>
+                        <input
+                          value={tagQuery}
+                          onChange={(event) => setTagQuery(event.target.value)}
+                          className="mb-2 h-9 w-full border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-cyan-500"
+                          placeholder="Search tags..."
+                        />
+                        <div className="max-h-64 space-y-1 overflow-y-auto scroll-contained pr-1">
+                          {visibleTags.map((tag) => {
+                            const selected = selectedTags.some((candidate) => candidate.toLowerCase() === tag.toLowerCase());
+                            return (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() => toggleTagFilter(tag)}
+                                className={`flex h-9 w-full items-center gap-2 px-2 text-left text-sm ${selected ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}
+                              >
+                                <span className={`grid size-5 shrink-0 place-items-center border ${selected ? "border-cyan-500 bg-cyan-500 text-white" : "border-slate-300"}`}>{selected ? <Check size={13} /> : null}</span>
+                                <span className="truncate">{tag}</span>
+                              </button>
+                            );
+                          })}
+                          {visibleTags.length === 0 ? <p className="px-2 py-2 text-sm text-slate-500">No matching tags.</p> : null}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900"><Flag size={15} style={{ color }} />Status</div>
+                        <div className="space-y-1">
+                          {PAGE_STATUS_OPTIONS.map((option) => {
+                            const selected = selectedStatuses.includes(option.value);
+                            return (
+                              <button
+                                key={option.label}
+                                type="button"
+                                onClick={() => toggleStatusFilter(option.value)}
+                                className={`flex h-9 w-full items-center gap-2 px-2 text-left text-sm ${selected ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}
+                              >
+                                <span className={`grid size-5 shrink-0 place-items-center border ${selected ? "border-cyan-500 bg-cyan-500 text-white" : "border-slate-300"}`}>{selected ? <Check size={13} /> : null}</span>
+                                <span>{option.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </section>
+              ) : null}
+            </div>
           </div>
         </div>
 

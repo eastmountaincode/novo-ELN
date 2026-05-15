@@ -70,10 +70,15 @@ describe("store", () => {
     const user = verifyCredentials("test@example.local", "secret-password")!;
     const notebookId = getWorkspace(user.id).projects[0].notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
+    const relatedPageId = createPage(user.id, notebookId);
 
     updatePage(user.id, pageId, {
       title: "GPA33 Search 2026",
       body: "Looking for expression in neurons and antibody half-life notes.",
+    });
+    updatePage(user.id, relatedPageId, {
+      title: "ctDNA-Expt57 DNA/exosome isolation from B16F10-ROR1 tumors in B6 mice",
+      body: "Compare direct DNA isolation from plasma. Tumor cells are processed before sequencing.",
     });
 
     const titleResults = searchWorkspace(user.id, "GPA33");
@@ -82,6 +87,13 @@ describe("store", () => {
 
     const fuzzyResults = searchWorkspace(user.id, "neuronn");
     expect(fuzzyResults.some((result) => result.pageId === pageId)).toBe(true);
+
+    const relaxedResults = searchWorkspace(user.id, "exosome cell culture");
+    expect(relaxedResults.some((result) => result.pageId === relatedPageId)).toBe(true);
+
+    const titleTokenResults = searchWorkspace(user.id, "ctDNA Expt57 DNA exosome isolation");
+    expect(titleTokenResults[0]?.pageId).toBe(relatedPageId);
+    expect(titleTokenResults[0]?.matchType).toBe("title");
   });
 
   it("adds and removes simple page tags", async () => {

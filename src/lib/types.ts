@@ -16,6 +16,41 @@ export type AdminUser = AppUser & {
   projectCount: number;
 };
 
+export type AdminDataFile = {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  blockType: BlockType;
+  storageKey: string;
+  createdAt: string;
+  projectName: string;
+  notebookName: string;
+  pageTitle: string;
+  ownerEmail: string;
+};
+
+export type AdminDataOverview = {
+  counts: {
+    users: number;
+    projects: number;
+    notebooks: number;
+    pages: number;
+    attachments: number;
+    pageVersions: number;
+    importJobs: number;
+  };
+  storage: {
+    attachmentBytes: number;
+    uploadFileCount: number;
+    uploadBytes: number;
+    orphanUploadCount: number;
+    orphanUploadBytes: number;
+    missingUploadCount: number;
+  };
+  files: AdminDataFile[];
+};
+
 export type ShareMember = {
   userId: string;
   email: string;

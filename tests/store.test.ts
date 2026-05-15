@@ -126,13 +126,47 @@ describe("store", () => {
     expect(verifyCredentials("lab.member@example.local", "temporary-password")?.id).toBe(member.id);
   });
 
+  it("summarizes database and upload storage for admins", async () => {
+    const { verifyCredentials, getWorkspace, createAttachment, getAdminDataOverview } = await import("../src/lib/store");
+    const admin = verifyCredentials("test@example.local", "secret-password")!;
+    const pageId = getWorkspace(admin.id).projects[0].notebooks[0].pages[0].id;
+    const uploadDir = process.env.ELN_UPLOAD_DIR!;
+    fs.mkdirSync(uploadDir, { recursive: true });
+    fs.writeFileSync(path.join(uploadDir, "attached.txt"), "hello");
+    fs.writeFileSync(path.join(uploadDir, "orphan.txt"), "left behind");
+
+    createAttachment({
+      userId: admin.id,
+      pageId,
+      originalName: "attached.txt",
+      mimeType: "text/plain",
+      size: 5,
+      storageKey: "attached.txt",
+      blockType: "file",
+      previewText: "",
+    });
+
+    const overview = getAdminDataOverview(admin.id);
+
+    expect(overview.counts.projects).toBe(1);
+    expect(overview.counts.notebooks).toBe(2);
+    expect(overview.counts.pages).toBe(3);
+    expect(overview.counts.attachments).toBe(1);
+    expect(overview.storage.attachmentBytes).toBe(5);
+    expect(overview.storage.uploadFileCount).toBe(2);
+    expect(overview.storage.orphanUploadCount).toBe(1);
+    expect(overview.storage.missingUploadCount).toBe(0);
+    expect(overview.files[0]).toEqual(expect.objectContaining({ originalName: "attached.txt", storageKey: "attached.txt" }));
+  });
+
   it("blocks non-admins from listing users or setting passwords", async () => {
-    const { createUser, listUsersForAdmin, adminSetUserPassword } = await import("../src/lib/store");
+    const { createUser, listUsersForAdmin, adminSetUserPassword, getAdminDataOverview } = await import("../src/lib/store");
     const member = createUser({ email: "member@example.local", name: "Member", password: "member-password" });
     const other = createUser({ email: "other@example.local", name: "Other", password: "other-password" });
 
     expect(() => listUsersForAdmin(member.id)).toThrow("Forbidden");
     expect(() => adminSetUserPassword(member.id, other.id, "temporary-password")).toThrow("Forbidden");
+    expect(() => getAdminDataOverview(member.id)).toThrow("Forbidden");
   });
 
   it("shares full projects with all notebooks", async () => {

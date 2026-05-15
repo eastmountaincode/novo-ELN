@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import bcrypt from "bcryptjs";
-import type { AccessRole, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, PageTagAssignment, Project, ShareMember, TagGroup, TagSelectionMode, TagValue, UserRole, Workspace } from "./types";
+import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, PageTagAssignment, Project, ShareMember, TagGroup, TagSelectionMode, TagValue, UserRole, Workspace } from "./types";
 import { removeAttachmentCardsFromBody } from "./editor";
+import { uploadDir } from "./paths";
 import { rebuildSearchIndex } from "./search";
 import { execSql, queryOne, querySql, sql } from "./sqlite";
 
@@ -331,6 +334,74 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
     createdAt: row.created_at,
     projectCount: Number(row.project_count),
   }));
+}
+
+export function getAdminDataOverview(adminUserId: string): AdminDataOverview {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+
+  const counts = {
+    users: countRows("users"),
+    projects: countRows("projects"),
+    notebooks: countRows("notebooks"),
+    pages: countRows("pages"),
+    attachments: countRows("attachments"),
+    pageVersions: countRows("page_versions"),
+    importJobs: countRows("import_jobs"),
+  };
+  const files = querySql(`
+    SELECT
+      a.id,
+      a.original_name,
+      a.mime_type,
+      a.size,
+      a.block_type,
+      a.storage_key,
+      a.created_at,
+      p.title AS page_title,
+      n.name AS notebook_name,
+      pr.name AS project_name,
+      u.email AS owner_email
+    FROM attachments a
+    JOIN pages p ON p.id = a.page_id
+    JOIN notebooks n ON n.id = p.notebook_id
+    JOIN projects pr ON pr.id = n.project_id
+    JOIN users u ON u.id = pr.owner_id
+    ORDER BY a.created_at DESC, lower(a.original_name) ASC
+  `).map((row) => ({
+    id: row.id,
+    originalName: row.original_name,
+    mimeType: row.mime_type,
+    size: Number(row.size),
+    blockType: row.block_type as BlockType,
+    storageKey: row.storage_key,
+    createdAt: row.created_at,
+    projectName: row.project_name,
+    notebookName: row.notebook_name,
+    pageTitle: row.page_title,
+    ownerEmail: row.owner_email,
+  }));
+
+  const attachmentBytes = files.reduce((total, file) => total + file.size, 0);
+  const uploadFiles = listUploadFiles();
+  const uploadFileKeys = new Set(uploadFiles.map((file) => file.relativePath));
+  const attachmentKeys = new Set(files.map((file) => file.storageKey));
+  const orphanUploadBytes = uploadFiles.reduce((total, file) => total + (attachmentKeys.has(file.relativePath) ? 0 : file.size), 0);
+  const orphanUploadCount = uploadFiles.filter((file) => !attachmentKeys.has(file.relativePath)).length;
+  const missingUploadCount = files.filter((file) => !uploadFileKeys.has(file.storageKey)).length;
+
+  return {
+    counts,
+    storage: {
+      attachmentBytes,
+      uploadFileCount: uploadFiles.length,
+      uploadBytes: uploadFiles.reduce((total, file) => total + file.size, 0),
+      orphanUploadCount,
+      orphanUploadBytes,
+      missingUploadCount,
+    },
+    files,
+  };
 }
 
 export function changeOwnPassword(userId: string, currentPassword: string, nextPassword: string) {
@@ -1209,6 +1280,32 @@ function normalizePageTags(tags: string[]) {
     normalized.push(value);
   }
   return normalized;
+}
+
+function countRows(tableName: string) {
+  const row = queryOne(`SELECT COUNT(*) AS count FROM ${tableName}`);
+  return Number(row?.count ?? 0);
+}
+
+function listUploadFiles() {
+  const files: Array<{ relativePath: string; size: number }> = [];
+  if (!fs.existsSync(uploadDir)) return files;
+
+  function visit(directory: string) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const relativePath = path.relative(uploadDir, absolutePath).split(path.sep).join("/");
+      files.push({ relativePath, size: fs.statSync(absolutePath).size });
+    }
+  }
+
+  visit(uploadDir);
+  return files;
 }
 
 function toAttachment(row: Record<string, string>): Attachment {

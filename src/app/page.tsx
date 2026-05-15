@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Database,
   Download,
   FileArchive,
   FileImage,
@@ -35,7 +36,7 @@ import { PresentationModal } from "@/components/PresentationModal";
 import { INLINE_ATTACHMENT_DRAG_TYPE, RichTextEditor, attachmentToInlineAttrs, type InlineAttachmentAttrs } from "@/components/RichTextEditor";
 import { SpreadsheetModal } from "@/components/SpreadsheetModal";
 import { bodyToEditorText } from "@/lib/editor";
-import type { AccessRole, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
+import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
 
 const blockIcons: Record<BlockType, typeof ImageIcon> = {
   image: ImageIcon,
@@ -2007,11 +2008,12 @@ async function assertOk(response: Response) {
 }
 
 function AccountView({ user }: { user: AppUser }) {
-  const [activeTab, setActiveTab] = useState<"profile" | "security" | "users">("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "security" | "users" | "data">("profile");
   const tabs = [
     { id: "profile" as const, label: "Profile", icon: UserCircle },
     { id: "security" as const, label: "Security", icon: KeyRound },
     ...(user.role === "admin" ? [{ id: "users" as const, label: "Users", icon: Users }] : []),
+    ...(user.role === "admin" ? [{ id: "data" as const, label: "Data", icon: Database }] : []),
   ];
 
   return (
@@ -2042,6 +2044,7 @@ function AccountView({ user }: { user: AppUser }) {
         {activeTab === "profile" ? <AccountProfile user={user} /> : null}
         {activeTab === "security" ? <PasswordPanel /> : null}
         {activeTab === "users" && user.role === "admin" ? <UsersAdminPanel currentUserId={user.id} /> : null}
+        {activeTab === "data" && user.role === "admin" ? <DataAdminPanel /> : null}
       </div>
     </section>
   );
@@ -2257,6 +2260,142 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
             void loadUsers();
           }}
         />
+      ) : null}
+    </section>
+  );
+}
+
+function DataAdminPanel() {
+  const [overview, setOverview] = useState<AdminDataOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function loadData() {
+    setLoading(true);
+    setError("");
+    const response = await fetch("/api/admin/overview");
+    const body = (await response.json().catch(() => null)) as { data?: AdminDataOverview; error?: string } | null;
+    setLoading(false);
+    if (!response.ok) {
+      setError(body?.error ?? "Unable to load data overview.");
+      return;
+    }
+    setOverview(body?.data ?? null);
+  }
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/admin/overview")
+      .then(async (response) => {
+        const body = (await response.json().catch(() => null)) as { data?: AdminDataOverview; error?: string } | null;
+        if (!active) return;
+        setLoading(false);
+        if (!response.ok) {
+          setError(body?.error ?? "Unable to load data overview.");
+          return;
+        }
+        setOverview(body?.data ?? null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setLoading(false);
+        setError("Unable to load data overview.");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const metrics = overview
+    ? [
+        { label: "Users", value: overview.counts.users.toLocaleString() },
+        { label: "Projects", value: overview.counts.projects.toLocaleString() },
+        { label: "Notebooks", value: overview.counts.notebooks.toLocaleString() },
+        { label: "Pages", value: overview.counts.pages.toLocaleString() },
+        { label: "Attachments", value: overview.counts.attachments.toLocaleString() },
+        { label: "Attachment data", value: formatBytes(overview.storage.attachmentBytes) },
+        { label: "Files on disk", value: overview.storage.uploadFileCount.toLocaleString() },
+        { label: "Disk usage", value: formatBytes(overview.storage.uploadBytes) },
+        { label: "Orphan files", value: overview.storage.orphanUploadCount.toLocaleString() },
+        { label: "Orphan storage", value: formatBytes(overview.storage.orphanUploadBytes) },
+        { label: "Missing files", value: overview.storage.missingUploadCount.toLocaleString() },
+        { label: "Import jobs", value: overview.counts.importJobs.toLocaleString() },
+      ]
+    : [];
+
+  return (
+    <section className="max-w-6xl border border-slate-200 bg-white">
+      <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
+        <div className="flex items-start gap-3">
+          <div className="grid size-10 place-items-center bg-slate-950 text-cyan-300">
+            <Database size={21} />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-950">Data</h2>
+            <p className="mt-1 text-sm text-slate-500">Database totals, attachment inventory, and upload storage use.</p>
+          </div>
+        </div>
+        <button onClick={() => void loadData()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
+      </div>
+
+      {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+      {loading ? <p className="p-5 text-sm text-slate-500">Loading data...</p> : null}
+
+      {!loading && overview ? (
+        <>
+          <div className="grid gap-px border-b border-slate-200 bg-slate-200 sm:grid-cols-2 lg:grid-cols-4">
+            {metrics.map((metric) => (
+              <div key={metric.label} className="bg-white p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{metric.label}</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-950">{metric.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-b border-slate-200 p-5">
+            <h3 className="text-sm font-semibold text-slate-950">Files</h3>
+            <p className="mt-1 text-sm text-slate-500">{overview.files.length.toLocaleString()} attachment records currently referenced by pages.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">File</th>
+                  <th className="px-4 py-3 font-semibold">Page</th>
+                  <th className="px-4 py-3 font-semibold">Project</th>
+                  <th className="px-4 py-3 font-semibold">Type</th>
+                  <th className="px-4 py-3 text-right font-semibold">Size</th>
+                  <th className="px-4 py-3 font-semibold">Created</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {overview.files.map((file) => (
+                  <tr key={file.id}>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-950">{file.originalName}</div>
+                      <div className="mt-1 truncate font-mono text-xs text-slate-500">{file.storageKey}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-800">{file.pageTitle}</div>
+                      <div className="mt-1 text-xs text-slate-500">{file.notebookName}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="text-slate-700">{file.projectName}</div>
+                      <div className="mt-1 text-xs text-slate-500">{file.ownerEmail}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="capitalize text-slate-700">{file.blockType}</div>
+                      <div className="mt-1 text-xs text-slate-500">{file.mimeType}</div>
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-slate-700">{formatBytes(file.size)}</td>
+                    <td className="px-4 py-3 text-slate-500">{formatDateTime(file.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {overview.files.length === 0 ? <p className="p-5 text-sm text-slate-500">No attachments found.</p> : null}
+          </div>
+        </>
       ) : null}
     </section>
   );

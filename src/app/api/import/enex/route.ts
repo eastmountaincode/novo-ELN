@@ -11,6 +11,7 @@ export async function POST(request: Request) {
     notebookName?: string;
     path?: string;
     totalNotes?: number;
+    totalResources?: number;
   } | null;
 
   if (!body?.projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
@@ -23,6 +24,7 @@ export async function POST(request: Request) {
       notebookName: body.notebookName?.trim() || "Evernote Import",
       filePath: body.path,
       totalNotes: Number.isFinite(body.totalNotes) ? body.totalNotes : null,
+      totalResources: Number.isFinite(body.totalResources) ? body.totalResources : null,
     });
 
     return NextResponse.json({ jobId: job.id, job });

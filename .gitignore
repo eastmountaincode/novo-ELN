@@ -45,5 +45,5 @@ dev.log
 dev.pid
 
 # Local runtime data
-data/
-storage/
+/data/
+/storage/

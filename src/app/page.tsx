@@ -114,6 +114,7 @@ type EnexImportJob = {
     importedNotes: number;
     totalNotes: number | null;
     importedResources: number;
+    totalResources: number | null;
   };
 };
 
@@ -1056,6 +1057,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const disabled = !name.trim() || submitting || importing;
   const importDisabled = !isNotebookCreate || !serverPath.trim() || !name.trim() || inspecting || importing;
   const progressTotal = job?.progress.totalNotes ?? inspection?.noteCount ?? null;
+  const resourceProgressTotal = job?.progress.totalResources ?? inspection?.resourceCount ?? null;
   const byteProgressPercent = job?.progress.totalBytes ? Math.min(100, Math.round((job.progress.processedBytes / job.progress.totalBytes) * 100)) : 0;
   const progressPercent = byteProgressPercent || (progressTotal && job ? Math.min(100, Math.round((job.progress.importedNotes / progressTotal) * 100)) : 0);
 
@@ -1126,6 +1128,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
         notebookName: name.trim(),
         path: serverPath.trim(),
         totalNotes: inspection?.noteCount,
+        totalResources: inspection?.resourceCount,
       }),
     });
     const body = await response.json().catch(() => null) as { job?: EnexImportJob; error?: string } | null;
@@ -1180,10 +1183,13 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
               <div className="border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
                 <div className="grid grid-cols-2 gap-3">
                   <ImportMetric label="Notes" value={inspection.noteCount.toLocaleString()} />
-                  <ImportMetric label="Resources" value={inspection.resourceCount.toLocaleString()} />
-                  <ImportMetric label="Inline media" value={inspection.inlineMediaCount.toLocaleString()} />
-                  <ImportMetric label="Size" value={formatBytes(inspection.sizeBytes)} />
+                  <ImportMetric label="ENEX resources" value={inspection.resourceCount.toLocaleString()} />
+                  <ImportMetric label="Inline media refs" value={inspection.inlineMediaCount.toLocaleString()} />
+                  <ImportMetric label="File size" value={formatBytes(inspection.sizeBytes)} />
                 </div>
+                <p className="mt-3 text-xs leading-5 text-slate-400">
+                  ENEX resources are unique stored file blobs. Novo saves each imported resource as an attachment. Inline media refs are placements inside note content, so they can differ from the resource count.
+                </p>
                 {inspection.tags.length ? <p className="mt-3 text-xs text-slate-400">Top tags: {inspection.tags.slice(0, 6).map((tag) => `${tag.tag} (${tag.count})`).join(", ")}</p> : null}
               </div>
             ) : null}
@@ -1197,9 +1203,9 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
                   <div className="h-full bg-cyan-400 transition-all" style={{ width: `${progressPercent}%` }} />
                 </div>
                 <p className="text-xs text-slate-400">
-                  Elapsed {formatElapsed(job.startedAt, job.finishedAt)} · {job.importedResources.toLocaleString()} attachments imported · {formatBytes(job.progress.processedBytes)} / {formatBytes(job.progress.totalBytes)}
+                  Elapsed {formatElapsed(job.startedAt, job.finishedAt)} · {job.progress.importedResources.toLocaleString()}{resourceProgressTotal ? ` / ${resourceProgressTotal.toLocaleString()}` : ""} ENEX resources saved as Novo attachments · {formatBytes(job.progress.processedBytes)} / {formatBytes(job.progress.totalBytes)}
                 </p>
-                {job.state === "failed" ? <p className="text-sm text-rose-300">{job.error || "Import failed."}</p> : null}
+                {job.state === "failed" ? <p className="text-sm text-rose-300">{job.error || "Import failed. Partial notebook and files were rolled back."}</p> : null}
               </div>
             ) : null}
             {importError ? <p className="text-sm text-rose-300">{importError}</p> : null}
@@ -2273,7 +2279,7 @@ function DataAdminPanel() {
   async function loadData() {
     setLoading(true);
     setError("");
-    const response = await fetch("/api/admin/overview");
+    const response = await fetch("/api/admin/data");
     const body = (await response.json().catch(() => null)) as { data?: AdminDataOverview; error?: string } | null;
     setLoading(false);
     if (!response.ok) {
@@ -2285,7 +2291,7 @@ function DataAdminPanel() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/admin/overview")
+    fetch("/api/admin/data")
       .then(async (response) => {
         const body = (await response.json().catch(() => null)) as { data?: AdminDataOverview; error?: string } | null;
         if (!active) return;

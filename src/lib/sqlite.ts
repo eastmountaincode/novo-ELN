@@ -16,7 +16,7 @@ export function nowSql() {
 export function execSql(statement: string) {
   ensureRuntimeDirs();
   execFileSync("sqlite3", [databasePath, "-batch"], {
-    input: `PRAGMA foreign_keys=ON;\n${statement}`,
+    input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`,
     stdio: ["pipe", "pipe", "pipe"],
   });
 }
@@ -24,7 +24,7 @@ export function execSql(statement: string) {
 export function querySql(statement: string): SqlRow[] {
   ensureRuntimeDirs();
   const output = execFileSync("sqlite3", [databasePath, "-batch", "-header", "-csv"], {
-    input: `PRAGMA foreign_keys=ON;\n${statement}`,
+    input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
   });

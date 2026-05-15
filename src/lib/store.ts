@@ -136,6 +136,7 @@ export function ensureDatabase() {
       error TEXT,
       notebook_id TEXT,
       total_notes INTEGER,
+      total_resources INTEGER,
       imported_notes INTEGER NOT NULL DEFAULT 0,
       imported_resources INTEGER NOT NULL DEFAULT 0,
       processed_bytes INTEGER NOT NULL DEFAULT 0,
@@ -160,6 +161,7 @@ export function ensureDatabase() {
     );
   `);
   ensureProjectColorColumn();
+  ensureImportJobsTotalResourcesColumn();
   seedIfEmpty();
   rebuildSearchIndex();
   initialized = true;
@@ -169,6 +171,12 @@ function ensureProjectColorColumn() {
   const columns = querySql("PRAGMA table_info(projects);");
   if (columns.some((column) => column.name === "color")) return;
   execSql("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT '#0891b2';");
+}
+
+function ensureImportJobsTotalResourcesColumn() {
+  const columns = querySql("PRAGMA table_info(import_jobs);");
+  if (columns.some((column) => column.name === "total_resources")) return;
+  execSql("ALTER TABLE import_jobs ADD COLUMN total_resources INTEGER;");
 }
 
 function seedIfEmpty() {

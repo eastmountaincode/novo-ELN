@@ -48,6 +48,7 @@ export type EnexImportProgress = {
   importedNotes: number;
   totalNotes: number | null;
   importedResources: number;
+  totalResources: number | null;
 };
 
 export type EnexImportResult = {
@@ -148,6 +149,7 @@ export async function importEnexFile(input: {
         importedNotes,
         totalNotes: input.totalNotes ?? null,
         importedResources,
+        totalResources: null,
       });
     }
 
@@ -171,6 +173,7 @@ export async function importEnexFile(input: {
       importedNotes,
       totalNotes: input.totalNotes ?? null,
       importedResources,
+      totalResources: null,
     });
   });
 

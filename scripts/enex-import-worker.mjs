@@ -16,7 +16,7 @@ const parser = new XMLParser({ ignoreAttributes: false, trimValues: false, cdata
 try {
   await run();
 } catch (error) {
-  updateJob(`state = 'failed', error = ${sql(error instanceof Error ? error.message : 'Import failed.')}, finished_at = datetime('now')`);
+  await rollbackFailedImport(error);
 }
 
 async function run() {
@@ -86,6 +86,70 @@ async function run() {
     SET state = 'succeeded', imported_notes = ${importedNotes}, imported_resources = ${importedResources}, processed_bytes = ${stats.size}, total_bytes = ${stats.size}, finished_at = datetime('now'), updated_at = datetime('now')
     WHERE id = ${sql(jobId)};
   `);
+}
+
+async function rollbackFailedImport(error) {
+  const message = error instanceof Error ? error.message : "Import failed.";
+  let notebookId = "";
+  let storageKeys = [];
+  try {
+    const job = getJob();
+    notebookId = job?.notebook_id || "";
+    storageKeys = notebookId ? getNotebookStorageKeys(notebookId) : [];
+    execSql(`
+      ${notebookId ? `DELETE FROM notebooks WHERE id = ${sql(notebookId)};` : ""}
+      UPDATE import_jobs
+      SET state = 'failed',
+          error = ${sql(`${message} Partial import was rolled back.`)},
+          notebook_id = NULL,
+          finished_at = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ${sql(jobId)};
+    `);
+    await removeStorageFiles(storageKeys);
+  } catch (cleanupError) {
+    const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : "Rollback cleanup failed.";
+    updateJob(`
+      state = 'failed',
+      error = ${sql(`${message} Rollback cleanup failed: ${cleanupMessage}`)},
+      finished_at = datetime('now'),
+      updated_at = datetime('now')
+    `);
+  }
+}
+
+function getNotebookStorageKeys(notebookId) {
+  return querySql(`
+    SELECT a.storage_key
+    FROM attachments a
+    JOIN pages p ON p.id = a.page_id
+    WHERE p.notebook_id = ${sql(notebookId)};
+  `).map((row) => row.storage_key).filter(Boolean);
+}
+
+async function removeStorageFiles(storageKeys) {
+  for (const storageKey of storageKeys) await removeStorageFile(storageKey);
+}
+
+async function removeStorageFile(storageKey) {
+  if (!storageKey) return;
+  const absoluteUploadDir = path.resolve(uploadDir);
+  const absolutePath = path.resolve(uploadDir, storageKey);
+  if (!absolutePath.startsWith(`${absoluteUploadDir}${path.sep}`)) return;
+  await fsp.rm(absolutePath, { force: true });
+  await removeEmptyParentDirs(path.dirname(absolutePath), absoluteUploadDir);
+}
+
+async function removeEmptyParentDirs(directory, stopDirectory) {
+  let current = directory;
+  while (current.startsWith(`${stopDirectory}${path.sep}`)) {
+    try {
+      await fsp.rmdir(current);
+    } catch {
+      return;
+    }
+    current = path.dirname(current);
+  }
 }
 
 function getJob() {
@@ -239,11 +303,11 @@ function attachmentNode(attachment) {
 }
 
 function execSql(statement) {
-  execFileSync("sqlite3", [databasePath, "-batch"], { input: `PRAGMA foreign_keys=ON;\n${statement}`, stdio: ["pipe", "pipe", "pipe"] });
+  execFileSync("sqlite3", [databasePath, "-batch"], { input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 function querySql(statement) {
-  const output = execFileSync("sqlite3", [databasePath, "-batch", "-header", "-csv"], { input: `PRAGMA foreign_keys=ON;\n${statement}`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+  const output = execFileSync("sqlite3", [databasePath, "-batch", "-header", "-csv"], { input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   return parseCsv(output);
 }
 

@@ -28,6 +28,7 @@ export function createEnexImportJob(input: {
   notebookName: string;
   filePath: string;
   totalNotes?: number | null;
+  totalResources?: number | null;
 }) {
   ensureDatabase();
   assertProjectImportAccess(input.userId, input.projectId);
@@ -48,9 +49,10 @@ export function createEnexImportJob(input: {
 
   const id = randomUUID();
   const totalNotes = Number.isFinite(Number(input.totalNotes)) ? Number(input.totalNotes) : null;
+  const totalResources = Number.isFinite(Number(input.totalResources)) ? Number(input.totalResources) : null;
   execSql(`
-    INSERT INTO import_jobs (id, user_id, project_id, notebook_name, file_path, state, total_notes)
-    VALUES (${sql(id)}, ${sql(input.userId)}, ${sql(input.projectId)}, ${sql(input.notebookName)}, ${sql(input.filePath)}, 'queued', ${totalNotes ?? "NULL"});
+    INSERT INTO import_jobs (id, user_id, project_id, notebook_name, file_path, state, total_notes, total_resources)
+    VALUES (${sql(id)}, ${sql(input.userId)}, ${sql(input.projectId)}, ${sql(input.notebookName)}, ${sql(input.filePath)}, 'queued', ${totalNotes ?? "NULL"}, ${totalResources ?? "NULL"});
   `);
 
   launchWorker(id);
@@ -63,7 +65,7 @@ export function getEnexImportJob(id: string) {
   ensureDatabase();
   const row = queryOne(`
     SELECT id, user_id, project_id, notebook_name, file_path, state, started_at, finished_at, error,
-           notebook_id, imported_resources, imported_notes, total_notes, processed_bytes, total_bytes, worker_pid
+           notebook_id, imported_resources, imported_notes, total_notes, total_resources, processed_bytes, total_bytes, worker_pid
     FROM import_jobs
     WHERE id = ${sql(id)}
     LIMIT 1
@@ -114,6 +116,7 @@ function toJob(row: Record<string, string>): EnexImportJob {
       importedNotes: Number(row.imported_notes || 0),
       totalNotes: row.total_notes ? Number(row.total_notes) : null,
       importedResources: Number(row.imported_resources || 0),
+      totalResources: row.total_resources ? Number(row.total_resources) : null,
     },
   };
 }

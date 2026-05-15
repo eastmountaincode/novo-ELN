@@ -5,9 +5,11 @@ const root = process.cwd();
 
 export const dataDir = process.env.ELN_DATA_DIR ?? path.join(root, "data");
 export const uploadDir = process.env.ELN_UPLOAD_DIR ?? path.join(root, "storage", "uploads");
+export const previewDir = process.env.ELN_PREVIEW_DIR ?? path.join(dataDir, "previews");
 export const databasePath = process.env.ELN_DATABASE_PATH ?? path.join(dataDir, "eln.sqlite3");
 
 export function ensureRuntimeDirs() {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(uploadDir, { recursive: true });
+  fs.mkdirSync(previewDir, { recursive: true });
 }

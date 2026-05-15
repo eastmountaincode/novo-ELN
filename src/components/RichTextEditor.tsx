@@ -42,6 +42,7 @@ import {
   Unlink,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { PresentationPreviewCarousel } from "@/components/PresentationPreviewCarousel";
 import { bodyToEditorDocument, editorDocumentToBody } from "@/lib/editor";
 import type { SpreadsheetPreview } from "@/lib/spreadsheetPreview";
 import type { Attachment, BlockType } from "@/lib/types";
@@ -510,6 +511,24 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
           ) : (
             <div className="border-t border-slate-200 bg-white px-3 py-4 text-sm text-slate-500">{sheetPreviewStatus || "No spreadsheet preview available."}</div>
           )}
+        </div>
+      </NodeViewWrapper>
+    );
+  }
+
+  if (kind === "slides") {
+    return (
+      <NodeViewWrapper className="my-4" data-attachment-card="true" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
+        <div className={`max-w-3xl border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
+          <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
+            <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move presentation" aria-label="Move presentation"><GripVertical size={16} /></button>
+            <Presentation size={17} className="shrink-0 text-orange-600" />
+            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
+            <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
+            <button type="button" tabIndex={-1} onClick={() => openPresentation(attrs)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Eye size={13} />Open</button>
+            <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Download size={13} />Download</a>
+          </div>
+          <PresentationPreviewCarousel attachmentId={attrs.attachmentId} filename={attrs.filename} />
         </div>
       </NodeViewWrapper>
     );

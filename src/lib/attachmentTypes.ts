@@ -50,7 +50,7 @@ export function attachmentPreviewText(blockType: BlockType, source: "upload" | "
     image: "Image stored inline with this page.",
     sheet: "Spreadsheet uploaded; table preview/parser is the next integration step.",
     pdf: "PDF uploaded; text extraction is the next integration step.",
-    slides: "Slide deck uploaded; preview rendering is the next integration step.",
+    slides: "Slide deck uploaded with slide preview rendering.",
     sequence: "Sequence file uploaded; sequence viewer is the next integration step.",
     file: "File uploaded and attached to this page.",
   };

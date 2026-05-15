@@ -15,6 +15,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "MGH ELN Workspace",
   description: "A focused Evernote replacement for lab notebooks, pages, and inline attachments.",
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/icon.png", type: "image/png", sizes: "512x512" },
+    ],
+  },
 };
 
 export default function RootLayout({

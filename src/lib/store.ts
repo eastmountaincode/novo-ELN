@@ -121,6 +121,27 @@ export function ensureDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS import_jobs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      notebook_name TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'queued',
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      finished_at TEXT,
+      error TEXT,
+      notebook_id TEXT,
+      total_notes INTEGER,
+      imported_notes INTEGER NOT NULL DEFAULT 0,
+      imported_resources INTEGER NOT NULL DEFAULT 0,
+      processed_bytes INTEGER NOT NULL DEFAULT 0,
+      total_bytes INTEGER NOT NULL DEFAULT 0,
+      worker_pid INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS search_pages_fts USING fts5(
       page_id UNINDEXED,
       project_id UNINDEXED,

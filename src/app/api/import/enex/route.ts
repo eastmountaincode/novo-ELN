@@ -16,13 +16,18 @@ export async function POST(request: Request) {
   if (!body?.projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
   if (!body.path?.trim()) return NextResponse.json({ error: "ENEX server path is required" }, { status: 400 });
 
-  const job = createEnexImportJob({
-    userId: user.id,
-    projectId: body.projectId,
-    notebookName: body.notebookName?.trim() || "Evernote Import",
-    filePath: body.path,
-    totalNotes: Number.isFinite(body.totalNotes) ? body.totalNotes : null,
-  });
+  try {
+    const job = createEnexImportJob({
+      userId: user.id,
+      projectId: body.projectId,
+      notebookName: body.notebookName?.trim() || "Evernote Import",
+      filePath: body.path,
+      totalNotes: Number.isFinite(body.totalNotes) ? body.totalNotes : null,
+    });
 
-  return NextResponse.json({ jobId: job.id, job });
+    return NextResponse.json({ jobId: job.id, job });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to start ENEX import.";
+    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : 400 });
+  }
 }

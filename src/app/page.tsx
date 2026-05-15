@@ -2595,7 +2595,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
           openSpreadsheet={openSpreadsheet}
           openPresentation={openPresentation}
         />
-        <div className="mt-4 border p-2" style={{ borderColor: colorWithAlpha(color, 0.25), backgroundColor: colorWithAlpha(color, 0.035) }}>
+        <div className="mt-4 border border-slate-200 bg-slate-50 p-2">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <button
               type="button"
@@ -2606,9 +2606,9 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
               {attachmentsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
               <Paperclip size={16} />
               <span>Attachments</span>
-              <span className="px-2 py-0.5 text-xs font-medium" style={{ backgroundColor: colorWithAlpha(color, 0.08), color }}>{attachmentLabel}</span>
+              <span className="bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">{attachmentLabel}</span>
             </button>
-            <button onClick={openFilePicker} className="inline-flex h-7 items-center gap-1 border bg-white px-2 text-sm text-slate-700 hover:bg-slate-100" style={{ borderColor: colorWithAlpha(color, 0.35) }}><Plus size={14} />File</button>
+            <button onClick={openFilePicker} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100"><Plus size={14} />File</button>
           </div>
           {attachmentsOpen ? (
             page.attachments.length ? (

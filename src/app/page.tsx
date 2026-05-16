@@ -2899,7 +2899,7 @@ function SidebarSection({ label, onAdd, collapsed, onToggle }: { label: string; 
     <div className="sidebar-wide px-4">
       <div className="flex min-w-0 items-center justify-between gap-2 px-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
         {onToggle ? (
-          <button type="button" onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-1 text-left hover:text-slate-300" style={{ font: "inherit" }} title={collapsed ? `Expand ${label}` : `Collapse ${label}`}>
+          <button type="button" onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-1 text-left text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 hover:text-slate-300" title={collapsed ? `Expand ${label}` : `Collapse ${label}`}>
             {collapsed ? <ChevronRight size={13} className="shrink-0" /> : <ChevronDown size={13} className="shrink-0" />}
             <span className="min-w-0 truncate">{label}</span>
           </button>

@@ -64,6 +64,29 @@ describe("store", () => {
     );
   });
 
+  it("rate limits repeated failed login attempts by email and IP", async () => {
+    const { clearFailedLogins, getLoginRateLimit, recordFailedLogin } = await import("../src/lib/store");
+    const email = "TEST@example.local";
+    const ipAddress = "192.0.2.10";
+    const now = 1_800_000;
+
+    for (let attempt = 0; attempt < 9; attempt += 1) {
+      recordFailedLogin(email, ipAddress, now + attempt);
+      expect(getLoginRateLimit(email, ipAddress, now + attempt).limited).toBe(false);
+    }
+
+    recordFailedLogin(email, ipAddress, now + 9);
+    const limited = getLoginRateLimit("test@example.local", ipAddress, now + 10);
+    expect(limited.limited).toBe(true);
+    expect(limited.retryAfterSeconds).toBeGreaterThan(0);
+
+    expect(getLoginRateLimit(email, "198.51.100.4", now + 10).limited).toBe(false);
+    expect(getLoginRateLimit(email, ipAddress, now + 15 * 60 * 1000 + 1).limited).toBe(false);
+
+    clearFailedLogins(email, ipAddress);
+    expect(getLoginRateLimit(email, ipAddress, now + 10).limited).toBe(false);
+  });
+
   it("deletes pages from a notebook", async () => {
     const { verifyCredentials, getWorkspace, createPage, deletePage } = await import("../src/lib/store");
     const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;

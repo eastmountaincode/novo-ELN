@@ -13,11 +13,21 @@ let initialized = false;
 const bootstrapEmail = process.env.ELN_BOOTSTRAP_EMAIL ?? "andrew@example.local";
 const bootstrapPassword = process.env.ELN_BOOTSTRAP_PASSWORD ?? "Development-only-password-2026!";
 const passwordRequirementMessage = "Password must be at least 12 characters and include uppercase, lowercase, number, and symbol characters.";
+const loginRateLimitWindowMs = 15 * 60 * 1000;
+const loginRateLimitMaxFailures = 10;
 
 function validatePassword(password: string) {
   if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
     throw new Error(passwordRequirementMessage);
   }
+}
+
+function normalizeLoginEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function normalizeLoginIp(ipAddress: string) {
+  return ipAddress.trim() || "unknown";
 }
 
 export function ensureDatabase() {
@@ -30,6 +40,15 @@ export function ensureDatabase() {
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS login_attempts (
+      email TEXT NOT NULL,
+      ip_address TEXT NOT NULL,
+      failed_count INTEGER NOT NULL,
+      first_failed_at INTEGER NOT NULL,
+      last_failed_at INTEGER NOT NULL,
+      PRIMARY KEY (email, ip_address)
     );
 
     CREATE TABLE IF NOT EXISTS projects (
@@ -266,6 +285,55 @@ export function verifyCredentials(email: string, password: string): AppUser | nu
   const user = findUserByEmail(email);
   if (!user || !bcrypt.compareSync(password, user.passwordHash)) return null;
   return { id: user.id, email: user.email, name: user.name, role: user.role };
+}
+
+export function getLoginRateLimit(email: string, ipAddress: string, now = Date.now()) {
+  ensureDatabase();
+  const normalizedEmail = normalizeLoginEmail(email);
+  const normalizedIp = normalizeLoginIp(ipAddress);
+  const row = queryOne(`SELECT failed_count, first_failed_at FROM login_attempts WHERE email = ${sql(normalizedEmail)} AND ip_address = ${sql(normalizedIp)} LIMIT 1`);
+  if (!row) return { limited: false, retryAfterSeconds: 0 };
+
+  const firstFailedAt = Number(row.first_failed_at);
+  const failedCount = Number(row.failed_count);
+  if (!Number.isFinite(firstFailedAt) || firstFailedAt <= now - loginRateLimitWindowMs) {
+    return { limited: false, retryAfterSeconds: 0 };
+  }
+
+  if (failedCount < loginRateLimitMaxFailures) return { limited: false, retryAfterSeconds: 0 };
+  return { limited: true, retryAfterSeconds: Math.max(1, Math.ceil((firstFailedAt + loginRateLimitWindowMs - now) / 1000)) };
+}
+
+export function recordFailedLogin(email: string, ipAddress: string, now = Date.now()) {
+  ensureDatabase();
+  const normalizedEmail = normalizeLoginEmail(email);
+  const normalizedIp = normalizeLoginIp(ipAddress);
+  const row = queryOne(`SELECT failed_count, first_failed_at FROM login_attempts WHERE email = ${sql(normalizedEmail)} AND ip_address = ${sql(normalizedIp)} LIMIT 1`);
+  const firstFailedAt = Number(row?.first_failed_at);
+  const withinWindow = row && Number.isFinite(firstFailedAt) && firstFailedAt > now - loginRateLimitWindowMs;
+
+  if (withinWindow) {
+    execSql(`
+      UPDATE login_attempts
+      SET failed_count = failed_count + 1, last_failed_at = ${sql(now)}
+      WHERE email = ${sql(normalizedEmail)} AND ip_address = ${sql(normalizedIp)};
+    `);
+    return;
+  }
+
+  execSql(`
+    INSERT INTO login_attempts (email, ip_address, failed_count, first_failed_at, last_failed_at)
+    VALUES (${sql(normalizedEmail)}, ${sql(normalizedIp)}, 1, ${sql(now)}, ${sql(now)})
+    ON CONFLICT(email, ip_address) DO UPDATE SET
+      failed_count = 1,
+      first_failed_at = excluded.first_failed_at,
+      last_failed_at = excluded.last_failed_at;
+  `);
+}
+
+export function clearFailedLogins(email: string, ipAddress: string) {
+  ensureDatabase();
+  execSql(`DELETE FROM login_attempts WHERE email = ${sql(normalizeLoginEmail(email))} AND ip_address = ${sql(normalizeLoginIp(ipAddress))};`);
 }
 
 export function createUser(input: { email: string; name: string; password: string; role?: UserRole }): AppUser {

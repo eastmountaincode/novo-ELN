@@ -1657,13 +1657,13 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
           </div>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 border bg-white px-3 text-sm font-medium hover:bg-slate-50" style={{ borderColor: color, color }}><Plus size={15} />Page</button>
+          <button onClick={createNewPage} className="inline-flex h-8 items-center gap-1.5 border bg-white px-2.5 text-sm font-medium hover:bg-slate-50" style={{ borderColor: color, color }}><Plus size={14} />Page</button>
           <div className="flex items-center gap-2">
             <div ref={sortOptionsRef} data-transient-menu="true" className="relative">
               <button
                 type="button"
                 onClick={() => setSortOptionsOpen((open) => !open)}
-                className="grid h-9 w-10 place-items-center border border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900"
+                className="grid h-8 w-8 place-items-center border border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900"
                 aria-label="Sort pages"
                 aria-haspopup="dialog"
                 aria-expanded={sortOptionsOpen}
@@ -1675,7 +1675,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
                 <section
                   role="dialog"
                   aria-label="Sort pages"
-                  className="absolute right-0 top-11 z-30 w-52 border border-slate-200 bg-white p-1 text-slate-900 shadow-2xl shadow-slate-950/15"
+                  className="absolute right-0 top-10 z-30 w-52 border border-slate-200 bg-white p-1 text-slate-900 shadow-2xl shadow-slate-950/15"
                 >
                   <p className="px-3 pb-1.5 pt-2 text-xs font-semibold text-slate-500">Sort by</p>
                   <div className="space-y-1">
@@ -1708,20 +1708,20 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
                   setFilterOptionsOpen((open) => !open);
                   setActiveFilterPanel("tags");
                 }}
-                className={`relative grid h-9 w-10 place-items-center border bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900 ${filterActive ? "border-slate-500" : "border-slate-300"}`}
+                className={`relative grid h-8 w-8 place-items-center border bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900 ${filterActive ? "border-slate-500" : "border-slate-300"}`}
                 aria-label="Filter pages"
                 aria-haspopup="dialog"
                 aria-expanded={filterOptionsOpen}
                 title="Filter pages"
               >
-                <Filter size={16} />
+                <Filter size={15} />
                 {filterCount ? <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center bg-slate-950 px-1 text-[10px] font-semibold leading-4 text-white">{filterCount}</span> : null}
               </button>
               {filterOptionsOpen ? (
                 <section
                   role="dialog"
                   aria-label="Filter pages"
-                  className="absolute left-0 top-11 z-30 flex items-start gap-2 text-slate-900"
+                  className="absolute left-0 top-10 z-30 flex items-start gap-2 text-slate-900"
                 >
                   <div className="w-52 border border-slate-200 bg-white p-1 shadow-2xl shadow-slate-950/15">
                     <div className="flex items-center justify-between gap-3 px-3 pb-1.5 pt-2">

@@ -15,6 +15,7 @@ const bootstrapPassword = process.env.ELN_BOOTSTRAP_PASSWORD ?? "Development-onl
 const passwordRequirementMessage = "Password must be at least 12 characters and include uppercase, lowercase, number, and symbol characters.";
 const loginRateLimitWindowMs = 15 * 60 * 1000;
 const loginRateLimitMaxFailures = 10;
+const loginAttemptRetentionMs = 24 * 60 * 60 * 1000;
 
 function validatePassword(password: string) {
   if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
@@ -289,6 +290,7 @@ export function verifyCredentials(email: string, password: string): AppUser | nu
 
 export function getLoginRateLimit(email: string, ipAddress: string, now = Date.now()) {
   ensureDatabase();
+  pruneLoginAttempts(now);
   const normalizedEmail = normalizeLoginEmail(email);
   const normalizedIp = normalizeLoginIp(ipAddress);
   const row = queryOne(`SELECT failed_count, first_failed_at FROM login_attempts WHERE email = ${sql(normalizedEmail)} AND ip_address = ${sql(normalizedIp)} LIMIT 1`);
@@ -306,6 +308,7 @@ export function getLoginRateLimit(email: string, ipAddress: string, now = Date.n
 
 export function recordFailedLogin(email: string, ipAddress: string, now = Date.now()) {
   ensureDatabase();
+  pruneLoginAttempts(now);
   const normalizedEmail = normalizeLoginEmail(email);
   const normalizedIp = normalizeLoginIp(ipAddress);
   const row = queryOne(`SELECT failed_count, first_failed_at FROM login_attempts WHERE email = ${sql(normalizedEmail)} AND ip_address = ${sql(normalizedIp)} LIMIT 1`);
@@ -334,6 +337,10 @@ export function recordFailedLogin(email: string, ipAddress: string, now = Date.n
 export function clearFailedLogins(email: string, ipAddress: string) {
   ensureDatabase();
   execSql(`DELETE FROM login_attempts WHERE email = ${sql(normalizeLoginEmail(email))} AND ip_address = ${sql(normalizeLoginIp(ipAddress))};`);
+}
+
+function pruneLoginAttempts(now = Date.now()) {
+  execSql(`DELETE FROM login_attempts WHERE last_failed_at <= ${sql(now - loginAttemptRetentionMs)};`);
 }
 
 export function createUser(input: { email: string; name: string; password: string; role?: UserRole }): AppUser {

@@ -83,6 +83,10 @@ describe("store", () => {
     expect(getLoginRateLimit(email, "198.51.100.4", now + 10).limited).toBe(false);
     expect(getLoginRateLimit(email, ipAddress, now + 15 * 60 * 1000 + 1).limited).toBe(false);
 
+    recordFailedLogin("stale@example.local", ipAddress, now - 25 * 60 * 60 * 1000);
+    recordFailedLogin("stale@example.local", ipAddress, now);
+    expect(getLoginRateLimit("stale@example.local", ipAddress, now).limited).toBe(false);
+
     clearFailedLogins(email, ipAddress);
     expect(getLoginRateLimit(email, ipAddress, now + 10).limited).toBe(false);
   });

@@ -1944,16 +1944,16 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   const cardStyle = active || tinted ? pageCardTintStyle(color) : undefined;
   const visibleTags = page.tags.slice(0, 3);
   return (
-    <div className="group relative">
+    <div className="group relative min-w-0">
       <button
         onClick={onClick}
-        className={`w-full border p-3 pr-10 text-left ${active ? "" : "border-slate-200 bg-white hover:border-slate-400"}`}
+        className={`block min-w-0 w-full border p-3 pr-10 text-left ${active ? "" : "border-slate-200 bg-white hover:border-slate-400"}`}
         style={cardStyle}
       >
-        <div className="flex items-start justify-between gap-3">
-          <h3 className="text-sm font-semibold leading-5 text-slate-900">{page.title || "Untitled"}</h3>
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <h3 className="min-w-0 break-words text-sm font-semibold leading-5 text-slate-900">{page.title || "Untitled"}</h3>
         </div>
-        <p className="mt-2 max-h-10 overflow-hidden text-sm leading-5 text-slate-500">{bodyToEditorText(page.body) || "Empty page"}</p>
+        <p className="mt-2 max-h-10 min-w-0 overflow-hidden break-words text-sm leading-5 text-slate-500">{bodyToEditorText(page.body) || "Empty page"}</p>
         {(page.status || visibleTags.length > 0) ? (
           <div className="mt-3 flex flex-wrap gap-1.5">
             {page.status ? <span className="inline-flex h-6 items-center border px-2 text-[11px] font-medium" style={pageStatusStyle(page.status)}>{getPageStatusLabel(page.status)}</span> : null}
@@ -2021,15 +2021,15 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
           <h1 className="mt-1 text-2xl font-semibold text-slate-950">Overview</h1>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <section className="border border-slate-200 bg-white p-4">
+        <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <section className="min-w-0 border border-slate-200 bg-white p-4">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold text-slate-950">Recently edited notes</h2>
                 <p className="mt-1 text-sm text-slate-500">Latest pages across notebooks.</p>
               </div>
             </div>
-            <div className="grid gap-2">
+            <div className="grid min-w-0 gap-2">
               {recentPages.slice(0, 8).map(({ page, project, notebook }) => (
                 <PageCard
                   key={page.id}
@@ -2043,7 +2043,7 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
             </div>
           </section>
 
-          <aside className="space-y-6">
+          <aside className="min-w-0 space-y-6">
             <section className="border border-slate-200 bg-white p-4">
               <div className="mb-4 flex items-center gap-2">
                 <FileArchive size={17} className="text-slate-500" />

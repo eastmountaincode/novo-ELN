@@ -1412,6 +1412,9 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
   const workspaceProject = workspace.projects[0];
   const ownNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId === workspace.user.id);
   const sharedNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId !== workspace.user.id);
+  const [myNotebooksCollapsed, setMyNotebooksCollapsed] = useState(false);
+  const [sharedNotebooksCollapsed, setSharedNotebooksCollapsed] = useState(false);
+
   function renderNotebook(notebook: Notebook) {
     const selected = selectedNotebook?.id === notebook.id;
     const color = projectColor(notebook);
@@ -1489,18 +1492,22 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
             <span className="sidebar-wide min-w-0 truncate font-medium">Home</span>
           </button>
         </div>
-        <SidebarSection label="My notebooks" onAdd={() => createNewNotebook(workspaceProject?.id)} />
-        <div className="mt-2 space-y-1">
-          {ownNotebooks.map(renderNotebook)}
-          {ownNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
-        </div>
+        <SidebarSection label="My notebooks" collapsed={myNotebooksCollapsed} onToggle={() => setMyNotebooksCollapsed((current) => !current)} onAdd={() => createNewNotebook(workspaceProject?.id)} />
+        {!myNotebooksCollapsed ? (
+          <div className="mt-2 space-y-1">
+            {ownNotebooks.map(renderNotebook)}
+            {ownNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
+          </div>
+        ) : null}
         <div className="mt-5">
-          <SidebarSection label="Shared with me" />
+          <SidebarSection label="Shared with me" collapsed={sharedNotebooksCollapsed} onToggle={() => setSharedNotebooksCollapsed((current) => !current)} />
         </div>
-        <div className="mt-2 space-y-1">
-          {sharedNotebooks.map(renderNotebook)}
-          {sharedNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
-        </div>
+        {!sharedNotebooksCollapsed ? (
+          <div className="mt-2 space-y-1">
+            {sharedNotebooks.map(renderNotebook)}
+            {sharedNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="relative border-t border-white/10 py-4">
@@ -2887,11 +2894,18 @@ function ResizeHandle({ onPointerDown, disabled = false }: { onPointerDown: (eve
   );
 }
 
-function SidebarSection({ label, onAdd }: { label: string; onAdd?: () => void }) {
+function SidebarSection({ label, onAdd, collapsed, onToggle }: { label: string; onAdd?: () => void; collapsed?: boolean; onToggle?: () => void }) {
   return (
     <div className="sidebar-wide px-4">
       <div className="flex min-w-0 items-center justify-between gap-2 px-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-        <span className="min-w-0 truncate">{label}</span>
+        {onToggle ? (
+          <button type="button" onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-1 text-left hover:text-slate-300" title={collapsed ? `Expand ${label}` : `Collapse ${label}`}>
+            {collapsed ? <ChevronRight size={13} className="shrink-0" /> : <ChevronDown size={13} className="shrink-0" />}
+            <span className="min-w-0 truncate">{label}</span>
+          </button>
+        ) : (
+          <span className="min-w-0 truncate">{label}</span>
+        )}
         {onAdd ? <button onClick={onAdd} className="grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white" title={`Create ${label.toLowerCase()}`}><Plus size={14} /></button> : null}
       </div>
     </div>

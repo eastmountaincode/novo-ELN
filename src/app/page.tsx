@@ -148,6 +148,7 @@ export default function Home() {
   const [authMode, setAuthMode] = useState<"signin" | "register">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberDevice, setRememberDevice] = useState(false);
   const [name, setName] = useState("");
   const [activeView, setActiveView] = useState<"home" | "projectHome" | "project" | "account">("home");
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -460,7 +461,7 @@ export default function Home() {
     const response = await fetch(authMode === "register" ? "/api/auth/register" : "/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(authMode === "register" ? { email, name, password } : { email, password }),
+      body: JSON.stringify(authMode === "register" ? { email, name, password } : { email, password, rememberDevice }),
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -878,6 +879,12 @@ export default function Home() {
           <label className="mb-3 block text-sm font-medium text-slate-700">Email<input value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" /></label>
           <label className="mb-2 block text-sm font-medium text-slate-700">Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" autoComplete={authMode === "register" ? "new-password" : "current-password"} /></label>
           {authMode === "register" ? <p className="mb-4 text-xs leading-5 text-slate-500">{passwordRequirementText}</p> : null}
+          {authMode === "signin" ? (
+            <label className="mb-4 flex items-center gap-2 text-sm text-slate-600">
+              <input checked={rememberDevice} onChange={(event) => setRememberDevice(event.target.checked)} type="checkbox" className="size-4 border border-slate-300 accent-slate-950" />
+              Remember this device for 14 days
+            </label>
+          ) : null}
           {authError ? <p className="mb-3 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{authError}</p> : null}
           <button className="h-10 w-full bg-slate-950 text-sm font-semibold text-white hover:bg-slate-800">{authMode === "register" ? "Create account" : "Sign in"}</button>
         </form>

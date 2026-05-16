@@ -3,7 +3,8 @@ import { cookies } from "next/headers";
 import { createUser, findUserById, verifyCredentials } from "./store";
 
 const cookieName = "eln_session";
-const maxAgeSeconds = 60 * 60 * 12;
+const defaultMaxAgeSeconds = 60 * 60 * 12;
+const rememberedMaxAgeSeconds = 60 * 60 * 24 * 14;
 const developmentSecret = "local-development-session-secret-change-me";
 const secret = process.env.ELN_SESSION_SECRET ?? developmentSecret;
 
@@ -16,16 +17,16 @@ type SessionPayload = {
   expiresAt: number;
 };
 
-export async function login(email: string, password: string) {
+export async function login(email: string, password: string, rememberDevice = false) {
   const user = verifyCredentials(email, password);
   if (!user) return null;
-  await setSession(user.id);
+  await setSession(user.id, rememberDevice ? rememberedMaxAgeSeconds : defaultMaxAgeSeconds);
   return user;
 }
 
 export async function register(input: { email: string; name: string; password: string }) {
   const user = createUser(input);
-  await setSession(user.id);
+  await setSession(user.id, defaultMaxAgeSeconds);
   return user;
 }
 
@@ -47,7 +48,7 @@ function signSession(payload: SessionPayload) {
   return `${body}.${signature(body)}`;
 }
 
-async function setSession(userId: string) {
+async function setSession(userId: string, maxAgeSeconds: number) {
   const cookieStore = await cookies();
   cookieStore.set(cookieName, signSession({ userId, expiresAt: Date.now() + maxAgeSeconds * 1000 }), {
     httpOnly: true,

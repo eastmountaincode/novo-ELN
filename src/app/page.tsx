@@ -17,7 +17,6 @@ import {
   FileSpreadsheet,
   FileText,
   FlaskConical,
-  Folder,
   GripVertical,
   Home as HomeIcon,
   Image as ImageIcon,
@@ -684,13 +683,13 @@ export default function Home() {
     setNameDialog({ kind: "createProject" });
   }
 
-  function createNewNotebook(projectId = selectedProject?.id, initialMode: "blank" | "import" = "blank") {
+  function createNewNotebook(projectId = selectedProject?.id ?? workspace?.projects[0]?.id, initialMode: "blank" | "import" = "blank") {
     if (!projectId) return;
     setProjectMenuId(null);
     setNotebookMenuId(null);
     setPageMenuId(null);
     setAccountOpen(false);
-    const projectName = workspace?.projects.find((project) => project.id === projectId)?.name ?? "Project";
+    const projectName = "Novo";
     setNameDialog({ kind: "createNotebook", projectId, projectName, initialMode });
   }
 
@@ -932,20 +931,10 @@ export default function Home() {
 
         <ResizeHandle disabled={sidebarCollapsed} onPointerDown={(event) => setDragState({ pane: "sidebar", startX: event.clientX, startWidth: sidebarWidth })} />
 
-        {activeView === "home" ? (
-          <HomeView recentPages={recentPages} selectPage={selectPage} />
+        {activeView === "home" || activeView === "projectHome" ? (
+          <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} importEnexNotebook={() => createNewNotebook(undefined, "import")} />
         ) : activeView === "account" ? (
           <AccountView user={workspace.user} />
-        ) : activeView === "projectHome" && selectedProject ? (
-          <ProjectHomeView
-            user={workspace.user}
-            project={selectedProject}
-            recentPages={recentPages.filter((entry) => entry.project.id === selectedProject.id)}
-            selectNotebook={selectNotebook}
-            selectPage={selectPage}
-            refreshWorkspace={() => refreshWorkspace({ projectId: selectedProject.id })}
-            importEnexNotebook={() => createNewNotebook(selectedProject.id, "import")}
-          />
         ) : (
           <>
             <PagesSidebar
@@ -1160,7 +1149,6 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        projectId: dialog.projectId,
         notebookName: name.trim(),
         path: serverPath.trim(),
         totalNotes: inspection?.noteCount,
@@ -1360,9 +1348,9 @@ function getNameModalTitle(dialog: NameDialogState) {
 
 function getNameModalDescription(dialog: NameDialogState) {
   if (dialog.kind === "createProject") return "Create a project to group related notebooks.";
-  if (dialog.kind === "createNotebook") return dialog.initialMode === "import" ? `Create a new notebook in ${dialog.projectName} from an Evernote ENEX export.` : `Create a notebook inside ${dialog.projectName}.`;
+  if (dialog.kind === "createNotebook") return dialog.initialMode === "import" ? "Create a new notebook from an Evernote ENEX export." : "Create a notebook.";
   if (dialog.kind === "renameProject") return "Update the project name shown in the sidebar.";
-  return "Update the notebook name shown under its project.";
+  return "Update the notebook name shown in the sidebar.";
 }
 
 function NotebookDeleteModal({ notebook, onCancel, onConfirm }: { notebook: Notebook; onCancel: () => void; onConfirm: () => void }) {
@@ -1420,7 +1408,47 @@ function ModalFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
-function UnifiedSidebar({ workspace, activeView, selectedProject, selectedNotebook, sidebarCollapsed, accountOpen, projectMenuId, notebookMenuId, expandedProjectIds, openSearch, toggleSidebarCollapsed, setAccountOpen, setProjectMenuId, setNotebookMenuId, openHome, openAccount, selectProject, toggleProject, selectNotebook, createNewProject, renameProject, updateProjectColor, deleteProject, renameNotebook, deleteNotebook, shareNotebook, createNewNotebook, handleLogout }: { workspace: Workspace; activeView: "home" | "projectHome" | "project" | "account"; selectedProject?: Project; selectedNotebook?: Notebook; sidebarCollapsed: boolean; accountOpen: boolean; projectMenuId: string | null; notebookMenuId: string | null; expandedProjectIds: Set<string>; openSearch: () => void; toggleSidebarCollapsed: () => void; setAccountOpen: (value: boolean) => void; setProjectMenuId: (value: string | null) => void; setNotebookMenuId: (value: string | null) => void; openHome: () => void; openAccount: () => void; selectProject: (project: Project) => void; toggleProject: (project: Project) => void; selectNotebook: (project: Project, notebook: Notebook) => void; createNewProject: () => void; renameProject: (project: Project) => void; updateProjectColor: (project: Project, color: string) => void; deleteProject: (project: Project) => void; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; shareNotebook: (notebook: Notebook) => void; createNewNotebook: (projectId?: string) => void; handleLogout: () => void }) {
+function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollapsed, accountOpen, notebookMenuId, openSearch, toggleSidebarCollapsed, setAccountOpen, setProjectMenuId, setNotebookMenuId, openHome, openAccount, selectNotebook, renameNotebook, deleteNotebook, shareNotebook, createNewNotebook, handleLogout }: { workspace: Workspace; activeView: "home" | "projectHome" | "project" | "account"; selectedProject?: Project; selectedNotebook?: Notebook; sidebarCollapsed: boolean; accountOpen: boolean; projectMenuId: string | null; notebookMenuId: string | null; expandedProjectIds: Set<string>; openSearch: () => void; toggleSidebarCollapsed: () => void; setAccountOpen: (value: boolean) => void; setProjectMenuId: (value: string | null) => void; setNotebookMenuId: (value: string | null) => void; openHome: () => void; openAccount: () => void; selectProject: (project: Project) => void; toggleProject: (project: Project) => void; selectNotebook: (project: Project, notebook: Notebook) => void; createNewProject: () => void; renameProject: (project: Project) => void; updateProjectColor: (project: Project, color: string) => void; deleteProject: (project: Project) => void; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; shareNotebook: (notebook: Notebook) => void; createNewNotebook: (projectId?: string) => void; handleLogout: () => void }) {
+  const workspaceProject = workspace.projects[0];
+  const ownNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId === workspace.user.id);
+  const sharedNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId !== workspace.user.id);
+  function renderNotebook(notebook: Notebook) {
+    const selected = selectedNotebook?.id === notebook.id;
+    const color = projectColor(notebook);
+    return (
+      <div key={notebook.id} className={sidebarCollapsed ? "px-3" : "px-4"}>
+        <div
+          className={`relative flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-sm ${selected ? "text-white" : "text-slate-300 hover:bg-white/5"}`}
+          style={{ backgroundColor: selected ? colorWithAlpha(color, 0.1) : undefined }}
+        >
+          <button onClick={() => workspaceProject && selectNotebook(workspaceProject, notebook)} className={`flex min-w-0 flex-1 items-center overflow-hidden text-left ${sidebarCollapsed ? "justify-center" : "gap-2"}`} title={notebook.name}>
+            <NotebookIcon size={15} className="shrink-0" style={{ color }} />
+            <span className="sidebar-wide min-w-0 truncate">{notebook.name}</span>
+          </button>
+          <button
+            data-transient-menu="true"
+            onClick={() => {
+              setProjectMenuId(null);
+              setAccountOpen(false);
+              setNotebookMenuId(notebookMenuId === notebook.id ? null : notebook.id);
+            }}
+            className="sidebar-wide grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white"
+            title="Notebook actions"
+          >
+            <MoreHorizontal size={14} />
+          </button>
+          {notebookMenuId === notebook.id ? (
+            <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-8 z-20 w-32 border border-white/10 bg-slate-900 py-1 shadow-lg">
+              <button onClick={() => { setNotebookMenuId(null); shareNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Share</button>
+              <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Rename</button>
+              <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">Delete</button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <aside className={`relative z-30 grid min-h-screen grid-rows-[auto_1fr_auto] bg-slate-950 text-slate-200 ${sidebarCollapsed ? "sidebar-collapsed overflow-visible" : "overflow-hidden"}`}>
       <div className="space-y-2 border-b border-white/10 py-4">
@@ -1461,101 +1489,15 @@ function UnifiedSidebar({ workspace, activeView, selectedProject, selectedNotebo
             <span className="sidebar-wide min-w-0 truncate font-medium">Home</span>
           </button>
         </div>
-        <SidebarSection label="Projects" onAdd={createNewProject} />
+        <SidebarSection label="My notebooks" onAdd={() => createNewNotebook(workspaceProject?.id)} />
         <div className="mt-2 space-y-1">
-          {workspace.projects.map((project) => {
-            const expanded = expandedProjectIds.has(project.id);
-            const color = projectColor(project);
-            const selected = selectedProject?.id === project.id;
-            return (
-              <div key={project.id}>
-                <div className={sidebarCollapsed ? "px-3" : "px-4"}>
-                  <div
-                    className={`relative flex w-full min-w-0 items-center gap-1 py-1 text-sm ${sidebarCollapsed ? "justify-center px-0" : "px-1"} ${selected ? "text-white" : "text-slate-300 hover:bg-white/5"}`}
-                    style={{ backgroundColor: selected ? colorWithAlpha(color, 0.1) : undefined }}
-                  >
-                    <button onClick={() => toggleProject(project)} className="sidebar-wide grid size-7 shrink-0 place-items-center text-slate-400 hover:text-white" title={expanded ? "Collapse project" : "Expand project"}>
-                      {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                    </button>
-                    <button onClick={() => selectProject(project)} className={`flex min-w-0 items-center overflow-hidden text-left ${sidebarCollapsed ? "justify-center" : "flex-1 gap-2"}`} title={project.name}>
-                      <Folder size={16} className="shrink-0" style={{ color }} />
-                      <span className="sidebar-wide min-w-0 truncate font-medium">{project.name}</span>
-                    </button>
-                    <div className="sidebar-wide flex shrink-0 items-center">
-                      <button onClick={() => createNewNotebook(project.id)} className="grid size-7 place-items-center text-slate-400 hover:bg-white/10 hover:text-white" title="Create notebook">
-                        <Plus size={15} />
-                      </button>
-                      <button
-                        data-transient-menu="true"
-                        onClick={() => {
-                          setNotebookMenuId(null);
-                          setAccountOpen(false);
-                          setProjectMenuId(projectMenuId === project.id ? null : project.id);
-                        }}
-                        className="grid size-7 place-items-center text-slate-400 hover:bg-white/10 hover:text-white"
-                        title="Project actions"
-                      >
-                        <MoreHorizontal size={15} />
-                      </button>
-                    </div>
-                    {projectMenuId === project.id ? (
-                      <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-9 z-20 w-40 border border-white/10 bg-slate-900 py-1 shadow-lg">
-                        <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
-                          <span>Color</span>
-                          <input
-                            type="color"
-                            value={color}
-                            onChange={(event) => updateProjectColor(project, event.target.value)}
-                            className="size-6 cursor-pointer border-0 bg-transparent p-0"
-                            title="Project color"
-                          />
-                        </label>
-                        <button onClick={() => { setProjectMenuId(null); renameProject(project); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Rename</button>
-                        <button onClick={() => { setProjectMenuId(null); deleteProject(project); }} className="block w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">Delete</button>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                {expanded && !sidebarCollapsed ? (
-                  <div className="sidebar-wide mt-1 space-y-1 pl-7">
-                    {project.notebooks.map((notebook) => (
-                      <div key={notebook.id} className="pr-4">
-                        <div
-                          className={`relative flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-sm ${selectedNotebook?.id === notebook.id ? "text-white" : "text-slate-300 hover:bg-white/5"}`}
-                          style={{ backgroundColor: selectedNotebook?.id === notebook.id ? colorWithAlpha(color, 0.08) : undefined }}
-                        >
-                          <button onClick={() => selectNotebook(project, notebook)} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-left">
-                            <NotebookIcon size={15} className="shrink-0" style={{ color }} />
-                            <span className="min-w-0 truncate">{notebook.name}</span>
-                          </button>
-                          <button
-                            data-transient-menu="true"
-                            onClick={() => {
-                              setProjectMenuId(null);
-                              setAccountOpen(false);
-                              setNotebookMenuId(notebookMenuId === notebook.id ? null : notebook.id);
-                            }}
-                            className="grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white"
-                            title="Notebook actions"
-                          >
-                            <MoreHorizontal size={14} />
-                          </button>
-                          {notebookMenuId === notebook.id ? (
-                            <div data-transient-menu="true" className="absolute right-1 top-8 z-20 w-32 border border-white/10 bg-slate-900 py-1 shadow-lg">
-	                              <button onClick={() => { setNotebookMenuId(null); shareNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Share</button>
-	                              <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Rename</button>
-                              <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">Delete</button>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+          {ownNotebooks.map(renderNotebook)}
+          {ownNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
+        </div>
+        <SidebarSection label="Shared with me" />
+        <div className="mt-2 space-y-1">
+          {sharedNotebooks.map(renderNotebook)}
+          {sharedNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
         </div>
       </div>
 
@@ -1594,7 +1536,7 @@ function UnifiedSidebar({ workspace, activeView, selectedProject, selectedNotebo
 }
 
 function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, deletePage }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; deletePage: (page: PageEntry) => void }) {
-  const pages = selectedNotebook?.pages ?? [];
+  const pages = useMemo(() => selectedNotebook?.pages ?? [], [selectedNotebook]);
   const [sortKey, setSortKey] = useState<PageSortKey>("updated");
   const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
   const [filterOptionsOpen, setFilterOptionsOpen] = useState(false);
@@ -1613,7 +1555,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
     const query = tagQuery.trim().toLowerCase();
     return query ? availableTags.filter((tag) => tag.toLowerCase().includes(query)) : availableTags;
   }, [availableTags, tagQuery]);
-  const color = projectColor(selectedProject);
+  const color = projectColor(selectedNotebook ?? selectedProject);
 
   useEffect(() => {
     if (!sortOptionsOpen) return;
@@ -1699,7 +1641,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
     <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>{selectedProject?.name ?? "Project"}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>Notebook</p>
           <div className="flex min-w-0 items-center justify-between gap-3">
             <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
             <span className="shrink-0 text-sm font-medium text-slate-500">{filterActive ? `${sortedPages.length} / ${pages.length}` : sortedPages.length}</span>
@@ -2061,7 +2003,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   );
 }
 
-function HomeView({ recentPages, selectPage }: { recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void }) {
+function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; members: AppUser[]; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; importEnexNotebook: () => void }) {
   return (
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
@@ -2070,228 +2012,64 @@ function HomeView({ recentPages, selectPage }: { recentPages: Array<{ page: Page
           <h1 className="mt-1 text-2xl font-semibold text-slate-950">Overview</h1>
         </div>
 
-        <section className="max-w-3xl border border-slate-200 bg-white p-4">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-slate-950">Recently edited notes</h2>
-              <p className="mt-1 text-sm text-slate-500">Latest pages across projects and notebooks.</p>
-            </div>
-          </div>
-          <div className="grid gap-2">
-            {recentPages.slice(0, 6).map(({ page, project, notebook }) => (
-              <PageCard
-                key={page.id}
-                page={page}
-                accentColor={project.color}
-                tinted
-                contextLabel={`${project.name} / ${notebook.name}`}
-                onClick={() => selectPage(project, notebook, page)}
-              />
-            ))}
-            {recentPages.length === 0 ? <p className="p-3 text-sm text-slate-500">No recent notes yet.</p> : null}
-          </div>
-        </section>
-      </div>
-    </section>
-  );
-}
-
-function ProjectHomeView({ user, project, recentPages, selectNotebook, selectPage, refreshWorkspace, importEnexNotebook }: { user: AppUser; project: Project; recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; selectNotebook: (project: Project, notebook: Notebook) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; refreshWorkspace: () => Promise<void>; importEnexNotebook: () => void }) {
-  const canManageProject = user.role === "admin" || project.accessRole === "owner";
-  const canEditProject = canManageProject || project.accessRole === "editor";
-  const color = projectColor(project);
-  const totalPages = project.notebooks.reduce((sum, notebook) => sum + notebook.pages.length, 0);
-  const totalAttachments = project.notebooks.reduce((sum, notebook) => sum + notebook.pages.reduce((pageSum, page) => pageSum + page.attachments.length, 0), 0);
-  const associatedTags = new Map<string, string>();
-  project.notebooks.forEach((notebook) => {
-    notebook.pages.forEach((page) => {
-      page.tags.forEach((tag) => associatedTags.set(tag, "#64748b"));
-    });
-  });
-
-  return (
-    <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
-      <div className="mx-auto max-w-6xl">
-        <div className="mb-8 flex items-start justify-between gap-6">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>Project Home</p>
-            <h1 className="mt-1 text-2xl font-semibold text-slate-950">{project.name}</h1>
-          </div>
-          <div className="border bg-white px-3 py-2 text-sm text-slate-700" style={{ borderColor: colorWithAlpha(color, 0.35) }}>
-            {project.accessScope === "project" ? `${project.accessRole ?? "viewer"} project access` : "Notebook-only access"}
-          </div>
-        </div>
-
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="space-y-6">
-            <ProjectSummary
-              notebooks={project.notebooks.length}
-              pages={totalPages}
-              attachments={totalAttachments}
-              createdAt={project.createdAt}
-              updatedAt={project.updatedAt}
-              accentColor={color}
-              tags={Array.from(associatedTags, ([label, color]) => ({ label, color }))}
-            />
-
-            <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold text-slate-950">Notebooks</h2>
-                  <p className="mt-1 text-sm text-slate-500">{project.accessScope === "notebook" ? "Only notebooks shared with you are shown." : "All notebooks in this project."}</p>
-                </div>
+          <section className="border border-slate-200 bg-white p-4">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">Recently edited notes</h2>
+                <p className="mt-1 text-sm text-slate-500">Latest pages across notebooks.</p>
               </div>
-              <div className="grid gap-2">
-                {project.notebooks.map((notebook) => (
-                  <button
-                    key={notebook.id}
-                    onClick={() => selectNotebook(project, notebook)}
-                    className="flex items-center justify-between gap-3 border bg-white p-3 text-left hover:border-slate-400"
-                    style={{ borderColor: colorWithAlpha(color, 0.24) }}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <NotebookIcon size={16} className="shrink-0" style={{ color }} />
-                        <span className="truncate text-sm font-semibold text-slate-950">{notebook.name}</span>
-                      </div>
-                      <p className="mt-1 text-xs text-slate-500">{notebook.pages.length} pages · {notebook.accessRole} access</p>
-                    </div>
-                    <ChevronRight size={16} className="shrink-0 text-slate-400" />
-                  </button>
-                ))}
-                {project.notebooks.length === 0 ? <p className="p-3 text-sm text-slate-500">No visible notebooks.</p> : null}
-              </div>
-            </section>
-
-            <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
-              <div className="mb-4">
-                <h2 className="text-base font-semibold text-slate-950">Recent pages</h2>
-                <p className="mt-1 text-sm text-slate-500">Latest edits inside this project.</p>
-              </div>
-              <div className="grid gap-2">
-                {recentPages.slice(0, 5).map(({ page, notebook }) => (
-                  <PageCard
-                    key={page.id}
-                    page={page}
-                    accentColor={color}
-                    contextLabel={notebook.name}
-                    onClick={() => selectPage(project, notebook, page)}
-                  />
-                ))}
-                {recentPages.length === 0 ? <p className="p-3 text-sm text-slate-500">No recent pages yet.</p> : null}
-              </div>
-            </section>
-          </div>
+            </div>
+            <div className="grid gap-2">
+              {recentPages.slice(0, 8).map(({ page, project, notebook }) => (
+                <PageCard
+                  key={page.id}
+                  page={page}
+                  accentColor={notebook.color}
+                  contextLabel={notebook.name}
+                  onClick={() => selectPage(project, notebook, page)}
+                />
+              ))}
+              {recentPages.length === 0 ? <p className="p-3 text-sm text-slate-500">No recent notes yet.</p> : null}
+            </div>
+          </section>
 
           <aside className="space-y-6">
-            {canManageProject ? (
-              <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
-                <div className="mb-4 flex items-center gap-2">
-                  <Users size={17} style={{ color }} />
-                  <h2 className="text-base font-semibold text-slate-950">Share project</h2>
-                </div>
-                <ShareProjectPanel project={project} refreshWorkspace={refreshWorkspace} />
-              </section>
-            ) : null}
-
-            <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
+            <section className="border border-slate-200 bg-white p-4">
               <div className="mb-4 flex items-center gap-2">
-                <Users size={17} style={{ color }} />
-                <h2 className="text-base font-semibold text-slate-950">Project members</h2>
+                <FileArchive size={17} className="text-slate-500" />
+                <h2 className="text-base font-semibold text-slate-950">Import</h2>
               </div>
-              {project.accessScope === "notebook" ? (
-                <p className="mb-4 border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">You have access through shared notebooks, not the full project.</p>
-              ) : null}
-              <MemberList members={project.members} emptyText="No project members." onRemove={canManageProject ? async (member) => {
-                await removeProjectMember(project.id, member.userId);
-                await refreshWorkspace();
-              } : undefined} />
+              <p className="mb-4 text-sm leading-6 text-slate-500">Create a new notebook from an Evernote ENEX export.</p>
+              <button
+                type="button"
+                onClick={importEnexNotebook}
+                className="flex h-9 w-full items-center justify-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:border-slate-500"
+              >
+                <FileArchive size={15} />
+                Import ENEX notebook
+              </button>
             </section>
-            {canEditProject ? (
-              <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(color, 0.22) }}>
-                <div className="mb-4 flex items-center gap-2">
-                  <FileArchive size={17} style={{ color }} />
-                  <h2 className="text-base font-semibold text-slate-950">Import</h2>
-                </div>
-                <p className="mb-4 text-sm leading-6 text-slate-500">Create a new notebook from an Evernote ENEX export.</p>
-                <button
-                  type="button"
-                  onClick={importEnexNotebook}
-                  className="flex h-9 w-full items-center justify-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:border-slate-500"
-                >
-                  <FileArchive size={15} />
-                  Import ENEX notebook
-                </button>
-              </section>
-            ) : null}
+
+            <section className="border border-slate-200 bg-white p-4">
+              <div className="mb-4 flex items-center gap-2">
+                <Users size={17} className="text-slate-500" />
+                <h2 className="text-base font-semibold text-slate-950">Group members</h2>
+              </div>
+              <div className="space-y-2">
+                {members.map((member) => (
+                  <div key={member.id} className="border border-slate-100 px-3 py-2">
+                    <div className="text-sm font-medium text-slate-950">{member.name}</div>
+                    <div className="mt-1 truncate text-xs text-slate-500">{member.email}</div>
+                  </div>
+                ))}
+                {members.length === 0 ? <p className="text-sm text-slate-500">No group members yet.</p> : null}
+              </div>
+            </section>
           </aside>
         </div>
       </div>
     </section>
-  );
-}
-
-function ProjectSummary({ notebooks, pages, attachments, createdAt, updatedAt, accentColor, tags }: { notebooks: number; pages: number; attachments: number; createdAt: string; updatedAt: string; accentColor: string; tags: Array<{ label: string; color: string }> }) {
-  return (
-    <section className="border bg-white p-4" style={{ borderColor: colorWithAlpha(accentColor, 0.22) }}>
-      <div className="mb-4 flex items-center gap-2">
-        <h2 className="text-base font-semibold text-slate-950">Summary</h2>
-      </div>
-      <dl className="space-y-2.5">
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] items-start gap-3">
-          <dt className="text-sm text-slate-600">Notebooks</dt>
-          <dd className="text-sm font-semibold tabular-nums text-slate-950">{notebooks}</dd>
-        </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] items-start gap-3">
-          <dt className="text-sm text-slate-600">Total pages</dt>
-          <dd className="text-sm font-semibold tabular-nums text-slate-950">{pages}</dd>
-        </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] items-start gap-3">
-          <dt className="text-sm text-slate-600">Attachments</dt>
-          <dd className="text-sm font-semibold tabular-nums text-slate-950">{attachments}</dd>
-        </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] items-start gap-3">
-          <dt className="text-sm text-slate-600">Created on</dt>
-          <dd className="text-sm text-slate-950">{formatDateTime(createdAt)}</dd>
-        </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] items-start gap-3">
-          <dt className="text-sm text-slate-600">Last updated</dt>
-          <dd className="text-sm text-slate-950">{formatDateTime(updatedAt)}</dd>
-        </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] items-start gap-3">
-          <dt className="pt-0.5 text-sm text-slate-600">Tags</dt>
-          <dd className="flex min-w-0 flex-wrap gap-1.5">
-            {tags.length ? (
-              tags.slice(0, 12).map((tag) => (
-                <span key={tag.label} className="inline-flex h-6 max-w-full items-center truncate border px-2 text-xs font-medium text-slate-700" style={{ borderColor: colorWithAlpha(tag.color, 0.25), backgroundColor: colorWithAlpha(tag.color, 0.08) }}>
-                  {tag.label}
-                </span>
-              ))
-            ) : (
-              <span className="text-sm text-slate-400">None</span>
-            )}
-            {tags.length > 12 ? <span className="text-sm text-slate-400">+{tags.length - 12} more</span> : null}
-          </dd>
-        </div>
-      </dl>
-    </section>
-  );
-}
-
-function ShareProjectPanel({ project, refreshWorkspace }: { project: Project; refreshWorkspace: () => Promise<void> }) {
-  return (
-    <ShareForm
-      label="User email"
-      submitLabel="Add member"
-      onSubmit={async ({ email, role }) => {
-        await fetch(`/api/projects/${project.id}/members`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, role }),
-        }).then(assertOk);
-        await refreshWorkspace();
-      }}
-    />
   );
 }
 
@@ -2410,10 +2188,6 @@ function MemberList({ members, emptyText, dark = false, onRemove }: { members: S
       ))}
     </div>
   );
-}
-
-async function removeProjectMember(projectId: string, userId: string) {
-  await fetch(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" }).then(assertOk);
 }
 
 async function removeNotebookMember(notebookId: string, userId: string) {
@@ -2639,7 +2413,7 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
               <tr>
                 <th className="px-4 py-3 font-semibold">User</th>
                 <th className="px-4 py-3 font-semibold">Role</th>
-                <th className="px-4 py-3 font-semibold">Projects</th>
+                <th className="px-4 py-3 font-semibold">Notebooks</th>
                 <th className="px-4 py-3 font-semibold">Created</th>
                 <th className="px-4 py-3 text-right font-semibold">Actions</th>
               </tr>
@@ -2652,7 +2426,7 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
                     <div className="mt-1 text-xs text-slate-500">{user.email}</div>
                   </td>
                   <td className="px-4 py-3 capitalize text-slate-700">{user.role}</td>
-                  <td className="px-4 py-3 text-slate-700">{user.projectCount}</td>
+                  <td className="px-4 py-3 text-slate-700">{user.notebookCount}</td>
                   <td className="px-4 py-3 text-slate-500">{formatDateTime(user.createdAt)}</td>
                   <td className="px-4 py-3 text-right">
                     <button
@@ -2729,7 +2503,6 @@ function DataAdminPanel() {
   const metrics = overview
     ? [
         { label: "Users", value: overview.counts.users.toLocaleString() },
-        { label: "Projects", value: overview.counts.projects.toLocaleString() },
         { label: "Notebooks", value: overview.counts.notebooks.toLocaleString() },
         { label: "Pages", value: overview.counts.pages.toLocaleString() },
         { label: "Attachments", value: overview.counts.attachments.toLocaleString() },
@@ -2782,7 +2555,7 @@ function DataAdminPanel() {
                 <tr>
                   <th className="px-4 py-3 font-semibold">File</th>
                   <th className="px-4 py-3 font-semibold">Page</th>
-                  <th className="px-4 py-3 font-semibold">Project</th>
+                  <th className="px-4 py-3 font-semibold">Notebook</th>
                   <th className="px-4 py-3 font-semibold">Type</th>
                   <th className="px-4 py-3 text-right font-semibold">Size</th>
                   <th className="px-4 py-3 font-semibold">Created</th>
@@ -2797,10 +2570,9 @@ function DataAdminPanel() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-medium text-slate-800">{file.pageTitle}</div>
-                      <div className="mt-1 text-xs text-slate-500">{file.notebookName}</div>
-                    </td>
+                      </td>
                     <td className="px-4 py-3">
-                      <div className="text-slate-700">{file.projectName}</div>
+                      <div className="text-slate-700">{file.notebookName}</div>
                       <div className="mt-1 text-xs text-slate-500">{file.ownerEmail}</div>
                     </td>
                     <td className="px-4 py-3">
@@ -2896,12 +2668,12 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const attachmentCount = page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
-  const color = projectColor(selectedProject);
+  const color = projectColor(selectedNotebook ?? selectedProject);
 
   return (
     <section className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-white">
       <header className="border-b border-slate-200 px-6 py-4">
-        <div className="mb-2 flex items-center gap-2 text-sm text-slate-500"><span>{selectedProject?.name}</span><ChevronRight size={14} /><span>{selectedNotebook?.name}</span>{saving ? <span className="ml-2 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}</div>
+        <div className="mb-2 flex items-center gap-2 text-sm text-slate-500"><span>{selectedNotebook?.name}</span>{saving ? <span className="ml-2 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}</div>
         <div className="flex items-center gap-3">
           <input value={page.title} onChange={(event) => patchSelectedPage({ title: event.target.value })} onBlur={(event) => void savePage({ title: event.target.value })} className="min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none" />
         </div>
@@ -3113,12 +2885,12 @@ function ResizeHandle({ onPointerDown, disabled = false }: { onPointerDown: (eve
   );
 }
 
-function SidebarSection({ label, onAdd }: { label: string; onAdd: () => void }) {
+function SidebarSection({ label, onAdd }: { label: string; onAdd?: () => void }) {
   return (
     <div className="sidebar-wide px-4">
       <div className="flex min-w-0 items-center justify-between gap-2 px-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
         <span className="min-w-0 truncate">{label}</span>
-        <button onClick={onAdd} className="grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white" title={`Create ${label.toLowerCase()}`}><Plus size={14} /></button>
+        {onAdd ? <button onClick={onAdd} className="grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white" title={`Create ${label.toLowerCase()}`}><Plus size={14} /></button> : null}
       </div>
     </div>
   );
@@ -3128,7 +2900,7 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function projectColor(project: Pick<Project, "color"> | undefined) {
+function projectColor(project: Pick<Project | Notebook, "color"> | undefined) {
   return normalizeColor(project?.color);
 }
 

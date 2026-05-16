@@ -35,11 +35,9 @@ describe("ENEX import formatting", () => {
     const { verifyCredentials, getWorkspace } = await import("../src/lib/store");
     const { importEnexFile } = await import("../src/lib/enex");
     const user = verifyCredentials("test@example.local", "secret-password")!;
-    const project = getWorkspace(user.id).projects[0];
+    await importEnexFile({ userId: user.id, notebookName: "Formatting", filePath: enexPath });
 
-    await importEnexFile({ userId: user.id, projectId: project.id, notebookName: "Formatting", filePath: enexPath });
-
-    const importedPage = getWorkspace(user.id).projects[0].notebooks.find((notebook) => notebook.name === "Formatting")?.pages[0];
+    const importedPage = getWorkspace(user.id).notebooks.find((notebook) => notebook.name === "Formatting")?.pages[0];
     const body = JSON.parse(importedPage!.body);
 
     expect(body.content).toEqual(expect.arrayContaining([

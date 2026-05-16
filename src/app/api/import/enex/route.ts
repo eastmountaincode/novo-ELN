@@ -7,7 +7,6 @@ export async function POST(request: Request) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = (await request.json().catch(() => null)) as {
-    projectId?: string;
     notebookName?: string;
     path?: string;
     totalNotes?: number;
@@ -15,13 +14,11 @@ export async function POST(request: Request) {
     workerCount?: number;
   } | null;
 
-  if (!body?.projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
-  if (!body.path?.trim()) return NextResponse.json({ error: "ENEX server path is required" }, { status: 400 });
+  if (!body?.path?.trim()) return NextResponse.json({ error: "ENEX server path is required" }, { status: 400 });
 
   try {
     const job = createEnexImportJob({
       userId: user.id,
-      projectId: body.projectId,
       notebookName: body.notebookName?.trim() || "Evernote Import",
       filePath: body.path,
       totalNotes: Number.isFinite(body.totalNotes) ? body.totalNotes : null,

@@ -20,19 +20,19 @@ describe("store", () => {
 
     expect(user?.role).toBe("admin");
     const workspace = getWorkspace(user!.id);
-    expect(workspace.projects[0].notebooks.length).toBeGreaterThan(0);
-    expect(workspace.projects[0].notebooks[0].pages.length).toBeGreaterThan(0);
+    expect(workspace.notebooks.length).toBeGreaterThan(0);
+    expect(workspace.notebooks[0].pages.length).toBeGreaterThan(0);
   });
 
   it("creates and updates pages through the repository API", async () => {
     const { verifyCredentials, getWorkspace, createPage, updatePage } = await import("../src/lib/store");
     const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
-    const notebookId = getWorkspace(user.id).projects[0].notebooks[0].id;
+    const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
 
     updatePage(user.id, pageId, { title: "Edited title", body: "Edited body", status: "Completed" });
 
-    const page = getWorkspace(user.id).projects[0].notebooks[0].pages.find((candidate) => candidate.id === pageId);
+    const page = getWorkspace(user.id).notebooks[0].pages.find((candidate) => candidate.id === pageId);
     expect(page?.title).toBe("Edited title");
     expect(page?.body).toBe("Edited body");
     expect(page?.status).toBe("Completed");
@@ -48,8 +48,8 @@ describe("store", () => {
 
     const workspace = getWorkspace(user.id);
     expect(workspace.user.email).toBe("new.user@example.local");
-    expect(workspace.projects).toHaveLength(1);
-    expect(workspace.projects[0].notebooks[0].pages[0].ownerId).toBe(user.id);
+    expect(workspace.notebooks.length).toBeGreaterThan(0);
+    expect(workspace.notebooks[0].pages[0].ownerId).toBe(user.id);
   });
 
   it("rejects weak account passwords", async () => {
@@ -94,12 +94,12 @@ describe("store", () => {
   it("deletes pages from a notebook", async () => {
     const { verifyCredentials, getWorkspace, createPage, deletePage } = await import("../src/lib/store");
     const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
-    const notebookId = getWorkspace(user.id).projects[0].notebooks[0].id;
+    const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
 
     deletePage(user.id, pageId);
 
-    const pages = getWorkspace(user.id).projects[0].notebooks[0].pages;
+    const pages = getWorkspace(user.id).notebooks[0].pages;
     expect(pages.some((page) => page.id === pageId)).toBe(false);
   });
 
@@ -107,7 +107,7 @@ describe("store", () => {
     const { verifyCredentials, getWorkspace, createPage, updatePage } = await import("../src/lib/store");
     const { searchWorkspace } = await import("../src/lib/search");
     const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
-    const notebookId = getWorkspace(user.id).projects[0].notebooks[0].id;
+    const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
     const relatedPageId = createPage(user.id, notebookId);
 
@@ -139,15 +139,15 @@ describe("store", () => {
     const { verifyCredentials, getWorkspace, setPageTags } = await import("../src/lib/store");
     const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
     const workspace = getWorkspace(user.id);
-    const pageId = workspace.projects[0].notebooks[0].pages[0].id;
+    const pageId = workspace.notebooks[0].pages[0].id;
 
     setPageTags(user.id, pageId, ["cells", "success", "cells", "  needs review  "]);
 
-    const page = getWorkspace(user.id).projects[0].notebooks[0].pages.find((candidate) => candidate.id === pageId)!;
+    const page = getWorkspace(user.id).notebooks[0].pages.find((candidate) => candidate.id === pageId)!;
     expect(page.tags).toEqual(["cells", "success", "needs review"]);
 
     setPageTags(user.id, pageId, ["success"]);
-    const updatedPage = getWorkspace(user.id).projects[0].notebooks[0].pages.find((candidate) => candidate.id === pageId)!;
+    const updatedPage = getWorkspace(user.id).notebooks[0].pages.find((candidate) => candidate.id === pageId)!;
     expect(updatedPage.tags).toEqual(["success"]);
   });
 
@@ -169,7 +169,7 @@ describe("store", () => {
     const member = createUser({ email: "lab.member@example.local", name: "Lab Member", password: "Member-password-2026!" });
 
     const users = listUsersForAdmin(admin.id);
-    expect(users.some((user) => user.email === "lab.member@example.local" && user.projectCount === 1)).toBe(true);
+    expect(users.some((user) => user.email === "lab.member@example.local" && user.notebookCount === 1)).toBe(true);
 
     adminSetUserPassword(admin.id, member.id, "Temporary-password-2026!");
 
@@ -180,7 +180,7 @@ describe("store", () => {
   it("summarizes database and upload storage for admins", async () => {
     const { verifyCredentials, getWorkspace, createAttachment, getAdminDataOverview } = await import("../src/lib/store");
     const admin = verifyCredentials("test@example.local", "Secret-password-2026!")!;
-    const pageId = getWorkspace(admin.id).projects[0].notebooks[0].pages[0].id;
+    const pageId = getWorkspace(admin.id).notebooks[0].pages[0].id;
     const uploadDir = process.env.ELN_UPLOAD_DIR!;
     fs.mkdirSync(uploadDir, { recursive: true });
     fs.writeFileSync(path.join(uploadDir, "attached.txt"), "hello");
@@ -199,7 +199,6 @@ describe("store", () => {
 
     const overview = getAdminDataOverview(admin.id);
 
-    expect(overview.counts.projects).toBe(1);
     expect(overview.counts.notebooks).toBe(2);
     expect(overview.counts.pages).toBe(3);
     expect(overview.counts.attachments).toBe(1);
@@ -220,38 +219,18 @@ describe("store", () => {
     expect(() => getAdminDataOverview(member.id)).toThrow("Forbidden");
   });
 
-  it("shares full projects with all notebooks", async () => {
-    const { createNotebook, createUser, getWorkspace, shareProject, verifyCredentials } = await import("../src/lib/store");
-    const owner = verifyCredentials("test@example.local", "Secret-password-2026!")!;
-    const viewer = createUser({ email: "project.viewer@example.local", name: "Project Viewer", password: "Viewer-password-2026!" });
-    const ownerWorkspace = getWorkspace(owner.id);
-    const project = ownerWorkspace.projects[0];
-    const originalNotebookCount = project.notebooks.length;
-
-    createNotebook(owner.id, project.id, "Second Notebook");
-    shareProject({ actorUserId: owner.id, projectId: project.id, email: viewer.email, role: "editor" });
-
-    const viewerProject = getWorkspace(viewer.id).projects.find((candidate) => candidate.id === project.id)!;
-    expect(viewerProject.accessScope).toBe("project");
-    expect(viewerProject.accessRole).toBe("editor");
-    expect(viewerProject.notebooks.length).toBe(originalNotebookCount + 1);
-  });
-
   it("shares individual notebooks without exposing sibling notebooks", async () => {
     const { createNotebook, createUser, getWorkspace, shareNotebook, verifyCredentials } = await import("../src/lib/store");
     const owner = verifyCredentials("test@example.local", "Secret-password-2026!")!;
     const viewer = createUser({ email: "notebook.viewer@example.local", name: "Notebook Viewer", password: "Viewer-password-2026!" });
-    const ownerWorkspace = getWorkspace(owner.id);
-    const project = ownerWorkspace.projects[0];
-    const sharedNotebookId = createNotebook(owner.id, project.id, "Shared Notebook").notebookId;
-    createNotebook(owner.id, project.id, "Private Notebook");
+    const sharedNotebookId = createNotebook(owner.id, "Shared Notebook").notebookId;
+    const privateNotebookId = createNotebook(owner.id, "Private Notebook").notebookId;
 
     shareNotebook({ actorUserId: owner.id, notebookId: sharedNotebookId, email: viewer.email, role: "viewer" });
 
-    const viewerProject = getWorkspace(viewer.id).projects.find((candidate) => candidate.id === project.id)!;
-    expect(viewerProject.accessScope).toBe("notebook");
-    expect(viewerProject.accessRole).toBeNull();
-    expect(viewerProject.notebooks).toHaveLength(1);
-    expect(viewerProject.notebooks[0]).toEqual(expect.objectContaining({ id: sharedNotebookId, accessRole: "viewer" }));
+    const viewerWorkspace = getWorkspace(viewer.id);
+    const sharedNotebook = viewerWorkspace.notebooks.find((candidate) => candidate.id === sharedNotebookId);
+    expect(sharedNotebook).toEqual(expect.objectContaining({ id: sharedNotebookId, accessRole: "viewer" }));
+    expect(viewerWorkspace.notebooks.some((candidate) => candidate.id === privateNotebookId)).toBe(false);
   });
 });

@@ -10,7 +10,6 @@ export type EnexImportJob = {
   id: string;
   userId: string;
   state: "queued" | "running" | "canceling" | "canceled" | "succeeded" | "failed";
-  projectId: string;
   notebookName: string;
   filePath: string;
   startedAt: string;
@@ -25,7 +24,6 @@ export type EnexImportJob = {
 
 export function createEnexImportJob(input: {
   userId: string;
-  projectId: string;
   notebookName: string;
   filePath: string;
   totalNotes?: number | null;
@@ -33,12 +31,11 @@ export function createEnexImportJob(input: {
   workerCount?: number | null;
 }) {
   ensureDatabase();
-  assertProjectImportAccess(input.userId, input.projectId);
+  assertUserExists(input.userId);
 
   const active = queryOne(`
     SELECT id FROM import_jobs
     WHERE user_id = ${sql(input.userId)}
-      AND project_id = ${sql(input.projectId)}
       AND file_path = ${sql(input.filePath)}
       AND state IN ('queued', 'running', 'canceling')
     ORDER BY created_at DESC
@@ -54,8 +51,8 @@ export function createEnexImportJob(input: {
   const totalResources = Number.isFinite(Number(input.totalResources)) ? Number(input.totalResources) : null;
   const workerCount = normalizeWorkerCount(input.workerCount);
   execSql(`
-    INSERT INTO import_jobs (id, user_id, project_id, notebook_name, file_path, state, total_notes, total_resources, worker_count)
-    VALUES (${sql(id)}, ${sql(input.userId)}, ${sql(input.projectId)}, ${sql(input.notebookName)}, ${sql(input.filePath)}, 'queued', ${totalNotes ?? "NULL"}, ${totalResources ?? "NULL"}, ${workerCount});
+    INSERT INTO import_jobs (id, user_id, notebook_name, file_path, state, total_notes, total_resources, worker_count)
+    VALUES (${sql(id)}, ${sql(input.userId)}, ${sql(input.notebookName)}, ${sql(input.filePath)}, 'queued', ${totalNotes ?? "NULL"}, ${totalResources ?? "NULL"}, ${workerCount});
   `);
 
   launchWorker(id);
@@ -67,7 +64,7 @@ export function createEnexImportJob(input: {
 export function getEnexImportJob(id: string) {
   ensureDatabase();
   const row = queryOne(`
-    SELECT id, user_id, project_id, notebook_name, file_path, state, started_at, finished_at, error,
+    SELECT id, user_id, notebook_name, file_path, state, started_at, finished_at, error,
            notebook_id, imported_resources, imported_notes, total_notes, total_resources, processed_bytes, total_bytes, worker_count, worker_pid
     FROM import_jobs
     WHERE id = ${sql(id)}
@@ -112,11 +109,9 @@ function launchWorker(jobId: string) {
   execSql(`UPDATE import_jobs SET worker_pid = ${child.pid ?? "NULL"}, updated_at = datetime('now') WHERE id = ${sql(jobId)};`);
 }
 
-function assertProjectImportAccess(userId: string, projectId: string) {
-  const user = queryOne(`SELECT role FROM users WHERE id = ${sql(userId)} LIMIT 1`);
-  if (user?.role === "admin") return;
-  const row = queryOne(`SELECT role FROM project_members WHERE user_id = ${sql(userId)} AND project_id = ${sql(projectId)} LIMIT 1`);
-  if (row?.role !== "owner" && row?.role !== "editor") throw new Error("Forbidden");
+function assertUserExists(userId: string) {
+  const user = queryOne(`SELECT id FROM users WHERE id = ${sql(userId)} LIMIT 1`);
+  if (!user) throw new Error("Forbidden");
 }
 
 function isAdmin(userId: string) {
@@ -129,7 +124,6 @@ function toJob(row: Record<string, string>): EnexImportJob {
     id: row.id,
     userId: row.user_id,
     state: normalizeState(row.state),
-    projectId: row.project_id,
     notebookName: row.notebook_name,
     filePath: row.file_path,
     startedAt: row.started_at,
@@ -157,5 +151,5 @@ function normalizeState(value: string): EnexImportJob["state"] {
 function normalizeWorkerCount(value: unknown) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed) || parsed < 1) return 4;
-  return Math.min(parsed, 16);
+  return Math.min(parsed, 80);
 }

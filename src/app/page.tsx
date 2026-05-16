@@ -1494,7 +1494,9 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
           {ownNotebooks.map(renderNotebook)}
           {ownNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
         </div>
-        <SidebarSection label="Shared with me" />
+        <div className="mt-5">
+          <SidebarSection label="Shared with me" />
+        </div>
         <div className="mt-2 space-y-1">
           {sharedNotebooks.map(renderNotebook)}
           {sharedNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}

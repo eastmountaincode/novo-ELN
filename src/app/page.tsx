@@ -845,7 +845,7 @@ export default function Home() {
             <div className="mb-4 flex items-center gap-3">
               <div className="grid size-10 place-items-center bg-slate-950 text-cyan-300"><FlaskConical size={22} /></div>
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Novo</p>
+                <p className="text-xs font-semibold text-slate-500">Novo</p>
                 <h1 className="text-xl font-semibold">{authMode === "register" ? "Create an account" : "Welcome back"}</h1>
               </div>
             </div>
@@ -1300,7 +1300,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
 function ImportMetric({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</p>
+      <p className="text-xs text-slate-500">{label}</p>
       <p className="mt-1 font-medium text-white">{value}</p>
     </div>
   );
@@ -1650,7 +1650,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
     <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color }}>Notebook</p>
+          <p className="text-xs font-semibold" style={{ color }}>Notebook</p>
           <div className="flex min-w-0 items-center justify-between gap-3">
             <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
             <span className="shrink-0 text-sm font-medium text-slate-500">{filterActive ? `${sortedPages.length} / ${pages.length}` : sortedPages.length}</span>
@@ -1677,7 +1677,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
                   aria-label="Sort pages"
                   className="absolute right-0 top-11 z-30 w-52 border border-slate-200 bg-white p-1 text-slate-900 shadow-2xl shadow-slate-950/15"
                 >
-                  <p className="px-3 pb-1.5 pt-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Sort by</p>
+                  <p className="px-3 pb-1.5 pt-2 text-xs font-semibold text-slate-500">Sort by</p>
                   <div className="space-y-1">
                     {PAGE_SORT_OPTIONS.map((option) => {
                       const selected = option.key === sortKey;
@@ -1725,7 +1725,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
                 >
                   <div className="w-52 border border-slate-200 bg-white p-1 shadow-2xl shadow-slate-950/15">
                     <div className="flex items-center justify-between gap-3 px-3 pb-1.5 pt-2">
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Filter by</p>
+                      <p className="text-xs font-semibold text-slate-500">Filter by</p>
                       {filterActive ? <button type="button" onClick={clearFilters} className="text-xs font-medium text-cyan-700 hover:text-cyan-900">Clear all</button> : null}
                     </div>
                     <button
@@ -2017,7 +2017,7 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Home</p>
+          <p className="text-xs font-semibold text-slate-500">Home</p>
           <h1 className="mt-1 text-2xl font-semibold text-slate-950">Overview</h1>
         </div>
 
@@ -2222,7 +2222,7 @@ function AccountView({ user }: { user: AppUser }) {
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Account</p>
+          <p className="text-xs font-semibold text-slate-500">Account</p>
           <h1 className="mt-1 text-2xl font-semibold text-slate-950">Settings</h1>
         </div>
 

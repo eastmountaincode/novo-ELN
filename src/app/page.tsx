@@ -1657,7 +1657,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
           </div>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 px-3 text-sm font-medium text-white hover:opacity-90" style={{ backgroundColor: color }}><Plus size={15} />Page</button>
+          <button onClick={createNewPage} className="inline-flex h-9 items-center gap-2 border bg-white px-3 text-sm font-medium hover:bg-slate-50" style={{ borderColor: color, color }}><Plus size={15} />Page</button>
           <div className="flex items-center gap-2">
             <div ref={sortOptionsRef} data-transient-menu="true" className="relative">
               <button

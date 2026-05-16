@@ -79,6 +79,8 @@ const PAGE_STATUS_OPTIONS: Array<{ value: PageStatus; label: string }> = [
   { value: "Failed", label: "Failed" },
 ];
 
+const passwordRequirementText = "At least 12 characters with uppercase, lowercase, number, and symbol characters.";
+
 type NameDialogState =
   | { kind: "createProject" }
   | { kind: "createNotebook"; projectId: string; projectName: string; initialMode?: "blank" | "import" }
@@ -874,7 +876,8 @@ export default function Home() {
             <label className="mb-3 block text-sm font-medium text-slate-700">Name<input value={name} onChange={(event) => setName(event.target.value)} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" autoComplete="name" /></label>
           ) : null}
           <label className="mb-3 block text-sm font-medium text-slate-700">Email<input value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" /></label>
-          <label className="mb-4 block text-sm font-medium text-slate-700">Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" autoComplete={authMode === "register" ? "new-password" : "current-password"} /></label>
+          <label className="mb-2 block text-sm font-medium text-slate-700">Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" autoComplete={authMode === "register" ? "new-password" : "current-password"} /></label>
+          {authMode === "register" ? <p className="mb-4 text-xs leading-5 text-slate-500">{passwordRequirementText}</p> : null}
           {authError ? <p className="mb-3 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{authError}</p> : null}
           <button className="h-10 w-full bg-slate-950 text-sm font-semibold text-white hover:bg-slate-800">{authMode === "register" ? "Create account" : "Sign in"}</button>
         </form>
@@ -2534,6 +2537,7 @@ function PasswordPanel() {
       <form onSubmit={(event) => void submitPassword(event)} className="grid gap-4">
         <PasswordField label="Current password" value={currentPassword} onChange={setCurrentPassword} autoComplete="current-password" />
         <PasswordField label="New password" value={nextPassword} onChange={setNextPassword} autoComplete="new-password" />
+        <p className="-mt-2 text-xs leading-5 text-slate-500">{passwordRequirementText}</p>
         <PasswordField label="Confirm new password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
         {error ? <p className="border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
         {status ? <p className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{status}</p> : null}
@@ -2857,6 +2861,7 @@ function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCa
               autoComplete="new-password"
             />
           </label>
+          <p className="-mt-2 text-xs leading-5 text-slate-400">{passwordRequirementText}</p>
           <label className="block text-sm font-medium text-slate-200">
             Confirm password
             <input

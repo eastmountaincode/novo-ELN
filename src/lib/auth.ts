@@ -4,7 +4,12 @@ import { createUser, findUserById, verifyCredentials } from "./store";
 
 const cookieName = "eln_session";
 const maxAgeSeconds = 60 * 60 * 12;
-const secret = process.env.ELN_SESSION_SECRET ?? "local-development-session-secret-change-me";
+const developmentSecret = "local-development-session-secret-change-me";
+const secret = process.env.ELN_SESSION_SECRET ?? developmentSecret;
+
+if (process.env.NODE_ENV === "production" && (!process.env.ELN_SESSION_SECRET || process.env.ELN_SESSION_SECRET.length < 32)) {
+  throw new Error("ELN_SESSION_SECRET must be set to at least 32 characters in production.");
+}
 
 type SessionPayload = {
   userId: string;

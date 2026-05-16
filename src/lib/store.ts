@@ -11,7 +11,14 @@ import { execSql, queryOne, querySql, sql } from "./sqlite";
 let initialized = false;
 
 const bootstrapEmail = process.env.ELN_BOOTSTRAP_EMAIL ?? "andrew@example.local";
-const bootstrapPassword = process.env.ELN_BOOTSTRAP_PASSWORD ?? "development-only-password";
+const bootstrapPassword = process.env.ELN_BOOTSTRAP_PASSWORD ?? "Development-only-password-2026!";
+const passwordRequirementMessage = "Password must be at least 12 characters and include uppercase, lowercase, number, and symbol characters.";
+
+function validatePassword(password: string) {
+  if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+    throw new Error(passwordRequirementMessage);
+  }
+}
 
 export function ensureDatabase() {
   if (initialized) return;
@@ -270,7 +277,7 @@ export function createUser(input: { email: string; name: string; password: strin
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter a valid email address.");
   if (!name) throw new Error("Name is required.");
-  if (password.length < 8) throw new Error("Password must be at least 8 characters.");
+  validatePassword(password);
   if (!["admin", "member", "viewer"].includes(role)) throw new Error("Invalid role.");
   if (findUserByEmail(email)) throw new Error("An account with that email already exists.");
 
@@ -1029,7 +1036,7 @@ function isAdmin(userId: string) {
 }
 
 function updateUserPassword(userId: string, nextPassword: string) {
-  if (nextPassword.length < 8) throw new Error("Password must be at least 8 characters.");
+  validatePassword(nextPassword);
   execSql(`UPDATE users SET password_hash = ${sql(bcrypt.hashSync(nextPassword, 10))} WHERE id = ${sql(userId)};`);
 }
 

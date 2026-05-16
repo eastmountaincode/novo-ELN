@@ -47,10 +47,11 @@ async function run() {
 
   const notebookId = crypto.randomUUID();
   execSql(`
-    INSERT INTO notebooks (id, project_id, name)
-    VALUES (${sql(notebookId)}, ${sql(job.project_id)}, ${sql(job.notebook_name || notebookNameFromPath(absolutePath))});
+    INSERT INTO notebooks (id, name, owner_id)
+    VALUES (${sql(notebookId)}, ${sql(job.notebook_name || notebookNameFromPath(absolutePath))}, ${sql(job.user_id)});
+    INSERT INTO notebook_members (notebook_id, user_id, role)
+    VALUES (${sql(notebookId)}, ${sql(job.user_id)}, 'owner');
     UPDATE import_jobs SET notebook_id = ${sql(notebookId)}, updated_at = datetime('now') WHERE id = ${sql(jobId)};
-    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(job.project_id)};
   `);
 
   let importedNotes = 0;
@@ -99,7 +100,6 @@ async function run() {
   ensureNotCanceled({ force: true });
   execSql(`
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
-    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(job.project_id)};
     UPDATE import_jobs
     SET state = 'succeeded', imported_notes = ${importedNotes}, imported_resources = ${importedResources}, processed_bytes = ${stats.size}, total_bytes = ${stats.size}, finished_at = datetime('now'), updated_at = datetime('now')
     WHERE id = ${sql(jobId)};
@@ -364,8 +364,8 @@ function insertImportedNote({ job, notebookId, pageId, note, body, plainText, at
     ${tagSql}
     INSERT INTO page_versions (id, page_id, summary, created_by, created_at)
     VALUES (${sql(crypto.randomUUID())}, ${sql(pageId)}, 'Imported from ENEX', ${sql(job.user_id)}, ${sql(updatedAt)});
-    INSERT INTO search_pages_fts (page_id, project_id, notebook_id, title, body, tags, attachments, project, notebook, updated_at)
-    VALUES (${sql(pageId)}, ${sql(job.project_id)}, ${sql(notebookId)}, ${sql(note.title)}, ${sql(plainText)}, ${sql(note.tags.join(','))}, ${sql(attachments.map((attachment) => attachment.originalName).join(','))}, (SELECT name FROM projects WHERE id = ${sql(job.project_id)}), ${sql(job.notebook_name)}, ${sql(updatedAt)});
+    INSERT INTO search_pages_fts (page_id, notebook_id, title, body, tags, attachments, notebook, updated_at)
+    VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title)}, ${sql(plainText)}, ${sql(note.tags.join(','))}, ${sql(attachments.map((attachment) => attachment.originalName).join(','))}, ${sql(job.notebook_name)}, ${sql(updatedAt)});
     COMMIT;
   `);
 }

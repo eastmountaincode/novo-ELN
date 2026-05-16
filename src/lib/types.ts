@@ -12,7 +12,7 @@ export type AppUser = {
 
 export type AdminUser = AppUser & {
   createdAt: string;
-  projectCount: number;
+  notebookCount: number;
 };
 
 export type AdminDataFile = {
@@ -23,7 +23,6 @@ export type AdminDataFile = {
   blockType: BlockType;
   storageKey: string;
   createdAt: string;
-  projectName: string;
   notebookName: string;
   pageTitle: string;
   ownerEmail: string;
@@ -32,7 +31,6 @@ export type AdminDataFile = {
 export type AdminDataOverview = {
   counts: {
     users: number;
-    projects: number;
     notebooks: number;
     pages: number;
     attachments: number;
@@ -87,8 +85,9 @@ export type PageEntry = {
 
 export type Notebook = {
   id: string;
-  projectId: string;
   name: string;
+  color: string;
+  ownerId: string;
   createdAt: string;
   updatedAt: string;
   accessRole: AccessRole;
@@ -112,6 +111,8 @@ export type Project = {
 
 export type Workspace = {
   user: AppUser;
+  members: AppUser[];
+  notebooks: Notebook[];
   projects: Project[];
 };
 

@@ -105,7 +105,6 @@ export async function inspectEnexFile(filePath: string): Promise<EnexInspection>
 
 export async function importEnexFile(input: {
   userId: string;
-  projectId: string;
   notebookName: string;
   filePath: string;
   totalNotes?: number | null;
@@ -117,7 +116,6 @@ export async function importEnexFile(input: {
 
   const notebookId = createImportedNotebook({
     userId: input.userId,
-    projectId: input.projectId,
     name: input.notebookName.trim() || notebookNameFromPath(absolutePath),
   });
 
@@ -186,7 +184,7 @@ export async function importEnexFile(input: {
     });
   });
 
-  finishImportedNotebook(input.projectId, notebookId);
+  finishImportedNotebook(notebookId);
   return { notebookId, importedNotes, importedResources };
 }
 

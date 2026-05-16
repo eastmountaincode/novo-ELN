@@ -52,21 +52,13 @@ export function ensureDatabase() {
       PRIMARY KEY (email, ip_address)
     );
 
-    CREATE TABLE IF NOT EXISTS projects (
+    CREATE TABLE IF NOT EXISTS notebooks (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       color TEXT NOT NULL DEFAULT '#0891b2',
-      owner_id TEXT NOT NULL REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS project_members (
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      role TEXT NOT NULL DEFAULT 'editor',
-      PRIMARY KEY (project_id, user_id)
     );
 
     CREATE TABLE IF NOT EXISTS notebook_members (
@@ -74,14 +66,6 @@ export function ensureDatabase() {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       role TEXT NOT NULL DEFAULT 'editor',
       PRIMARY KEY (notebook_id, user_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS notebooks (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS pages (
@@ -124,7 +108,6 @@ export function ensureDatabase() {
     CREATE TABLE IF NOT EXISTS import_jobs (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       notebook_name TEXT NOT NULL,
       file_path TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'queued',
@@ -143,24 +126,24 @@ export function ensureDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-
-    CREATE VIRTUAL TABLE IF NOT EXISTS search_pages_fts USING fts5(
+  `);
+  migrateProjectsToTopLevelNotebooks();
+  ensureNotebookColumns();
+  ensureImportJobsColumns();
+  execSql(`
+    DROP TABLE IF EXISTS search_pages_fts;
+    CREATE VIRTUAL TABLE search_pages_fts USING fts5(
       page_id UNINDEXED,
-      project_id UNINDEXED,
       notebook_id UNINDEXED,
       title,
       body,
       tags,
       attachments,
-      project,
       notebook,
       updated_at UNINDEXED,
       tokenize='unicode61'
     );
   `);
-  ensureProjectColorColumn();
-  ensureImportJobsTotalResourcesColumn();
-  ensureImportJobsWorkerCountColumn();
   migratePageStatusValues();
   migrateGroupedTagsToPageTags();
   seedIfEmpty();
@@ -168,22 +151,119 @@ export function ensureDatabase() {
   initialized = true;
 }
 
-function ensureProjectColorColumn() {
-  const columns = querySql("PRAGMA table_info(projects);");
-  if (columns.some((column) => column.name === "color")) return;
-  execSql("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT '#0891b2';");
+function migrateProjectsToTopLevelNotebooks() {
+  const notebookColumns = querySql("PRAGMA table_info(notebooks);");
+  if (notebookColumns.some((column) => column.name === "project_id")) {
+    execSql(`
+      PRAGMA foreign_keys=OFF;
+
+      CREATE TABLE IF NOT EXISTS notebooks_new (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        color TEXT NOT NULL DEFAULT '#0891b2',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      INSERT OR IGNORE INTO notebooks_new (id, name, owner_id, color, created_at, updated_at)
+      SELECT
+        n.id,
+        n.name,
+        COALESCE(p.owner_id, (SELECT id FROM users ORDER BY datetime(created_at) ASC LIMIT 1)),
+        COALESCE(p.color, '#0891b2'),
+        n.created_at,
+        n.updated_at
+      FROM notebooks n
+      LEFT JOIN projects p ON p.id = n.project_id
+      WHERE COALESCE(p.owner_id, (SELECT id FROM users ORDER BY datetime(created_at) ASC LIMIT 1)) IS NOT NULL;
+
+      INSERT OR IGNORE INTO notebook_members (notebook_id, user_id, role)
+      SELECT n.id, pm.user_id, pm.role
+      FROM notebooks n
+      JOIN project_members pm ON pm.project_id = n.project_id;
+
+      INSERT OR IGNORE INTO notebook_members (notebook_id, user_id, role)
+      SELECT id, owner_id, 'owner'
+      FROM notebooks_new;
+
+      DROP TABLE notebooks;
+      ALTER TABLE notebooks_new RENAME TO notebooks;
+      DROP TABLE IF EXISTS project_members;
+      DROP TABLE IF EXISTS projects;
+
+      PRAGMA foreign_keys=ON;
+    `);
+  } else {
+    execSql(`
+      DROP TABLE IF EXISTS project_members;
+      DROP TABLE IF EXISTS projects;
+    `);
+  }
+
+  const importColumns = querySql("PRAGMA table_info(import_jobs);");
+  if (importColumns.some((column) => column.name === "project_id")) {
+    execSql(`
+      PRAGMA foreign_keys=OFF;
+
+      CREATE TABLE IF NOT EXISTS import_jobs_new (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        notebook_name TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'queued',
+        started_at TEXT NOT NULL DEFAULT (datetime('now')),
+        finished_at TEXT,
+        error TEXT,
+        notebook_id TEXT,
+        total_notes INTEGER,
+        total_resources INTEGER,
+        imported_notes INTEGER NOT NULL DEFAULT 0,
+        imported_resources INTEGER NOT NULL DEFAULT 0,
+        processed_bytes INTEGER NOT NULL DEFAULT 0,
+        total_bytes INTEGER NOT NULL DEFAULT 0,
+        worker_count INTEGER NOT NULL DEFAULT 4,
+        worker_pid INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      INSERT OR IGNORE INTO import_jobs_new (
+        id, user_id, notebook_name, file_path, state, started_at, finished_at, error, notebook_id,
+        total_notes, total_resources, imported_notes, imported_resources, processed_bytes, total_bytes,
+        worker_count, worker_pid, created_at, updated_at
+      )
+      SELECT
+        id, user_id, notebook_name, file_path, state, started_at, finished_at, error, notebook_id,
+        total_notes, total_resources, imported_notes, imported_resources, processed_bytes, total_bytes,
+        COALESCE(worker_count, 4), worker_pid, created_at, updated_at
+      FROM import_jobs;
+
+      DROP TABLE import_jobs;
+      ALTER TABLE import_jobs_new RENAME TO import_jobs;
+
+      PRAGMA foreign_keys=ON;
+    `);
+  }
 }
 
-function ensureImportJobsTotalResourcesColumn() {
-  const columns = querySql("PRAGMA table_info(import_jobs);");
-  if (columns.some((column) => column.name === "total_resources")) return;
-  execSql("ALTER TABLE import_jobs ADD COLUMN total_resources INTEGER;");
+function ensureNotebookColumns() {
+  const columns = querySql("PRAGMA table_info(notebooks);");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("owner_id")) {
+    execSql(`
+      ALTER TABLE notebooks ADD COLUMN owner_id TEXT;
+      UPDATE notebooks SET owner_id = (SELECT id FROM users ORDER BY datetime(created_at) ASC LIMIT 1) WHERE owner_id IS NULL;
+    `);
+  }
+  if (!names.has("color")) execSql("ALTER TABLE notebooks ADD COLUMN color TEXT NOT NULL DEFAULT '#0891b2';");
 }
 
-function ensureImportJobsWorkerCountColumn() {
+function ensureImportJobsColumns() {
   const columns = querySql("PRAGMA table_info(import_jobs);");
-  if (columns.some((column) => column.name === "worker_count")) return;
-  execSql("ALTER TABLE import_jobs ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 4;");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("total_resources")) execSql("ALTER TABLE import_jobs ADD COLUMN total_resources INTEGER;");
+  if (!names.has("worker_count")) execSql("ALTER TABLE import_jobs ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 4;");
 }
 
 function migratePageStatusValues() {
@@ -217,7 +297,6 @@ function seedIfEmpty() {
   if (count > 0) return;
 
   const userId = randomUUID();
-  const projectId = randomUUID();
   const constructNotebookId = randomUUID();
   const meetingNotebookId = randomUUID();
   const pageOneId = randomUUID();
@@ -228,21 +307,19 @@ function seedIfEmpty() {
     INSERT INTO users (id, email, name, password_hash, role)
     VALUES (${sql(userId)}, ${sql(bootstrapEmail)}, 'Andrew', ${sql(bcrypt.hashSync(bootstrapPassword, 10))}, 'admin');
 
-    INSERT INTO projects (id, name, description, color, owner_id)
-    VALUES (${sql(projectId)}, 'Gene Synthesis', 'Evernote replacement workspace for gene synthesis notes.', '#0891b2', ${sql(userId)});
+    INSERT INTO notebooks (id, name, owner_id, color)
+    VALUES (${sql(constructNotebookId)}, 'Construct Design', ${sql(userId)}, ${sql(defaultNotebookColor(constructNotebookId))}),
+           (${sql(meetingNotebookId)}, 'Meeting Notes', ${sql(userId)}, ${sql(defaultNotebookColor(meetingNotebookId))});
 
-    INSERT INTO project_members (project_id, user_id, role)
-    VALUES (${sql(projectId)}, ${sql(userId)}, 'owner');
-
-    INSERT INTO notebooks (id, project_id, name)
-    VALUES (${sql(constructNotebookId)}, ${sql(projectId)}, 'Construct Design'),
-           (${sql(meetingNotebookId)}, ${sql(projectId)}, 'Meeting Notes');
+    INSERT INTO notebook_members (notebook_id, user_id, role)
+    VALUES (${sql(constructNotebookId)}, ${sql(userId)}, 'owner'),
+           (${sql(meetingNotebookId)}, ${sql(userId)}, 'owner');
 
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES
       (${sql(pageOneId)}, ${sql(constructNotebookId)}, 'SortSeq plasmid assembly notes', ${sql("Summary of the SortSeq construct changes. The key need is keeping protocol text, source files, and analysis artifacts together without turning this into a full LIMS.")}, '', ${sql(userId)}),
       (${sql(pageTwoId)}, ${sql(constructNotebookId)}, 'Competent cell prep', ${sql("Prep notes should behave like normal pages, not special experiments. A lightweight checklist is enough for repeatable work; scheduling and bookable resources are intentionally out of scope.")}, '', ${sql(userId)}),
-      (${sql(pageThreeId)}, ${sql(meetingNotebookId)}, 'ELN requirements from Slim', ${sql("The replacement should preserve Evernote-like workflows: projects, notebooks, pages, inline images, attachments, search, and history.")}, '', ${sql(userId)});
+      (${sql(pageThreeId)}, ${sql(meetingNotebookId)}, 'ELN requirements from Slim', ${sql("The replacement should preserve Evernote-like workflows: notebooks, pages, inline images, attachments, search, and history.")}, '', ${sql(userId)});
 
     INSERT INTO page_tags (page_id, tag)
     VALUES
@@ -357,7 +434,6 @@ export function createUser(input: { email: string; name: string; password: strin
   if (findUserByEmail(email)) throw new Error("An account with that email already exists.");
 
   const userId = randomUUID();
-  const projectId = randomUUID();
   const notebookId = randomUUID();
   const pageId = randomUUID();
 
@@ -365,14 +441,11 @@ export function createUser(input: { email: string; name: string; password: strin
     INSERT INTO users (id, email, name, password_hash, role)
     VALUES (${sql(userId)}, ${sql(email)}, ${sql(name)}, ${sql(bcrypt.hashSync(password, 10))}, ${sql(role)});
 
-    INSERT INTO projects (id, name, description, color, owner_id)
-    VALUES (${sql(projectId)}, 'My Project', 'Personal notebook workspace.', ${sql(defaultProjectColor(projectId))}, ${sql(userId)});
+    INSERT INTO notebooks (id, name, owner_id, color)
+    VALUES (${sql(notebookId)}, 'Notebook', ${sql(userId)}, ${sql(defaultNotebookColor(notebookId))});
 
-    INSERT INTO project_members (project_id, user_id, role)
-    VALUES (${sql(projectId)}, ${sql(userId)}, 'owner');
-
-    INSERT INTO notebooks (id, project_id, name)
-    VALUES (${sql(notebookId)}, ${sql(projectId)}, 'Notebook');
+    INSERT INTO notebook_members (notebook_id, user_id, role)
+    VALUES (${sql(notebookId)}, ${sql(userId)}, 'owner');
 
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
@@ -394,9 +467,9 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
       u.name,
       u.role,
       u.created_at,
-      COUNT(DISTINCT pm.project_id) AS project_count
+      COUNT(DISTINCT n.id) AS notebook_count
     FROM users u
-    LEFT JOIN project_members pm ON pm.user_id = u.id
+    LEFT JOIN notebooks n ON n.owner_id = u.id
     GROUP BY u.id
     ORDER BY lower(u.name) ASC, lower(u.email) ASC
   `).map((row) => ({
@@ -405,7 +478,7 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
     name: row.name,
     role: row.role as UserRole,
     createdAt: row.created_at,
-    projectCount: Number(row.project_count),
+    notebookCount: Number(row.notebook_count),
   }));
 }
 
@@ -415,7 +488,6 @@ export function getAdminDataOverview(adminUserId: string): AdminDataOverview {
 
   const counts = {
     users: countRows("users"),
-    projects: countRows("projects"),
     notebooks: countRows("notebooks"),
     pages: countRows("pages"),
     attachments: countRows("attachments"),
@@ -433,13 +505,11 @@ export function getAdminDataOverview(adminUserId: string): AdminDataOverview {
       a.created_at,
       p.title AS page_title,
       n.name AS notebook_name,
-      pr.name AS project_name,
       u.email AS owner_email
     FROM attachments a
     JOIN pages p ON p.id = a.page_id
     JOIN notebooks n ON n.id = p.notebook_id
-    JOIN projects pr ON pr.id = n.project_id
-    JOIN users u ON u.id = pr.owner_id
+    JOIN users u ON u.id = n.owner_id
     ORDER BY a.created_at DESC, lower(a.original_name) ASC
   `).map((row) => ({
     id: row.id,
@@ -449,7 +519,6 @@ export function getAdminDataOverview(adminUserId: string): AdminDataOverview {
     blockType: row.block_type as BlockType,
     storageKey: row.storage_key,
     createdAt: row.created_at,
-    projectName: row.project_name,
     notebookName: row.notebook_name,
     pageTitle: row.page_title,
     ownerEmail: row.owner_email,
@@ -496,47 +565,25 @@ export function getWorkspace(userId: string): Workspace {
   const user = findUserById(userId);
   if (!user) throw new Error("User not found");
 
-  const projectRows = querySql(`
+  const notebookRows = querySql(`
     SELECT
-      p.id,
-      p.name,
-      p.description,
-      p.color,
-      p.owner_id,
-      p.created_at,
-      p.updated_at,
-      pm.role AS project_role,
-      CASE WHEN pm.user_id IS NOT NULL THEN 'project' ELSE 'notebook' END AS access_scope
-    FROM projects p
-    LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ${sql(userId)}
-    LEFT JOIN notebooks shared_n ON shared_n.project_id = p.id
-    LEFT JOIN notebook_members nm ON nm.notebook_id = shared_n.id AND nm.user_id = ${sql(userId)}
-    WHERE pm.user_id IS NOT NULL OR nm.user_id IS NOT NULL
-    GROUP BY p.id
-    ORDER BY p.updated_at DESC, p.name ASC
+      n.id,
+      n.name,
+      n.owner_id,
+      n.color,
+      n.created_at,
+      n.updated_at,
+      CASE
+        WHEN n.owner_id = ${sql(userId)} OR nm.role = 'owner' THEN 'owner'
+        WHEN nm.role = 'editor' THEN 'editor'
+        ELSE 'viewer'
+      END AS access_role
+    FROM notebooks n
+    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    WHERE n.owner_id = ${sql(userId)} OR nm.user_id IS NOT NULL
+    GROUP BY n.id
+    ORDER BY datetime(n.updated_at) DESC, lower(n.name) ASC
   `);
-  const projectIds = projectRows.map((project) => project.id);
-  const notebookRows = projectIds.length
-    ? querySql(`
-        SELECT
-          n.id,
-          n.project_id,
-          n.name,
-          n.created_at,
-          n.updated_at,
-          CASE
-            WHEN pm.role = 'owner' OR nm.role = 'owner' THEN 'owner'
-            WHEN pm.role = 'editor' OR nm.role = 'editor' THEN 'editor'
-            ELSE 'viewer'
-          END AS access_role
-        FROM notebooks n
-        LEFT JOIN project_members pm ON pm.project_id = n.project_id AND pm.user_id = ${sql(userId)}
-        LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
-        WHERE n.project_id IN (${inList(projectIds)})
-          AND (pm.user_id IS NOT NULL OR nm.user_id IS NOT NULL)
-        ORDER BY datetime(n.created_at) ASC, n.name ASC
-      `)
-    : [];
   const notebookIds = notebookRows.map((notebook) => notebook.id);
   const pageRows = notebookIds.length
     ? querySql(`
@@ -544,7 +591,7 @@ export function getWorkspace(userId: string): Workspace {
         FROM pages p
         JOIN users u ON u.id = p.owner_id
         WHERE p.notebook_id IN (${inList(notebookIds)})
-        ORDER BY datetime(p.created_at) DESC, p.title ASC
+        ORDER BY datetime(p.created_at) DESC, lower(p.title) ASC
       `)
     : [];
   const pageIds = pageRows.map((page) => page.id);
@@ -555,15 +602,6 @@ export function getWorkspace(userId: string): Workspace {
   const versionRows = pageIds.length
     ? querySql(`SELECT page_id, summary FROM page_versions WHERE page_id IN (${inList(pageIds)}) ORDER BY datetime(created_at) DESC, rowid DESC LIMIT 250`)
     : [];
-  const projectMemberRows = projectIds.length
-    ? querySql(`
-        SELECT pm.project_id, pm.user_id, pm.role, u.email, u.name
-        FROM project_members pm
-        JOIN users u ON u.id = pm.user_id
-        WHERE pm.project_id IN (${inList(projectIds)})
-        ORDER BY lower(u.name) ASC, lower(u.email) ASC
-      `)
-    : [];
   const notebookMemberRows = notebookIds.length
     ? querySql(`
         SELECT nm.notebook_id, nm.user_id, nm.role, u.email, u.name
@@ -573,139 +611,99 @@ export function getWorkspace(userId: string): Workspace {
         ORDER BY lower(u.name) ASC, lower(u.email) ASC
       `)
     : [];
+  const memberRows = querySql(`SELECT id, email, name, role FROM users ORDER BY lower(name) ASC, lower(email) ASC`);
 
   const tagsByPage = groupBy(tagRows, "page_id");
   const attachmentsByPage = groupBy(attachmentRows, "page_id");
   const versionsByPage = groupBy(versionRows, "page_id");
-
   const pagesByNotebook = groupBy(pageRows, "notebook_id");
-  const notebooksByProject = groupBy(notebookRows, "project_id");
-  const membersByProject = groupBy(projectMemberRows, "project_id");
   const membersByNotebook = groupBy(notebookMemberRows, "notebook_id");
 
-  const projects: Project[] = projectRows.map((project) => ({
-    id: project.id,
-    name: project.name,
-    description: project.description,
-    color: normalizeProjectColor(project.color),
-    ownerId: project.owner_id,
-    createdAt: project.created_at,
-    updatedAt: project.updated_at,
-    accessScope: project.access_scope === "project" ? "project" : "notebook",
-    accessRole: project.project_role ? normalizeAccessRole(project.project_role) : null,
-    members: (membersByProject[project.id] ?? []).map(toShareMember),
-    notebooks: (notebooksByProject[project.id] ?? []).map((notebook): Notebook => ({
-      id: notebook.id,
-      projectId: notebook.project_id,
-      name: notebook.name,
-      createdAt: notebook.created_at,
-      updatedAt: notebook.updated_at,
-      accessRole: normalizeAccessRole(notebook.access_role),
-      members: (membersByNotebook[notebook.id] ?? []).map(toShareMember),
-      pages: (pagesByNotebook[notebook.id] ?? []).map((page): PageEntry => ({
-        id: page.id,
-        notebookId: page.notebook_id,
-        title: page.title,
-        body: page.body,
-        status: normalizePageStatus(page.status),
-        ownerId: page.owner_id,
-        ownerName: page.owner_name,
-        createdAt: page.created_at,
-        updatedAt: page.updated_at,
-        tags: pageTagRowsToList(tagsByPage[page.id] ?? []),
-        attachments: (attachmentsByPage[page.id] ?? []).map(toAttachment),
-        versions: (versionsByPage[page.id] ?? []).map((version) => version.summary),
-      })),
+  const notebooks: Notebook[] = notebookRows.map((notebook) => ({
+    id: notebook.id,
+    name: notebook.name,
+    color: normalizeNotebookColor(notebook.color),
+    ownerId: notebook.owner_id,
+    createdAt: notebook.created_at,
+    updatedAt: notebook.updated_at,
+    accessRole: normalizeAccessRole(notebook.access_role),
+    members: (membersByNotebook[notebook.id] ?? []).map(toShareMember),
+    pages: (pagesByNotebook[notebook.id] ?? []).map((page): PageEntry => ({
+      id: page.id,
+      notebookId: page.notebook_id,
+      title: page.title,
+      body: page.body,
+      status: normalizePageStatus(page.status),
+      ownerId: page.owner_id,
+      ownerName: page.owner_name,
+      createdAt: page.created_at,
+      updatedAt: page.updated_at,
+      tags: pageTagRowsToList(tagsByPage[page.id] ?? []),
+      attachments: (attachmentsByPage[page.id] ?? []).map(toAttachment),
+      versions: (versionsByPage[page.id] ?? []).map((version) => version.summary),
     })),
   }));
 
-  return { user, projects };
+  const workspaceProject: Project = {
+    id: "workspace",
+    name: "Notebooks",
+    description: "Top-level notebook workspace.",
+    color: notebooks[0]?.color ?? "#0891b2",
+    ownerId: user.id,
+    createdAt: notebooks[0]?.createdAt ?? new Date().toISOString(),
+    updatedAt: notebooks[0]?.updatedAt ?? new Date().toISOString(),
+    accessScope: "notebook",
+    accessRole: "owner",
+    members: [],
+    notebooks,
+  };
+
+  return {
+    user,
+    members: memberRows.map((row) => ({ id: row.id, email: row.email, name: row.name, role: row.role as UserRole })),
+    notebooks,
+    projects: [workspaceProject],
+  };
 }
 
-
-
-export function renameProject(userId: string, projectId: string, name: string) {
+export function createNotebook(userId: string, name = "New Notebook") {
   ensureDatabase();
-  assertProjectEditAccess(userId, projectId);
-  const nextName = name.trim();
-  if (!nextName) throw new Error("Project name is required");
-  execSql(`UPDATE projects SET name = ${sql(nextName)}, updated_at = datetime('now') WHERE id = ${sql(projectId)};`);
-  rebuildSearchIndex();
-}
-
-export function updateProjectColor(userId: string, projectId: string, color: string) {
-  ensureDatabase();
-  assertProjectEditAccess(userId, projectId);
-  const nextColor = normalizeProjectColor(color);
-  execSql(`UPDATE projects SET color = ${sql(nextColor)}, updated_at = datetime('now') WHERE id = ${sql(projectId)};`);
-  rebuildSearchIndex();
-}
-
-export function deleteProject(userId: string, projectId: string) {
-  ensureDatabase();
-  assertProjectManageAccess(userId, projectId);
-  execSql(`DELETE FROM projects WHERE id = ${sql(projectId)};`);
-  rebuildSearchIndex();
-}
-
-export function createProject(userId: string, name = "New Project") {
-  ensureDatabase();
-  const projectId = randomUUID();
   const notebookId = randomUUID();
   const pageId = randomUUID();
   execSql(`
-    INSERT INTO projects (id, name, description, color, owner_id)
-    VALUES (${sql(projectId)}, ${sql(name)}, 'New notebook project.', ${sql(defaultProjectColor(projectId))}, ${sql(userId)});
-    INSERT INTO project_members (project_id, user_id, role)
-    VALUES (${sql(projectId)}, ${sql(userId)}, 'owner');
-    INSERT INTO notebooks (id, project_id, name)
-    VALUES (${sql(notebookId)}, ${sql(projectId)}, 'Notebook');
-    INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created project', ${sql(userId)});
-  `);
-  rebuildSearchIndex();
-  return { projectId, notebookId, pageId };
-}
-
-export function createNotebook(userId: string, projectId: string, name = "New Notebook") {
-  ensureDatabase();
-  assertProjectEditAccess(userId, projectId);
-  const notebookId = randomUUID();
-  const pageId = randomUUID();
-  execSql(`
-    INSERT INTO notebooks (id, project_id, name)
-    VALUES (${sql(notebookId)}, ${sql(projectId)}, ${sql(name)});
+    INSERT INTO notebooks (id, name, owner_id, color)
+    VALUES (${sql(notebookId)}, ${sql(name)}, ${sql(userId)}, ${sql(defaultNotebookColor(notebookId))});
+    INSERT INTO notebook_members (notebook_id, user_id, role)
+    VALUES (${sql(notebookId)}, ${sql(userId)}, 'owner');
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created notebook', ${sql(userId)});
-    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(projectId)};
   `);
   rebuildSearchIndex();
   return { notebookId, pageId };
 }
-
 
 export function renameNotebook(userId: string, notebookId: string, name: string) {
   ensureDatabase();
   assertNotebookEditAccess(userId, notebookId);
   const nextName = name.trim();
   if (!nextName) throw new Error("Notebook name is required");
-  execSql(`
-    UPDATE notebooks SET name = ${sql(nextName)}, updated_at = datetime('now') WHERE id = ${sql(notebookId)};
-    UPDATE projects SET updated_at = datetime('now') WHERE id = (SELECT project_id FROM notebooks WHERE id = ${sql(notebookId)});
-  `);
+  execSql(`UPDATE notebooks SET name = ${sql(nextName)}, updated_at = datetime('now') WHERE id = ${sql(notebookId)};`);
   rebuildSearchIndex();
+}
+
+export function updateNotebookColor(userId: string, notebookId: string, color: string) {
+  ensureDatabase();
+  assertNotebookEditAccess(userId, notebookId);
+  const nextColor = normalizeNotebookColor(color);
+  execSql(`UPDATE notebooks SET color = ${sql(nextColor)}, updated_at = datetime('now') WHERE id = ${sql(notebookId)};`);
 }
 
 export function deleteNotebook(userId: string, notebookId: string) {
   ensureDatabase();
   assertNotebookManageAccess(userId, notebookId);
-  execSql(`
-    DELETE FROM notebooks WHERE id = ${sql(notebookId)};
-  `);
+  execSql(`DELETE FROM notebooks WHERE id = ${sql(notebookId)};`);
   rebuildSearchIndex();
 }
 
@@ -719,7 +717,6 @@ export function createPage(userId: string, notebookId: string) {
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created page', ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
-    UPDATE projects SET updated_at = datetime('now') WHERE id = (SELECT project_id FROM notebooks WHERE id = ${sql(notebookId)});
   `);
   rebuildSearchIndex();
   return pageId;
@@ -741,9 +738,6 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, ${sql(summary)}, ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
-    UPDATE projects SET updated_at = datetime('now') WHERE id = (
-      SELECT n.project_id FROM notebooks n JOIN pages p ON p.notebook_id = n.id WHERE p.id = ${sql(pageId)}
-    );
   `);
   rebuildSearchIndex();
 }
@@ -759,9 +753,6 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Updated tags', ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
-    UPDATE projects SET updated_at = datetime('now') WHERE id = (
-      SELECT n.project_id FROM notebooks n JOIN pages p ON p.notebook_id = n.id WHERE p.id = ${sql(pageId)}
-    );
   `);
   rebuildSearchIndex();
 }
@@ -769,17 +760,10 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
 export function deletePage(userId: string, pageId: string) {
   ensureDatabase();
   assertPageEditAccess(userId, pageId);
-  const page = queryOne(`
-    SELECT p.notebook_id, n.project_id
-    FROM pages p
-    JOIN notebooks n ON n.id = p.notebook_id
-    WHERE p.id = ${sql(pageId)}
-    LIMIT 1
-  `);
+  const page = queryOne(`SELECT notebook_id FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
   if (!page) throw new Error("Page not found");
   execSql(`
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(page.notebook_id)};
-    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(page.project_id)};
     DELETE FROM pages WHERE id = ${sql(pageId)};
   `);
   rebuildSearchIndex();
@@ -804,6 +788,7 @@ export function createAttachment(input: {
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(input.pageId)}, ${sql(`Attached ${input.originalName}`)}, ${sql(input.userId)});
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(input.pageId)};
+    UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(input.pageId)});
   `);
   rebuildSearchIndex();
   return id;
@@ -811,14 +796,14 @@ export function createAttachment(input: {
 
 export function getAttachmentForUser(userId: string, attachmentId: string): Attachment | null {
   ensureDatabase();
+  const accessCondition = isAdmin(userId) ? "1 = 1" : `(n.owner_id = ${sql(userId)} OR nm.user_id IS NOT NULL)`;
   const row = queryOne(`
     SELECT a.id, a.page_id, a.original_name, a.mime_type, a.size, a.storage_key, a.block_type, a.preview_text, a.created_at
     FROM attachments a
     JOIN pages p ON p.id = a.page_id
     JOIN notebooks n ON n.id = p.notebook_id
-    LEFT JOIN project_members pm ON pm.project_id = n.project_id AND pm.user_id = ${sql(userId)}
     LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
-    WHERE (pm.user_id IS NOT NULL OR nm.user_id IS NOT NULL) AND a.id = ${sql(attachmentId)}
+    WHERE ${accessCondition} AND a.id = ${sql(attachmentId)}
     LIMIT 1
   `);
   return row ? toAttachment(row) : null;
@@ -842,19 +827,20 @@ export function updateAttachmentFile(input: {
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(attachment.pageId)}, ${sql(`Updated ${attachment.originalName}`)}, ${sql(input.userId)});
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(attachment.pageId)};
+    UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(attachment.pageId)});
   `);
   rebuildSearchIndex();
   return getAttachmentForUser(input.userId, input.attachmentId);
 }
 
-export function createImportedNotebook(input: { userId: string; projectId: string; name: string }) {
+export function createImportedNotebook(input: { userId: string; name: string }) {
   ensureDatabase();
-  assertProjectEditAccess(input.userId, input.projectId);
   const notebookId = randomUUID();
   execSql(`
-    INSERT INTO notebooks (id, project_id, name)
-    VALUES (${sql(notebookId)}, ${sql(input.projectId)}, ${sql(input.name || "Evernote Import")});
-    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(input.projectId)};
+    INSERT INTO notebooks (id, name, owner_id, color)
+    VALUES (${sql(notebookId)}, ${sql(input.name || "Evernote Import")}, ${sql(input.userId)}, ${sql(defaultNotebookColor(notebookId))});
+    INSERT INTO notebook_members (notebook_id, user_id, role)
+    VALUES (${sql(notebookId)}, ${sql(input.userId)}, 'owner');
   `);
   return notebookId;
 }
@@ -930,12 +916,9 @@ export function createImportedAttachment(input: {
   };
 }
 
-export function finishImportedNotebook(projectId: string, notebookId: string) {
+export function finishImportedNotebook(notebookId: string) {
   ensureDatabase();
-  execSql(`
-    UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
-    UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(projectId)};
-  `);
+  execSql(`UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};`);
   rebuildSearchIndex();
 }
 
@@ -949,6 +932,7 @@ export function deleteAttachment(userId: string, attachmentId: string) {
   execSql(`
     DELETE FROM attachments WHERE id = ${sql(attachmentId)};
     UPDATE pages SET body = ${sql(nextBody)}, updated_at = datetime('now') WHERE id = ${sql(attachment.pageId)};
+    UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(attachment.pageId)});
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(attachment.pageId)}, ${sql(`Deleted ${attachment.originalName}`)}, ${sql(userId)});
   `);
@@ -956,35 +940,13 @@ export function deleteAttachment(userId: string, attachmentId: string) {
   return attachment;
 }
 
-export function shareProject(input: { actorUserId: string; projectId: string; email: string; role: AccessRole }) {
-  ensureDatabase();
-  assertProjectManageAccess(input.actorUserId, input.projectId);
-  const user = findUserByEmail(input.email.trim().toLowerCase());
-  if (!user) throw new Error("User not found");
-  const role = normalizeInputAccessRole(input.role);
-  execSql(`
-    INSERT INTO project_members (project_id, user_id, role)
-    VALUES (${sql(input.projectId)}, ${sql(user.id)}, ${sql(role)})
-    ON CONFLICT(project_id, user_id) DO UPDATE SET role = excluded.role;
-  `);
-  return user;
-}
-
-export function unshareProject(actorUserId: string, projectId: string, targetUserId: string) {
-  ensureDatabase();
-  assertProjectManageAccess(actorUserId, projectId);
-  const ownerCount = Number(queryOne(`SELECT COUNT(*) AS count FROM project_members WHERE project_id = ${sql(projectId)} AND role = 'owner'`)?.count ?? 0);
-  const targetRole = queryOne(`SELECT role FROM project_members WHERE project_id = ${sql(projectId)} AND user_id = ${sql(targetUserId)} LIMIT 1`)?.role;
-  if (targetRole === "owner" && ownerCount <= 1) throw new Error("Projects need at least one owner.");
-  execSql(`DELETE FROM project_members WHERE project_id = ${sql(projectId)} AND user_id = ${sql(targetUserId)};`);
-}
-
 export function shareNotebook(input: { actorUserId: string; notebookId: string; email: string; role: AccessRole }) {
   ensureDatabase();
   assertNotebookManageAccess(input.actorUserId, input.notebookId);
   const user = findUserByEmail(input.email.trim().toLowerCase());
   if (!user) throw new Error("User not found");
-  const role = normalizeInputAccessRole(input.role);
+  const notebook = queryOne(`SELECT owner_id FROM notebooks WHERE id = ${sql(input.notebookId)} LIMIT 1`);
+  const role = user.id === notebook?.owner_id ? "owner" : normalizeInputAccessRole(input.role);
   execSql(`
     INSERT INTO notebook_members (notebook_id, user_id, role)
     VALUES (${sql(input.notebookId)}, ${sql(user.id)}, ${sql(role)})
@@ -996,19 +958,21 @@ export function shareNotebook(input: { actorUserId: string; notebookId: string; 
 export function unshareNotebook(actorUserId: string, notebookId: string, targetUserId: string) {
   ensureDatabase();
   assertNotebookManageAccess(actorUserId, notebookId);
+  const notebook = queryOne(`SELECT owner_id FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`);
+  if (notebook?.owner_id === targetUserId) throw new Error("Notebook owner cannot be removed.");
+  const ownerCount = Number(queryOne(`SELECT COUNT(*) AS count FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND role = 'owner'`)?.count ?? 0);
+  const targetRole = queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(targetUserId)} LIMIT 1`)?.role;
+  if (targetRole === "owner" && ownerCount <= 1) throw new Error("Notebooks need at least one owner.");
   execSql(`DELETE FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(targetUserId)};`);
 }
 
 export function importNotebook(input: {
   userId: string;
-  projectId: string;
   notebookName: string;
   pages: Array<{ title: string; body: string; tags: string[] }>;
 }) {
   ensureDatabase();
-  assertProjectEditAccess(input.userId, input.projectId);
-  const notebookId = randomUUID();
-  execSql(`INSERT INTO notebooks (id, project_id, name) VALUES (${sql(notebookId)}, ${sql(input.projectId)}, ${sql(input.notebookName)});`);
+  const notebookId = createImportedNotebook({ userId: input.userId, name: input.notebookName });
   for (const note of input.pages) {
     const pageId = randomUUID();
     execSql(`
@@ -1019,8 +983,7 @@ export function importNotebook(input: {
       VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Imported from ENEX', ${sql(input.userId)});
     `);
   }
-  execSql(`UPDATE projects SET updated_at = datetime('now') WHERE id = ${sql(input.projectId)};`);
-  rebuildSearchIndex();
+  finishImportedNotebook(notebookId);
   return notebookId;
 }
 
@@ -1031,65 +994,46 @@ function normalizePageStatus(value: unknown): PageStatus {
   return "";
 }
 
-function assertProjectEditAccess(userId: string, projectId: string) {
-  if (isAdmin(userId)) return;
-  const role = queryOne(`SELECT role FROM project_members WHERE user_id = ${sql(userId)} AND project_id = ${sql(projectId)} LIMIT 1`)?.role;
-  if (roleRank(normalizeAccessRole(role)) < roleRank("editor")) throw new Error("Forbidden");
-}
-
-function assertProjectManageAccess(userId: string, projectId: string) {
-  if (isAdmin(userId)) return;
-  const role = queryOne(`SELECT role FROM project_members WHERE user_id = ${sql(userId)} AND project_id = ${sql(projectId)} LIMIT 1`)?.role;
-  if (normalizeAccessRole(role) !== "owner") throw new Error("Only owners can manage sharing.");
+function getNotebookRole(userId: string, notebookId: string): AccessRole | null {
+  if (isAdmin(userId)) return queryOne(`SELECT id FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`) ? "owner" : null;
+  const row = queryOne(`
+    SELECT CASE
+      WHEN n.owner_id = ${sql(userId)} OR nm.role = 'owner' THEN 'owner'
+      WHEN nm.role = 'editor' THEN 'editor'
+      ELSE 'viewer'
+    END AS role
+    FROM notebooks n
+    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    WHERE n.id = ${sql(notebookId)}
+      AND (n.owner_id = ${sql(userId)} OR nm.user_id IS NOT NULL)
+    LIMIT 1
+  `);
+  return row ? normalizeAccessRole(row.role) : null;
 }
 
 function assertNotebookEditAccess(userId: string, notebookId: string) {
-  if (isAdmin(userId)) return;
-  const row = queryOne(`
-    SELECT CASE
-      WHEN pm.role = 'owner' OR nm.role = 'owner' THEN 'owner'
-      WHEN pm.role = 'editor' OR nm.role = 'editor' THEN 'editor'
-      ELSE 'viewer'
-    END AS role
-    FROM notebooks n
-    LEFT JOIN project_members pm ON pm.project_id = n.project_id AND pm.user_id = ${sql(userId)}
-    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
-    WHERE n.id = ${sql(notebookId)}
-    LIMIT 1
-  `);
-  if (roleRank(normalizeAccessRole(row?.role)) < roleRank("editor")) throw new Error("Forbidden");
+  const role = getNotebookRole(userId, notebookId);
+  if (!role || roleRank(role) < roleRank("editor")) throw new Error("Forbidden");
 }
 
 function assertNotebookManageAccess(userId: string, notebookId: string) {
-  if (isAdmin(userId)) return;
-  const row = queryOne(`
-    SELECT CASE
-      WHEN pm.role = 'owner' OR nm.role = 'owner' THEN 'owner'
-      WHEN pm.role = 'editor' OR nm.role = 'editor' THEN 'editor'
-      ELSE 'viewer'
-    END AS role
-    FROM notebooks n
-    LEFT JOIN project_members pm ON pm.project_id = n.project_id AND pm.user_id = ${sql(userId)}
-    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
-    WHERE n.id = ${sql(notebookId)}
-    LIMIT 1
-  `);
-  if (normalizeAccessRole(row?.role) !== "owner") throw new Error("Only owners can manage sharing.");
+  const role = getNotebookRole(userId, notebookId);
+  if (role !== "owner") throw new Error("Only owners can manage sharing.");
 }
 
 function assertPageEditAccess(userId: string, pageId: string) {
   if (isAdmin(userId)) return;
   const row = queryOne(`
     SELECT CASE
-      WHEN pm.role = 'owner' OR nm.role = 'owner' THEN 'owner'
-      WHEN pm.role = 'editor' OR nm.role = 'editor' THEN 'editor'
+      WHEN n.owner_id = ${sql(userId)} OR nm.role = 'owner' THEN 'owner'
+      WHEN nm.role = 'editor' THEN 'editor'
       ELSE 'viewer'
     END AS role
     FROM pages p
     JOIN notebooks n ON n.id = p.notebook_id
-    LEFT JOIN project_members pm ON pm.project_id = n.project_id AND pm.user_id = ${sql(userId)}
     LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
     WHERE p.id = ${sql(pageId)}
+      AND (n.owner_id = ${sql(userId)} OR nm.user_id IS NOT NULL)
     LIMIT 1
   `);
   if (roleRank(normalizeAccessRole(row?.role)) < roleRank("editor")) throw new Error("Forbidden");
@@ -1119,7 +1063,7 @@ function inList(values: string[]) {
   return values.map(sql).join(", ");
 }
 
-function normalizeProjectColor(value: string | undefined) {
+function normalizeNotebookColor(value: string | undefined) {
   return /^#[0-9a-f]{6}$/i.test(value ?? "") ? value!.toLowerCase() : "#0891b2";
 }
 
@@ -1144,7 +1088,7 @@ function toShareMember(row: Record<string, string>): ShareMember {
   };
 }
 
-function defaultProjectColor(seed: string) {
+function defaultNotebookColor(seed: string) {
   const colors = ["#0891b2", "#2563eb", "#7c3aed", "#16a34a", "#ca8a04", "#dc2626", "#0f766e", "#9333ea"];
   const score = Array.from(seed).reduce((total, char) => total + char.charCodeAt(0), 0);
   return colors[score % colors.length];

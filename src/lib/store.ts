@@ -482,9 +482,11 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
   }));
 }
 
-export function getAdminDataOverview(adminUserId: string): AdminDataOverview {
+export function getAdminDataOverview(adminUserId: string, options: { fileLimit?: number; fileOffset?: number } = {}): AdminDataOverview {
   ensureDatabase();
   assertAdmin(adminUserId);
+  const fileLimit = clampInteger(options.fileLimit, 1, 100, 25);
+  const fileOffset = clampInteger(options.fileOffset, 0, 1_000_000_000, 0);
 
   const counts = {
     users: countRows("users"),
@@ -511,6 +513,7 @@ export function getAdminDataOverview(adminUserId: string): AdminDataOverview {
     JOIN notebooks n ON n.id = p.notebook_id
     JOIN users u ON u.id = n.owner_id
     ORDER BY a.created_at DESC, lower(a.original_name) ASC
+    LIMIT ${fileLimit} OFFSET ${fileOffset}
   `).map((row) => ({
     id: row.id,
     originalName: row.original_name,
@@ -524,13 +527,14 @@ export function getAdminDataOverview(adminUserId: string): AdminDataOverview {
     ownerEmail: row.owner_email,
   }));
 
-  const attachmentBytes = files.reduce((total, file) => total + file.size, 0);
+  const attachmentBytes = Number(queryOne(`SELECT COALESCE(SUM(size), 0) AS total FROM attachments`)?.total ?? 0);
+  const attachmentRows = querySql("SELECT storage_key FROM attachments");
   const uploadFiles = listUploadFiles();
   const uploadFileKeys = new Set(uploadFiles.map((file) => file.relativePath));
-  const attachmentKeys = new Set(files.map((file) => file.storageKey));
+  const attachmentKeys = new Set(attachmentRows.map((file) => file.storage_key));
   const orphanUploadBytes = uploadFiles.reduce((total, file) => total + (attachmentKeys.has(file.relativePath) ? 0 : file.size), 0);
   const orphanUploadCount = uploadFiles.filter((file) => !attachmentKeys.has(file.relativePath)).length;
-  const missingUploadCount = files.filter((file) => !uploadFileKeys.has(file.storageKey)).length;
+  const missingUploadCount = attachmentRows.filter((file) => !uploadFileKeys.has(file.storage_key)).length;
 
   return {
     counts,
@@ -541,6 +545,11 @@ export function getAdminDataOverview(adminUserId: string): AdminDataOverview {
       orphanUploadCount,
       orphanUploadBytes,
       missingUploadCount,
+    },
+    filePage: {
+      total: counts.attachments,
+      limit: fileLimit,
+      offset: fileOffset,
     },
     files,
   };
@@ -1112,6 +1121,11 @@ function normalizePageTags(tags: string[]) {
 function countRows(tableName: string) {
   const row = queryOne(`SELECT COUNT(*) AS count FROM ${tableName}`);
   return Number(row?.count ?? 0);
+}
+
+function clampInteger(value: number | undefined, min: number, max: number, fallback: number) {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
 function listUploadFiles() {

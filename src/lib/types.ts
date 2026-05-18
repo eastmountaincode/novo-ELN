@@ -45,6 +45,11 @@ export type AdminDataOverview = {
     orphanUploadBytes: number;
     missingUploadCount: number;
   };
+  filePage: {
+    total: number;
+    limit: number;
+    offset: number;
+  };
   files: AdminDataFile[];
 };
 

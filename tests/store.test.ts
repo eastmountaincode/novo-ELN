@@ -207,6 +207,11 @@ describe("store", () => {
     expect(overview.storage.orphanUploadCount).toBe(1);
     expect(overview.storage.missingUploadCount).toBe(0);
     expect(overview.files[0]).toEqual(expect.objectContaining({ originalName: "attached.txt", storageKey: "attached.txt" }));
+
+    const emptyFilePage = getAdminDataOverview(admin.id, { fileLimit: 1, fileOffset: 1 });
+    expect(emptyFilePage.filePage).toEqual({ total: 1, limit: 1, offset: 1 });
+    expect(emptyFilePage.files).toHaveLength(0);
+    expect(emptyFilePage.storage.attachmentBytes).toBe(5);
   });
 
   it("blocks non-admins from listing users or setting passwords", async () => {

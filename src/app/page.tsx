@@ -24,9 +24,12 @@ import {
   KeyRound,
   MoreHorizontal,
   Notebook as NotebookIcon,
+  Palette,
   Paperclip,
   Plus,
+  Pencil,
   Search,
+  Settings,
   Shield,
   SlidersHorizontal,
   Tag,
@@ -1488,10 +1491,16 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
             <MoreHorizontal size={14} />
           </button>
           {notebookMenuId === notebook.id ? (
-            <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-8 z-20 w-40 border border-white/10 bg-slate-900 py-1 shadow-lg">
-              <button onClick={() => { setNotebookMenuId(null); openNotebookSettings(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Settings</button>
+            <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-8 z-20 w-44 border border-white/10 bg-slate-900 py-1 shadow-lg">
+              <button onClick={() => { setNotebookMenuId(null); openNotebookSettings(notebook); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">
+                <Settings size={15} className="shrink-0 text-slate-400" />
+                <span>Settings</span>
+              </button>
               <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
-                <span>Color</span>
+                <span className="flex min-w-0 items-center gap-2">
+                  <Palette size={15} className="shrink-0 text-slate-400" />
+                  <span>Color</span>
+                </span>
                 <input
                   type="color"
                   value={color}
@@ -1500,8 +1509,14 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
                   title="Notebook color"
                 />
               </label>
-              <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Rename</button>
-              <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">Delete</button>
+              <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">
+                <Pencil size={15} className="shrink-0 text-slate-400" />
+                <span>Rename</span>
+              </button>
+              <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">
+                <Trash2 size={15} className="shrink-0 text-rose-400" />
+                <span>Delete</span>
+              </button>
             </div>
           ) : null}
         </div>

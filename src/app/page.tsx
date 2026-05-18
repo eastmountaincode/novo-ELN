@@ -1403,7 +1403,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
             {inspection ? (
               <div className="border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
                 <div className="grid grid-cols-2 gap-3">
-                  <ImportMetric label="Notes" value={inspection.noteCount.toLocaleString()} />
+                  <ImportMetric label="Pages" value={inspection.noteCount.toLocaleString()} />
                   <ImportMetric label="ENEX resources" value={inspection.resourceCount.toLocaleString()} />
                   <ImportMetric label="Inline media refs" value={inspection.inlineMediaCount.toLocaleString()} />
                   <ImportMetric label="File size" value={formatBytes(inspection.sizeBytes)} />
@@ -1415,7 +1415,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
               <div className="space-y-2 border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
                 <div className="flex items-center justify-between gap-3">
                   <span className="capitalize">{job.state}</span>
-                  <span>{job.progress.importedNotes.toLocaleString()}{progressTotal ? ` / ${progressTotal.toLocaleString()}` : ""} notes</span>
+                  <span>{job.progress.importedNotes.toLocaleString()}{progressTotal ? ` / ${progressTotal.toLocaleString()}` : ""} pages</span>
                 </div>
                 <div className="h-2 overflow-hidden bg-slate-800">
                   <div className="h-full bg-cyan-400 transition-all" style={{ width: `${progressPercent}%` }} />
@@ -1485,7 +1485,7 @@ function ImportFinishedSummary({ notebookName, serverPath, inspection, job, elap
         <p className="mt-1 text-sm text-slate-300">{notebookName || job.notebookId || "Imported notebook"}</p>
       </div>
       <div className="grid gap-1 border border-white/10 bg-white/5 p-3 text-xs text-slate-400">
-        <ImportProgressRow label="Notes imported" value={`${job.progress.importedNotes.toLocaleString()}${noteTotal ? ` / ${noteTotal.toLocaleString()}` : ""}`} />
+        <ImportProgressRow label="Pages imported" value={`${job.progress.importedNotes.toLocaleString()}${noteTotal ? ` / ${noteTotal.toLocaleString()}` : ""}`} />
         <ImportProgressRow label="ENEX resources" value={`${job.progress.importedResources.toLocaleString()}${resourceTotal ? ` / ${resourceTotal.toLocaleString()}` : ""}`} />
         {inspection ? <ImportProgressRow label="Inline media refs" value={inspection.inlineMediaCount.toLocaleString()} /> : null}
         <ImportProgressRow label="Elapsed time" value={formatDuration(elapsedSeconds)} />
@@ -2059,7 +2059,7 @@ function SearchOverlay({ query, setQuery, loading, results, onClose, selectResul
       <section
         role="dialog"
         aria-modal="true"
-        aria-label="Search notes"
+        aria-label="Search pages"
         onMouseDown={(event) => event.stopPropagation()}
         className="mx-auto mt-12 grid max-h-[78vh] w-full max-w-4xl grid-rows-[auto_1fr] border border-white/10 bg-slate-950 text-slate-100 shadow-2xl shadow-slate-950/50"
       >
@@ -2070,7 +2070,7 @@ function SearchOverlay({ query, setQuery, loading, results, onClose, selectResul
               ref={inputRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search notes, attachments, and notebooks"
+              placeholder="Search pages and attachments"
               className="h-9 min-w-0 flex-1 bg-transparent text-base text-white outline-none placeholder:text-slate-500"
             />
             {query ? (
@@ -2085,7 +2085,7 @@ function SearchOverlay({ query, setQuery, loading, results, onClose, selectResul
             <SearchResultList loading={loading} results={results} selectResult={selectResult} />
           ) : (
             <div className="border border-white/10 bg-white/[0.03] p-5 text-sm text-slate-400">
-              Start typing to search page titles, note text, and attachment names.
+              Start typing to search page titles, page text, and attachment names.
             </div>
           )}
         </div>
@@ -2235,7 +2235,7 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
                   onClick={() => selectPage(project, notebook, page)}
                 />
               ))}
-              {recentPages.length === 0 ? <p className="p-3 text-sm text-slate-500">No recent notes yet.</p> : null}
+              {recentPages.length === 0 ? <p className="p-3 text-sm text-slate-500">No recent pages yet.</p> : null}
             </div>
           </section>
 
@@ -3196,7 +3196,7 @@ function AttachmentRow({ attachment, index, canEdit, onDelete }: { attachment: A
       draggable={canEdit}
       onDragStart={handleDragStart}
       className={`flex items-center justify-between gap-4 border border-slate-200 bg-white px-3 py-2 ${canEdit ? "cursor-grab active:cursor-grabbing" : ""}`}
-      title={canEdit ? "Drag into the note to place this attachment inline" : undefined}
+      title={canEdit ? "Drag into the page to place this attachment inline" : undefined}
     >
       <div className="flex min-w-0 items-center gap-2">
         {canEdit ? <GripVertical className="shrink-0 text-slate-400" size={15} aria-hidden="true" /> : null}

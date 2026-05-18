@@ -141,7 +141,7 @@ export function ensureDatabase() {
       body,
       tags,
       attachments,
-      notebook,
+      notebook UNINDEXED,
       updated_at UNINDEXED,
       tokenize='unicode61'
     );
@@ -350,7 +350,7 @@ function seedIfEmpty() {
 
     INSERT INTO notebooks (id, name, owner_id, color)
     VALUES (${sql(constructNotebookId)}, 'Construct Design', ${sql(userId)}, ${sql(defaultNotebookColor(constructNotebookId))}),
-           (${sql(meetingNotebookId)}, 'Meeting Notes', ${sql(userId)}, ${sql(defaultNotebookColor(meetingNotebookId))});
+           (${sql(meetingNotebookId)}, 'Meetings', ${sql(userId)}, ${sql(defaultNotebookColor(meetingNotebookId))});
 
     INSERT INTO notebook_members (notebook_id, user_id, role)
     VALUES (${sql(constructNotebookId)}, ${sql(userId)}, 'owner'),
@@ -358,8 +358,8 @@ function seedIfEmpty() {
 
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES
-      (${sql(pageOneId)}, ${sql(constructNotebookId)}, 'SortSeq plasmid assembly notes', ${sql("Summary of the SortSeq construct changes. The key need is keeping protocol text, source files, and analysis artifacts together without turning this into a full LIMS.")}, '', ${sql(userId)}),
-      (${sql(pageTwoId)}, ${sql(constructNotebookId)}, 'Competent cell prep', ${sql("Prep notes should behave like normal pages, not special experiments. A lightweight checklist is enough for repeatable work; scheduling and bookable resources are intentionally out of scope.")}, '', ${sql(userId)}),
+      (${sql(pageOneId)}, ${sql(constructNotebookId)}, 'SortSeq plasmid assembly', ${sql("Summary of the SortSeq construct changes. The key need is keeping protocol text, source files, and analysis artifacts together without turning this into a full LIMS.")}, '', ${sql(userId)}),
+      (${sql(pageTwoId)}, ${sql(constructNotebookId)}, 'Competent cell prep', ${sql("Prep pages should behave like normal pages, not special experiments. A lightweight checklist is enough for repeatable work; scheduling and bookable resources are intentionally out of scope.")}, '', ${sql(userId)}),
       (${sql(pageThreeId)}, ${sql(meetingNotebookId)}, 'ELN requirements from Slim', ${sql("The replacement should preserve Evernote-like workflows: notebooks, pages, inline images, attachments, search, and history.")}, '', ${sql(userId)});
 
     INSERT INTO page_tags (page_id, tag)
@@ -914,7 +914,7 @@ export function createImportedPage(input: {
   const pageId = input.pageId ?? randomUUID();
   const createdAt = input.createdAt ?? new Date().toISOString();
   const updatedAt = input.updatedAt ?? createdAt;
-  const title = input.title || "Untitled Evernote note";
+  const title = input.title || "Untitled Evernote page";
   const normalizedTags = normalizePageTags(input.tags);
 
   if (input.replaceExisting) {
@@ -1030,7 +1030,7 @@ export function importNotebook(input: {
     const pageId = randomUUID();
     execSql(`
       INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-      VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title || "Untitled Evernote note")}, ${sql(note.body)}, '', ${sql(input.userId)});
+      VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title || "Untitled Evernote page")}, ${sql(note.body)}, '', ${sql(input.userId)});
       ${note.tags.map((tag) => `INSERT OR IGNORE INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
       INSERT INTO page_versions (id, page_id, summary, created_by)
       VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Imported from ENEX', ${sql(input.userId)});

@@ -108,16 +108,17 @@ describe("store", () => {
   });
 
   it("searches pages with FTS ranking and fuzzy fallback", async () => {
-    const { verifyCredentials, getWorkspace, createPage, updatePage } = await import("../src/lib/store");
+    const { verifyCredentials, getWorkspace, createNotebook, createPage, updatePage } = await import("../src/lib/store");
     const { searchWorkspace } = await import("../src/lib/search");
     const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
     const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
     const relatedPageId = createPage(user.id, notebookId);
+    createNotebook(user.id, "Zephyr Quasar Notebooklabel");
 
     updatePage(user.id, pageId, {
       title: "GPA33 Search 2026",
-      body: "Looking for expression in neurons and antibody half-life notes.",
+      body: "Looking for expression in neurons and antibody half-life records.",
     });
     updatePage(user.id, relatedPageId, {
       title: "ctDNA-Expt57 DNA/exosome isolation from B16F10-ROR1 tumors in B6 mice",
@@ -137,6 +138,8 @@ describe("store", () => {
     const titleTokenResults = searchWorkspace(user.id, "ctDNA Expt57 DNA exosome isolation");
     expect(titleTokenResults[0]?.pageId).toBe(relatedPageId);
     expect(titleTokenResults[0]?.matchType).toBe("title");
+
+    expect(searchWorkspace(user.id, "Zephyr Quasar Notebooklabel")).toHaveLength(0);
   });
 
   it("adds and removes simple page tags", async () => {

@@ -75,7 +75,7 @@ function searchFts(userId: string, query: string, limit: number, mode: "strict" 
 
   return rows
     .map((row): SearchResult & { matchedTokenCount: number } => {
-      const searchableText = [row.title, row.body, row.tags, row.attachments, row.notebook].join(" ");
+      const searchableText = [row.title, row.body, row.tags, row.attachments].join(" ");
       const matchedTokenCount = countMatchedTokens(tokens, searchableText);
       const titleMatchedTokenCount = countMatchedTokens(tokens, row.title);
       const matchType = titleMatchedTokenCount >= relaxedMinimumMatchCount(tokens.length) ? "title" : row.match_type;
@@ -124,9 +124,8 @@ function searchFuzzy(userId: string, query: string, limit: number): SearchResult
     .map((page) => {
       const titleScore = fuzzyFieldScore(tokens, page.title) * 1.2;
       const attachmentScore = fuzzyFieldScore(tokens, page.attachments);
-      const contextScore = fuzzyFieldScore(tokens, page.notebookName) * 0.9;
       const bodyScore = fuzzyFieldScore(tokens, page.body) * 0.75;
-      const score = Math.max(titleScore, attachmentScore, contextScore, bodyScore);
+      const score = Math.max(titleScore, attachmentScore, bodyScore);
       const exactTokenMatches = countMatchedTokens(tokens, [page.title, page.body, page.tags, page.attachments].join(" "));
       const matchType: SearchMatchType = score === titleScore ? "title" : score === attachmentScore ? "attachment" : "fuzzy";
       return { page, score, matchType, exactTokenMatches };

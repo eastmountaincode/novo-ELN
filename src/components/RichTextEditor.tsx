@@ -121,7 +121,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
         defaultProtocol: "https",
       }),
       Placeholder.configure({
-        placeholder: "Write notes...",
+        placeholder: "Write page content...",
       }),
       Table.configure({
         resizable: true,

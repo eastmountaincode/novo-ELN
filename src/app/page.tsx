@@ -163,7 +163,8 @@ export default function Home() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [activeView, setActiveView] = useState<"home" | "projectHome" | "project" | "notebookSettings" | "account">("home");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedNotebookId, setSelectedNotebookId] = useState("");
@@ -521,7 +522,7 @@ export default function Home() {
       const response = await fetch(authMode === "register" ? "/api/auth/register" : "/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(authMode === "register" ? { email, name, password } : { email, password, rememberDevice }),
+        body: JSON.stringify(authMode === "register" ? { email, firstName, lastName, password } : { email, password, rememberDevice }),
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -988,7 +989,10 @@ export default function Home() {
             </div>
           </div>
           {authMode === "register" ? (
-            <label className="mb-3 block text-sm font-medium text-slate-700">Name<input value={name} onChange={(event) => setName(event.target.value)} disabled={authSubmitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="name" /></label>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm font-medium text-slate-700">First name<input value={firstName} onChange={(event) => setFirstName(event.target.value)} disabled={authSubmitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="given-name" /></label>
+              <label className="block text-sm font-medium text-slate-700">Last name<input value={lastName} onChange={(event) => setLastName(event.target.value)} disabled={authSubmitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="family-name" /></label>
+            </div>
           ) : null}
           <label className="mb-3 block text-sm font-medium text-slate-700">Email<input value={email} onChange={(event) => setEmail(event.target.value)} disabled={authSubmitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" /></label>
           <label className="mb-2 block text-sm font-medium text-slate-700">
@@ -2468,7 +2472,7 @@ function ShareForm({ members, existingMembers, submitLabel, disabled: disabledBy
             type="text"
             autoComplete="off"
             disabled={disabledByPermission}
-            placeholder="Search by name or email"
+            placeholder="Search by full name or email"
             className="h-9 w-full border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
           />
           {focused && !disabledByPermission ? (

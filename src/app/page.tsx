@@ -1555,8 +1555,8 @@ function ModalFrame({ children }: { children: React.ReactNode }) {
 
 function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollapsed, accountOpen, notebookMenuId, openSearch, toggleSidebarCollapsed, setAccountOpen, setProjectMenuId, setNotebookMenuId, openHome, openAccount, selectNotebook, renameNotebook, deleteNotebook, updateNotebookColor, openNotebookSettings, createNewNotebook, handleLogout }: { workspace: Workspace; activeView: "home" | "projectHome" | "project" | "notebookSettings" | "account"; selectedProject?: Project; selectedNotebook?: Notebook; sidebarCollapsed: boolean; accountOpen: boolean; projectMenuId: string | null; notebookMenuId: string | null; expandedProjectIds: Set<string>; openSearch: () => void; toggleSidebarCollapsed: () => void; setAccountOpen: (value: boolean) => void; setProjectMenuId: (value: string | null) => void; setNotebookMenuId: (value: string | null) => void; openHome: () => void; openAccount: () => void; selectProject: (project: Project) => void; toggleProject: (project: Project) => void; selectNotebook: (project: Project, notebook: Notebook) => void; createNewProject: () => void; renameProject: (project: Project) => void; updateProjectColor: (project: Project, color: string) => void; deleteProject: (project: Project) => void; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; updateNotebookColor: (notebook: Notebook, color: string) => void; openNotebookSettings: (notebook: Notebook) => void; createNewNotebook: (projectId?: string) => void; handleLogout: () => void }) {
   const workspaceProject = workspace.projects[0];
-  const ownNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId === workspace.user.id);
-  const sharedNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId !== workspace.user.id);
+  const ownNotebooks = workspace.notebooks.filter((notebook) => notebook.accessRole === "owner");
+  const sharedNotebooks = workspace.notebooks.filter((notebook) => notebook.accessRole !== "owner");
   const [myNotebooksCollapsed, setMyNotebooksCollapsed] = useState(false);
   const [sharedNotebooksCollapsed, setSharedNotebooksCollapsed] = useState(false);
 
@@ -2312,7 +2312,7 @@ function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteN
               <Users size={17} className="text-slate-500" />
               <h2 className="text-base font-semibold text-slate-950">Notebook access</h2>
             </div>
-            <NotebookAccessList members={notebook.members} notebookOwnerId={notebook.ownerId} canManage={canManage} onRoleChange={updateNotebookMemberRole} onRemove={removeMember} />
+            <NotebookAccessList members={notebook.members} currentUserId={user.id} canManage={canManage} onRoleChange={updateNotebookMemberRole} onRemove={removeMember} />
           </section>
 
           <aside className="space-y-6">
@@ -2348,20 +2348,20 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function NotebookAccessList({ members, notebookOwnerId, canManage, onRoleChange, onRemove }: { members: ShareMember[]; notebookOwnerId: string; canManage: boolean; onRoleChange: (member: ShareMember, role: AccessRole) => Promise<void>; onRemove: (member: ShareMember) => Promise<void> }) {
+function NotebookAccessList({ members, currentUserId, canManage, onRoleChange, onRemove }: { members: ShareMember[]; currentUserId: string; canManage: boolean; onRoleChange: (member: ShareMember, role: AccessRole) => Promise<void>; onRemove: (member: ShareMember) => Promise<void> }) {
   if (!members.length) return <p className="text-sm text-slate-500">No members have access yet.</p>;
   return (
     <div className="space-y-2">
       {members.map((member) => {
-        const isNotebookOwner = member.userId === notebookOwnerId;
+        const isCurrentUser = member.userId === currentUserId;
         return (
         <div key={member.userId} className="grid gap-3 border border-slate-200 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_140px_36px] sm:items-center">
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-slate-950">{member.name}</p>
+            <p className="truncate text-sm font-medium text-slate-950">{member.name}{isCurrentUser ? <span className="ml-1 font-normal text-slate-500">(you)</span> : null}</p>
             <p className="truncate text-xs text-slate-500">{member.email}</p>
           </div>
-          {canManage ? (
-            <select value={member.role} onChange={(event) => void onRoleChange(member, event.target.value as AccessRole)} disabled={isNotebookOwner} className="h-9 cursor-pointer border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500">
+          {canManage && !isCurrentUser ? (
+            <select value={member.role} onChange={(event) => void onRoleChange(member, event.target.value as AccessRole)} className="h-9 cursor-pointer border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none focus:border-cyan-600">
               <option value="owner">Owner</option>
               <option value="editor">Editor</option>
               <option value="viewer">Viewer</option>
@@ -2369,7 +2369,7 @@ function NotebookAccessList({ members, notebookOwnerId, canManage, onRoleChange,
           ) : (
             <span className="text-sm capitalize text-slate-600">{member.role}</span>
           )}
-          {canManage && !isNotebookOwner ? (
+          {canManage && !isCurrentUser ? (
             <button type="button" onClick={() => void onRemove(member)} className="grid size-9 place-items-center border border-slate-200 text-slate-500 hover:bg-slate-100" title="Remove access">
               <X size={14} />
             </button>

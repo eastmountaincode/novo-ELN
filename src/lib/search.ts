@@ -1,5 +1,5 @@
 import { bodyToEditorText } from "./editor";
-import { execSql, queryOne, querySql, sql } from "./sqlite";
+import { execSql, querySql, sql } from "./sqlite";
 import type { SearchMatchType, SearchResult } from "./types";
 
 type SearchablePage = {
@@ -214,13 +214,8 @@ function mapSearchRows(rows: Record<string, string>[]): SearchablePage[] {
   }));
 }
 
-function searchAccessCondition(userId: string, notebookAlias: string, memberAlias: string) {
-  if (isAdmin(userId)) return "1 = 1";
-  return `(${notebookAlias}.owner_id = ${sql(userId)} OR ${memberAlias}.user_id IS NOT NULL)`;
-}
-
-function isAdmin(userId: string) {
-  return queryOne(`SELECT role FROM users WHERE id = ${sql(userId)} LIMIT 1`)?.role === "admin";
+function searchAccessCondition(_userId: string, _notebookAlias: string, memberAlias: string) {
+  return `${memberAlias}.user_id IS NOT NULL`;
 }
 
 function buildFtsQuery(tokens: string[], mode: "strict" | "relaxed") {

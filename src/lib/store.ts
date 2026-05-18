@@ -467,9 +467,9 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
       u.name,
       u.role,
       u.created_at,
-      COUNT(DISTINCT n.id) AS notebook_count
+      COUNT(DISTINCT nm.notebook_id) AS notebook_count
     FROM users u
-    LEFT JOIN notebooks n ON n.owner_id = u.id
+    LEFT JOIN notebook_members nm ON nm.user_id = u.id AND nm.role = 'owner'
     GROUP BY u.id
     ORDER BY lower(u.name) ASC, lower(u.email) ASC
   `).map((row) => ({
@@ -574,13 +574,12 @@ export function getWorkspace(userId: string): Workspace {
       n.created_at,
       n.updated_at,
       CASE
-        WHEN n.owner_id = ${sql(userId)} OR nm.role = 'owner' THEN 'owner'
+        WHEN nm.role = 'owner' THEN 'owner'
         WHEN nm.role = 'editor' THEN 'editor'
         ELSE 'viewer'
       END AS access_role
     FROM notebooks n
-    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
-    WHERE n.owner_id = ${sql(userId)} OR nm.user_id IS NOT NULL
+    JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
     GROUP BY n.id
     ORDER BY datetime(n.updated_at) DESC, lower(n.name) ASC
   `);
@@ -796,14 +795,13 @@ export function createAttachment(input: {
 
 export function getAttachmentForUser(userId: string, attachmentId: string): Attachment | null {
   ensureDatabase();
-  const accessCondition = isAdmin(userId) ? "1 = 1" : `(n.owner_id = ${sql(userId)} OR nm.user_id IS NOT NULL)`;
   const row = queryOne(`
     SELECT a.id, a.page_id, a.original_name, a.mime_type, a.size, a.storage_key, a.block_type, a.preview_text, a.created_at
     FROM attachments a
     JOIN pages p ON p.id = a.page_id
     JOIN notebooks n ON n.id = p.notebook_id
-    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
-    WHERE ${accessCondition} AND a.id = ${sql(attachmentId)}
+    JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    WHERE a.id = ${sql(attachmentId)}
     LIMIT 1
   `);
   return row ? toAttachment(row) : null;
@@ -945,8 +943,10 @@ export function shareNotebook(input: { actorUserId: string; notebookId: string; 
   assertNotebookManageAccess(input.actorUserId, input.notebookId);
   const user = findUserByEmail(input.email.trim().toLowerCase());
   if (!user) throw new Error("User not found");
-  const notebook = queryOne(`SELECT owner_id FROM notebooks WHERE id = ${sql(input.notebookId)} LIMIT 1`);
-  const role = user.id === notebook?.owner_id ? "owner" : normalizeInputAccessRole(input.role);
+  if (user.id === input.actorUserId) throw new Error("Owners cannot change their own role.");
+  const role = normalizeInputAccessRole(input.role);
+  const currentRole = normalizeAccessRole(queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(input.notebookId)} AND user_id = ${sql(user.id)} LIMIT 1`)?.role);
+  if (currentRole === "owner" && role !== "owner" && countNotebookOwners(input.notebookId) <= 1) throw new Error("Notebooks need at least one owner.");
   execSql(`
     INSERT INTO notebook_members (notebook_id, user_id, role)
     VALUES (${sql(input.notebookId)}, ${sql(user.id)}, ${sql(role)})
@@ -958,11 +958,9 @@ export function shareNotebook(input: { actorUserId: string; notebookId: string; 
 export function unshareNotebook(actorUserId: string, notebookId: string, targetUserId: string) {
   ensureDatabase();
   assertNotebookManageAccess(actorUserId, notebookId);
-  const notebook = queryOne(`SELECT owner_id FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`);
-  if (notebook?.owner_id === targetUserId) throw new Error("Notebook owner cannot be removed.");
-  const ownerCount = Number(queryOne(`SELECT COUNT(*) AS count FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND role = 'owner'`)?.count ?? 0);
+  if (actorUserId === targetUserId) throw new Error("Owners cannot remove themselves.");
   const targetRole = queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(targetUserId)} LIMIT 1`)?.role;
-  if (targetRole === "owner" && ownerCount <= 1) throw new Error("Notebooks need at least one owner.");
+  if (targetRole === "owner" && countNotebookOwners(notebookId) <= 1) throw new Error("Notebooks need at least one owner.");
   execSql(`DELETE FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(targetUserId)};`);
 }
 
@@ -995,18 +993,7 @@ function normalizePageStatus(value: unknown): PageStatus {
 }
 
 function getNotebookRole(userId: string, notebookId: string): AccessRole | null {
-  const row = queryOne(`
-    SELECT CASE
-      WHEN n.owner_id = ${sql(userId)} OR nm.role = 'owner' THEN 'owner'
-      WHEN nm.role = 'editor' THEN 'editor'
-      ELSE 'viewer'
-    END AS role
-    FROM notebooks n
-    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
-    WHERE n.id = ${sql(notebookId)}
-      AND (n.owner_id = ${sql(userId)} OR nm.user_id IS NOT NULL)
-    LIMIT 1
-  `);
+  const row = queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(userId)} LIMIT 1`);
   return row ? normalizeAccessRole(row.role) : null;
 }
 
@@ -1023,18 +1010,21 @@ function assertNotebookManageAccess(userId: string, notebookId: string) {
 function assertPageEditAccess(userId: string, pageId: string) {
   const row = queryOne(`
     SELECT CASE
-      WHEN n.owner_id = ${sql(userId)} OR nm.role = 'owner' THEN 'owner'
+      WHEN nm.role = 'owner' THEN 'owner'
       WHEN nm.role = 'editor' THEN 'editor'
       ELSE 'viewer'
     END AS role
     FROM pages p
     JOIN notebooks n ON n.id = p.notebook_id
-    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
     WHERE p.id = ${sql(pageId)}
-      AND (n.owner_id = ${sql(userId)} OR nm.user_id IS NOT NULL)
     LIMIT 1
   `);
   if (roleRank(normalizeAccessRole(row?.role)) < roleRank("editor")) throw new Error("Forbidden");
+}
+
+function countNotebookOwners(notebookId: string) {
+  return Number(queryOne(`SELECT COUNT(*) AS count FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND role = 'owner'`)?.count ?? 0);
 }
 
 function assertAttachmentEditAccess(userId: string, attachmentId: string) {

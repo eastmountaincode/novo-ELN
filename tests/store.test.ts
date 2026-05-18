@@ -233,4 +233,27 @@ describe("store", () => {
     expect(sharedNotebook).toEqual(expect.objectContaining({ id: sharedNotebookId, accessRole: "viewer" }));
     expect(viewerWorkspace.notebooks.some((candidate) => candidate.id === privateNotebookId)).toBe(false);
   });
+
+  it("uses notebook membership roles for ownership instead of creator status", async () => {
+    const { createNotebook, createUser, getWorkspace, shareNotebook, unshareNotebook, verifyCredentials } = await import("../src/lib/store");
+    const creator = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const secondOwner = createUser({ email: "second.owner@example.local", name: "Second Owner", password: "Owner-password-2026!" });
+    const viewer = createUser({ email: "shared.viewer@example.local", name: "Shared Viewer", password: "Viewer-password-2026!" });
+    const notebookId = createNotebook(creator.id, "Multiple Owner Notebook").notebookId;
+
+    shareNotebook({ actorUserId: creator.id, notebookId, email: secondOwner.email, role: "owner" });
+    shareNotebook({ actorUserId: creator.id, notebookId, email: viewer.email, role: "viewer" });
+
+    const ownerWorkspace = getWorkspace(secondOwner.id);
+    expect(ownerWorkspace.notebooks.find((notebook) => notebook.id === notebookId)?.accessRole).toBe("owner");
+
+    expect(() => shareNotebook({ actorUserId: secondOwner.id, notebookId, email: secondOwner.email, role: "viewer" })).toThrow(
+      "Owners cannot change their own role.",
+    );
+    expect(() => unshareNotebook(secondOwner.id, notebookId, secondOwner.id)).toThrow("Owners cannot remove themselves.");
+
+    shareNotebook({ actorUserId: secondOwner.id, notebookId, email: creator.email, role: "viewer" });
+
+    expect(getWorkspace(creator.id).notebooks.find((notebook) => notebook.id === notebookId)?.accessRole).toBe("viewer");
+  });
 });

@@ -1874,7 +1874,6 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
     <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
-          <p className="text-xs font-semibold" style={{ color }}>Notebook</p>
           <div className="flex min-w-0 items-center justify-between gap-3">
             <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
             <span className="shrink-0 text-sm font-medium text-slate-500">{filterActive ? `${sortedPages.length} / ${pages.length}` : sortedPages.length}</span>

@@ -10,6 +10,8 @@ import {
   ChevronRight,
   Database,
   Download,
+  Eye,
+  EyeOff,
   FileArchive,
   FileImage,
   Filter,
@@ -148,6 +150,7 @@ export default function Home() {
   const [authMode, setAuthMode] = useState<"signin" | "register">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
   const [name, setName] = useState("");
   const [activeView, setActiveView] = useState<"home" | "projectHome" | "project" | "account">("home");
@@ -895,7 +898,27 @@ export default function Home() {
             <label className="mb-3 block text-sm font-medium text-slate-700">Name<input value={name} onChange={(event) => setName(event.target.value)} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" autoComplete="name" /></label>
           ) : null}
           <label className="mb-3 block text-sm font-medium text-slate-700">Email<input value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" /></label>
-          <label className="mb-2 block text-sm font-medium text-slate-700">Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" autoComplete={authMode === "register" ? "new-password" : "current-password"} /></label>
+          <label className="mb-2 block text-sm font-medium text-slate-700">
+            Password
+            <div className="relative mt-1">
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type={showPassword ? "text" : "password"}
+                className="h-10 w-full border border-slate-300 px-3 pr-10 outline-none focus:border-cyan-600"
+                autoComplete={authMode === "register" ? "new-password" : "current-password"}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((current) => !current)}
+                className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                title={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </label>
           {authMode === "register" ? <p className="mb-4 text-xs leading-5 text-slate-500">{passwordRequirementText}</p> : null}
           {authMode === "signin" ? (
             <label className="mb-4 flex items-center gap-2 text-sm text-slate-600">

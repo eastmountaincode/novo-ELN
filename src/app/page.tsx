@@ -152,7 +152,7 @@ export default function Home() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
   const [name, setName] = useState("");
-  const [activeView, setActiveView] = useState<"home" | "projectHome" | "project" | "account">("home");
+  const [activeView, setActiveView] = useState<"home" | "projectHome" | "project" | "notebookSettings" | "account">("home");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedNotebookId, setSelectedNotebookId] = useState("");
   const [selectedPageId, setSelectedPageId] = useState("");
@@ -174,7 +174,6 @@ export default function Home() {
   const [notebookPendingDelete, setNotebookPendingDelete] = useState<Notebook | null>(null);
   const [pagePendingDelete, setPagePendingDelete] = useState<PageEntry | null>(null);
   const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null);
-  const [notebookShareDialog, setNotebookShareDialog] = useState<Notebook | null>(null);
   const [spreadsheetModal, setSpreadsheetModal] = useState<InlineAttachmentAttrs | null>(null);
   const [presentationModal, setPresentationModal] = useState<InlineAttachmentAttrs | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -624,12 +623,14 @@ export default function Home() {
     setNotebookPendingDelete(notebook);
   }
 
-  function shareExistingNotebook(notebook: Notebook) {
+  function openNotebookSettings(notebook: Notebook) {
     setProjectMenuId(null);
     setNotebookMenuId(null);
     setPageMenuId(null);
     setAccountOpen(false);
-    setNotebookShareDialog(notebook);
+    setSelectedProjectId(selectedProject?.id ?? workspace?.projects[0]?.id ?? "");
+    setSelectedNotebookId(notebook.id);
+    setActiveView("notebookSettings");
   }
 
   async function updateExistingNotebookColor(notebook: Notebook, color: string) {
@@ -968,7 +969,7 @@ export default function Home() {
           renameNotebook={renameExistingNotebook}
           deleteNotebook={requestNotebookDelete}
           updateNotebookColor={updateExistingNotebookColor}
-          shareNotebook={shareExistingNotebook}
+          openNotebookSettings={openNotebookSettings}
           createNewNotebook={createNewNotebook}
           handleLogout={handleLogout}
         />
@@ -979,6 +980,18 @@ export default function Home() {
           <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} importEnexNotebook={() => createNewNotebook(undefined, "import")} />
         ) : activeView === "account" ? (
           <AccountView user={workspace.user} />
+        ) : activeView === "notebookSettings" ? (
+          selectedNotebook ? (
+            <NotebookSettingsView
+              notebook={selectedNotebook}
+              user={workspace.user}
+              renameNotebook={renameExistingNotebook}
+              deleteNotebook={requestNotebookDelete}
+              onChanged={() => refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: selectedPage?.id })}
+            />
+          ) : (
+            <section className="grid place-items-center bg-white p-8 text-slate-500">Select a notebook to view settings.</section>
+          )
         ) : (
           <>
             <PagesSidebar
@@ -1055,17 +1068,6 @@ export default function Home() {
           />
         ) : null}
 
-        {notebookShareDialog ? (
-          <NotebookShareModal
-            notebook={notebookShareDialog}
-            user={workspace.user}
-            onCancel={() => setNotebookShareDialog(null)}
-            onChanged={async () => {
-              if (!selectedProject) return;
-              await refreshWorkspace({ projectId: selectedProject.id, notebookId: notebookShareDialog.id });
-            }}
-          />
-        ) : null}
 
         {spreadsheetModal ? (
           <SpreadsheetModal
@@ -1452,7 +1454,7 @@ function ModalFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
-function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollapsed, accountOpen, notebookMenuId, openSearch, toggleSidebarCollapsed, setAccountOpen, setProjectMenuId, setNotebookMenuId, openHome, openAccount, selectNotebook, renameNotebook, deleteNotebook, updateNotebookColor, shareNotebook, createNewNotebook, handleLogout }: { workspace: Workspace; activeView: "home" | "projectHome" | "project" | "account"; selectedProject?: Project; selectedNotebook?: Notebook; sidebarCollapsed: boolean; accountOpen: boolean; projectMenuId: string | null; notebookMenuId: string | null; expandedProjectIds: Set<string>; openSearch: () => void; toggleSidebarCollapsed: () => void; setAccountOpen: (value: boolean) => void; setProjectMenuId: (value: string | null) => void; setNotebookMenuId: (value: string | null) => void; openHome: () => void; openAccount: () => void; selectProject: (project: Project) => void; toggleProject: (project: Project) => void; selectNotebook: (project: Project, notebook: Notebook) => void; createNewProject: () => void; renameProject: (project: Project) => void; updateProjectColor: (project: Project, color: string) => void; deleteProject: (project: Project) => void; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; updateNotebookColor: (notebook: Notebook, color: string) => void; shareNotebook: (notebook: Notebook) => void; createNewNotebook: (projectId?: string) => void; handleLogout: () => void }) {
+function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollapsed, accountOpen, notebookMenuId, openSearch, toggleSidebarCollapsed, setAccountOpen, setProjectMenuId, setNotebookMenuId, openHome, openAccount, selectNotebook, renameNotebook, deleteNotebook, updateNotebookColor, openNotebookSettings, createNewNotebook, handleLogout }: { workspace: Workspace; activeView: "home" | "projectHome" | "project" | "notebookSettings" | "account"; selectedProject?: Project; selectedNotebook?: Notebook; sidebarCollapsed: boolean; accountOpen: boolean; projectMenuId: string | null; notebookMenuId: string | null; expandedProjectIds: Set<string>; openSearch: () => void; toggleSidebarCollapsed: () => void; setAccountOpen: (value: boolean) => void; setProjectMenuId: (value: string | null) => void; setNotebookMenuId: (value: string | null) => void; openHome: () => void; openAccount: () => void; selectProject: (project: Project) => void; toggleProject: (project: Project) => void; selectNotebook: (project: Project, notebook: Notebook) => void; createNewProject: () => void; renameProject: (project: Project) => void; updateProjectColor: (project: Project, color: string) => void; deleteProject: (project: Project) => void; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; updateNotebookColor: (notebook: Notebook, color: string) => void; openNotebookSettings: (notebook: Notebook) => void; createNewNotebook: (projectId?: string) => void; handleLogout: () => void }) {
   const workspaceProject = workspace.projects[0];
   const ownNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId === workspace.user.id);
   const sharedNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId !== workspace.user.id);
@@ -1486,6 +1488,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
           </button>
           {notebookMenuId === notebook.id ? (
             <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-8 z-20 w-40 border border-white/10 bg-slate-900 py-1 shadow-lg">
+              <button onClick={() => { setNotebookMenuId(null); openNotebookSettings(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Settings</button>
               <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
                 <span>Color</span>
                 <input
@@ -1496,7 +1499,6 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
                   title="Notebook color"
                 />
               </label>
-              <button onClick={() => { setNotebookMenuId(null); shareNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Share</button>
               <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Rename</button>
               <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">Delete</button>
             </div>
@@ -2137,42 +2139,127 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
   );
 }
 
-function NotebookShareModal({ notebook, user, onCancel, onChanged }: { notebook: Notebook; user: AppUser; onCancel: () => void; onChanged: () => Promise<void> }) {
+function NotebookSettingsView({ notebook, user, renameNotebook, deleteNotebook, onChanged }: { notebook: Notebook; user: AppUser; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; onChanged: () => Promise<void> }) {
   const canManage = user.role === "admin" || notebook.accessRole === "owner";
+  const canEdit = canManage || notebook.accessRole === "editor";
+  const attachmentCount = notebook.pages.reduce((total, page) => total + page.attachments.length, 0);
+  const attachmentBytes = notebook.pages.reduce((total, page) => total + page.attachments.reduce((sum, attachment) => sum + attachment.size, 0), 0);
+  const memberCount = notebook.members.length;
+
+  async function addNotebookMember(input: { email: string; role: AccessRole }) {
+    await fetch(`/api/notebooks/${notebook.id}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }).then(assertOk);
+    await onChanged();
+  }
+
+  async function updateNotebookMemberRole(member: ShareMember, role: AccessRole) {
+    await addNotebookMember({ email: member.email, role });
+  }
+
+  async function removeMember(member: ShareMember) {
+    await removeNotebookMember(notebook.id, member.userId);
+    await onChanged();
+  }
+
   return (
-    <ModalFrame>
-      <div className="space-y-5">
-        <div>
-          <h2 className="text-lg font-semibold text-white">Share notebook</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-400">{notebook.name}</p>
+    <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-slate-500">Notebook</p>
+            <div className="mt-1 flex min-w-0 items-center gap-3">
+              <span className="size-3 shrink-0" style={{ backgroundColor: notebook.color }} />
+              <h1 className="min-w-0 truncate text-2xl font-semibold text-slate-950">{notebook.name}</h1>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {canEdit ? <button type="button" onClick={() => renameNotebook(notebook)} className="h-9 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:border-slate-500">Rename</button> : null}
+            {canManage ? <button type="button" onClick={() => deleteNotebook(notebook)} className="h-9 border border-rose-200 bg-white px-3 text-sm font-medium text-rose-700 hover:bg-rose-50">Delete</button> : null}
+          </div>
         </div>
-        {canManage ? (
-          <ShareForm
-            label="User email"
-            submitLabel="Share"
-            dark
-            onSubmit={async ({ email, role }) => {
-              await fetch(`/api/notebooks/${notebook.id}/members`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email, role }),
-              }).then(assertOk);
-              await onChanged();
-            }}
-          />
-        ) : null}
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-slate-200">Notebook-only members</h3>
-          <MemberList members={notebook.members} dark emptyText="No notebook-only members." onRemove={canManage ? async (member) => {
-            await removeNotebookMember(notebook.id, member.userId);
-            await onChanged();
-          } : undefined} />
+
+        <div className="grid gap-4 md:grid-cols-4">
+          <NotebookStat label="Pages" value={notebook.pages.length.toLocaleString()} />
+          <NotebookStat label="Attachments" value={attachmentCount.toLocaleString()} />
+          <NotebookStat label="Storage" value={formatBytes(attachmentBytes)} />
+          <NotebookStat label="Members" value={memberCount.toLocaleString()} />
         </div>
-        <div className="flex justify-end">
-          <button onClick={onCancel} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">Close</button>
+
+        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <section className="border border-slate-200 bg-white p-4">
+            <div className="mb-4 flex items-center gap-2">
+              <Users size={17} className="text-slate-500" />
+              <h2 className="text-base font-semibold text-slate-950">Notebook access</h2>
+            </div>
+            <NotebookAccessList members={notebook.members} notebookOwnerId={notebook.ownerId} canManage={canManage} onRoleChange={updateNotebookMemberRole} onRemove={removeMember} />
+          </section>
+
+          <aside className="space-y-6">
+            <section className="border border-slate-200 bg-white p-4">
+              <h2 className="text-base font-semibold text-slate-950">Share notebook</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-500">Add a group member and choose their notebook role.</p>
+              <div className="mt-4">
+                {canManage ? <ShareForm label="User email" submitLabel="Share" onSubmit={addNotebookMember} /> : <p className="text-sm text-slate-500">Only notebook owners can manage sharing.</p>}
+              </div>
+            </section>
+
+            <section className="border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500">
+              <h2 className="text-base font-semibold text-slate-950">Details</h2>
+              <dl className="mt-3 space-y-2">
+                <div className="flex justify-between gap-3"><dt>Created</dt><dd className="text-right text-slate-700">{formatDateTime(notebook.createdAt)}</dd></div>
+                <div className="flex justify-between gap-3"><dt>Updated</dt><dd className="text-right text-slate-700">{formatDateTime(notebook.updatedAt)}</dd></div>
+                <div className="flex justify-between gap-3"><dt>Your role</dt><dd className="text-right capitalize text-slate-700">{notebook.accessRole}</dd></div>
+              </dl>
+            </section>
+          </aside>
         </div>
       </div>
-    </ModalFrame>
+    </section>
+  );
+}
+
+function NotebookStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border border-slate-200 bg-white p-4">
+      <p className="text-sm text-slate-500">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-slate-950">{value}</p>
+    </div>
+  );
+}
+
+function NotebookAccessList({ members, notebookOwnerId, canManage, onRoleChange, onRemove }: { members: ShareMember[]; notebookOwnerId: string; canManage: boolean; onRoleChange: (member: ShareMember, role: AccessRole) => Promise<void>; onRemove: (member: ShareMember) => Promise<void> }) {
+  if (!members.length) return <p className="text-sm text-slate-500">No members have access yet.</p>;
+  return (
+    <div className="space-y-2">
+      {members.map((member) => {
+        const isNotebookOwner = member.userId === notebookOwnerId;
+        return (
+        <div key={member.userId} className="grid gap-3 border border-slate-200 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_140px_36px] sm:items-center">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-slate-950">{member.name}</p>
+            <p className="truncate text-xs text-slate-500">{member.email}</p>
+          </div>
+          {canManage ? (
+            <select value={member.role} onChange={(event) => void onRoleChange(member, event.target.value as AccessRole)} disabled={isNotebookOwner} className="h-9 border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none focus:border-cyan-600 disabled:bg-slate-50 disabled:text-slate-500">
+              <option value="owner">Owner</option>
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+            </select>
+          ) : (
+            <span className="text-sm capitalize text-slate-600">{member.role}</span>
+          )}
+          {canManage && !isNotebookOwner ? (
+            <button type="button" onClick={() => void onRemove(member)} className="grid size-9 place-items-center border border-slate-200 text-slate-500 hover:bg-slate-100" title="Remove access">
+              <X size={14} />
+            </button>
+          ) : null}
+        </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -2226,31 +2313,6 @@ function ShareForm({ label, submitLabel, dark = false, onSubmit }: { label: stri
       </div>
       {error ? <p className={`text-sm ${dark ? "text-rose-300" : "text-rose-600"}`}>{error}</p> : null}
     </form>
-  );
-}
-
-function MemberList({ members, emptyText, dark = false, onRemove }: { members: ShareMember[]; emptyText: string; dark?: boolean; onRemove?: (member: ShareMember) => Promise<void> }) {
-  if (!members.length) return <p className={`text-sm ${dark ? "text-slate-400" : "text-slate-500"}`}>{emptyText}</p>;
-  return (
-    <div className="space-y-2">
-      {members.map((member) => (
-        <div key={member.userId} className={`flex items-center justify-between gap-3 border p-2 ${dark ? "border-white/10 bg-slate-950" : "border-slate-200 bg-white"}`}>
-          <div className="min-w-0">
-            <p className={`truncate text-sm font-medium ${dark ? "text-slate-100" : "text-slate-950"}`}>{member.name}</p>
-            <p className={`truncate text-xs ${dark ? "text-slate-500" : "text-slate-500"}`}>{member.email} · {member.role}</p>
-          </div>
-          {onRemove ? (
-            <button
-              onClick={() => void onRemove(member)}
-              className={`grid size-7 shrink-0 place-items-center border ${dark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-slate-200 text-slate-500 hover:bg-slate-100"}`}
-              title="Remove access"
-            >
-              <X size={14} />
-            </button>
-          ) : null}
-        </div>
-      ))}
-    </div>
   );
 }
 

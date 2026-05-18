@@ -2242,7 +2242,7 @@ function NotebookAccessList({ members, notebookOwnerId, canManage, onRoleChange,
             <p className="truncate text-xs text-slate-500">{member.email}</p>
           </div>
           {canManage ? (
-            <select value={member.role} onChange={(event) => void onRoleChange(member, event.target.value as AccessRole)} disabled={isNotebookOwner} className="h-9 border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none focus:border-cyan-600 disabled:bg-slate-50 disabled:text-slate-500">
+            <select value={member.role} onChange={(event) => void onRoleChange(member, event.target.value as AccessRole)} disabled={isNotebookOwner} className="h-9 cursor-pointer border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500">
               <option value="owner">Owner</option>
               <option value="editor">Editor</option>
               <option value="viewer">Viewer</option>
@@ -2300,7 +2300,7 @@ function ShareForm({ label, submitLabel, dark = false, onSubmit }: { label: stri
         <select
           value={role}
           onChange={(event) => setRole(event.target.value as AccessRole)}
-          className={`h-9 flex-1 border px-2 text-sm outline-none ${dark ? "border-white/10 bg-slate-950 text-white" : "border-slate-300 bg-white text-slate-950"}`}
+          className={`h-9 flex-1 cursor-pointer border px-2 text-sm outline-none ${dark ? "border-white/10 bg-slate-950 text-white" : "border-slate-300 bg-white text-slate-950"}`}
         >
           <option value="editor">Editor</option>
           <option value="viewer">Viewer</option>

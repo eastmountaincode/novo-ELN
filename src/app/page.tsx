@@ -18,7 +18,6 @@ import {
   Flag,
   FileSpreadsheet,
   FileText,
-  FlaskConical,
   GripVertical,
   Home as HomeIcon,
   Image as ImageIcon,
@@ -865,7 +864,9 @@ export default function Home() {
         <form onSubmit={handleAuth} className="w-full max-w-sm border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-6">
             <div className="mb-4 flex items-center gap-3">
-              <div className="grid size-10 place-items-center bg-slate-950 text-cyan-300"><FlaskConical size={22} /></div>
+              <div className="grid size-10 place-items-center border border-slate-200 bg-white">
+                <img src="/novo-n-mark.png" alt="Novo" className="size-7 object-contain brightness-0" />
+              </div>
               <div>
                 <p className="text-xs font-semibold text-slate-500">Novo</p>
                 <h1 className="text-xl font-semibold">{authMode === "register" ? "Create an account" : "Welcome back"}</h1>

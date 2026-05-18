@@ -1662,7 +1662,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
               }}
               className="novo-wordmark sidebar-wide min-w-0 cursor-pointer select-none px-1 py-1 text-6xl leading-none tracking-normal text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
               aria-label="Go to home"
-              title="Home"
+              title="Overview"
             >
               novo
             </div>
@@ -1693,9 +1693,9 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
 
       <div className="overflow-y-auto scroll-contained py-3">
         <div className={`mb-3 ${sidebarCollapsed ? "px-3" : "px-4"}`}>
-          <button onClick={openHome} className={`flex w-full min-w-0 items-center overflow-hidden py-2 text-left text-sm ${sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"} ${activeView === "home" ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5"}`} title="Home">
+          <button onClick={openHome} className={`flex w-full min-w-0 items-center overflow-hidden py-2 text-left text-sm ${sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"} ${activeView === "home" ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5"}`} title="Overview">
             <HomeIcon size={16} className="shrink-0" />
-            <span className="sidebar-wide min-w-0 truncate font-medium">Home</span>
+            <span className="sidebar-wide min-w-0 truncate font-medium">Overview</span>
           </button>
         </div>
         <SidebarSection label="My Notebooks" collapsed={myNotebooksCollapsed} onToggle={() => setMyNotebooksCollapsed((current) => !current)} onAdd={() => createNewNotebook(workspaceProject?.id)} />
@@ -2226,8 +2226,7 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8">
-          <p className="text-xs font-semibold text-slate-500">Home</p>
-          <h1 className="mt-1 text-2xl font-semibold text-slate-950">Overview</h1>
+          <h1 className="text-2xl font-semibold text-slate-950">Overview</h1>
         </div>
 
         <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">

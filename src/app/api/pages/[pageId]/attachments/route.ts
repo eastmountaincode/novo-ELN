@@ -30,16 +30,23 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, bytes);
 
-  const attachmentId = createAttachment({
-    userId: user.id,
-    pageId,
-    originalName: file.name || safeName,
-    mimeType: file.type || "application/octet-stream",
-    size: bytes.length,
-    storageKey,
-    blockType,
-    previewText: attachmentPreviewText(blockType, "upload"),
-  });
+  let attachmentId: string;
+  try {
+    attachmentId = createAttachment({
+      userId: user.id,
+      pageId,
+      originalName: file.name || safeName,
+      mimeType: file.type || "application/octet-stream",
+      size: bytes.length,
+      storageKey,
+      blockType,
+      previewText: attachmentPreviewText(blockType, "upload"),
+    });
+  } catch (error) {
+    await fs.rm(absolutePath, { force: true });
+    const message = error instanceof Error ? error.message : "Could not attach file";
+    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : 400 });
+  }
 
   const createdAt = new Date().toISOString();
   const attachment: Attachment = {

@@ -69,6 +69,7 @@ type RichTextEditorProps = {
   onInlineAttachmentInserted: (attachment: Attachment, body: string) => void;
   openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void;
   openPresentation: (attachment: InlineAttachmentAttrs) => void;
+  readOnly?: boolean;
 };
 
 const spreadsheetAccept = ".csv,.tsv,.xls,.xlsx,.xlsb,.ods";
@@ -103,9 +104,9 @@ export function attachmentToInlineAttrs(attachment: Attachment): InlineAttachmen
   };
 }
 
-export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation }: RichTextEditorProps) {
+export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, readOnly = false }: RichTextEditorProps) {
   const lastPageId = useRef(pageId);
-  const AttachmentCard = useMemo(() => createAttachmentCardExtension({ openSpreadsheet, openPresentation }), [openSpreadsheet, openPresentation]);
+  const AttachmentCard = useMemo(() => createAttachmentCardExtension({ openSpreadsheet, openPresentation, readOnly }), [openPresentation, openSpreadsheet, readOnly]);
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -131,18 +132,24 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       AttachmentCard,
     ],
     content: bodyToEditorDocument(value),
+    editable: !readOnly,
     editorProps: {
       attributes: {
         class: "rich-text-surface min-h-[460px] outline-none",
       },
     },
     onUpdate: ({ editor: activeEditor }) => {
-      onChange(editorDocumentToBody(activeEditor.getJSON()));
+      if (!readOnly) onChange(editorDocumentToBody(activeEditor.getJSON()));
     },
     onBlur: ({ editor: activeEditor }) => {
-      onBlur(editorDocumentToBody(activeEditor.getJSON()));
+      if (!readOnly) onBlur(editorDocumentToBody(activeEditor.getJSON()));
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     if (!editor) return;
@@ -165,7 +172,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   }
 
   function setLink() {
-    if (!editor) return;
+    if (!editor || readOnly) return;
     const previousUrl = editor.getAttributes("link").href as string | undefined;
     const url = window.prompt("Link URL", previousUrl ?? "");
     if (url === null) return;
@@ -177,7 +184,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   }
 
   async function insertInlineFile(blockType: BlockType, accept: string) {
-    if (!editor) return;
+    if (!editor || readOnly) return;
     const file = await pickFile(accept);
     if (!file) return;
     const attachment = await uploadInlineFile(file, blockType);
@@ -188,7 +195,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   }
 
   function insertAttachmentCard(attrs: InlineAttachmentAttrs, position?: number) {
-    if (!editor) return;
+    if (!editor || readOnly) return;
     const content = { type: "attachmentCard", attrs };
     if (typeof position === "number") {
       editor.chain().focus().insertContentAt(position, content).run();
@@ -201,13 +208,13 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   }
 
   function handleEditorDragOver(event: DragEvent<HTMLDivElement>) {
-    if (!hasInlineAttachmentPayload(event.dataTransfer)) return;
+    if (readOnly || !hasInlineAttachmentPayload(event.dataTransfer)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
   }
 
   function handleEditorDrop(event: DragEvent<HTMLDivElement>) {
-    if (!editor) return;
+    if (!editor || readOnly) return;
     const attrs = parseInlineAttachmentDrag(event.dataTransfer);
     if (!attrs) return;
     event.preventDefault();
@@ -218,7 +225,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] border border-slate-300 bg-white">
-      <div className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
+      {!readOnly ? <div className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
         <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
         <ToolbarButton active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()} label="Italic"><Italic size={15} /></ToolbarButton>
         <ToolbarButton active={editor.isActive("underline")} onClick={() => editor.chain().focus().toggleUnderline().run()} label="Underline"><UnderlineIcon size={15} /></ToolbarButton>
@@ -245,15 +252,15 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
         <ToolbarDivider />
         <ToolbarButton onClick={() => editor.chain().focus().undo().run()} label="Undo"><Undo2 size={15} /></ToolbarButton>
         <ToolbarButton onClick={() => editor.chain().focus().redo().run()} label="Redo"><Redo2 size={15} /></ToolbarButton>
-      </div>
-      <div className="min-h-0 overflow-y-auto scroll-contained p-4" onDragOverCapture={handleEditorDragOver} onDropCapture={handleEditorDrop}>
+      </div> : null}
+      <div className="min-h-0 overflow-y-auto scroll-contained p-4" onDragOverCapture={readOnly ? undefined : handleEditorDragOver} onDropCapture={readOnly ? undefined : handleEditorDrop}>
         <EditorContent editor={editor} />
       </div>
     </div>
   );
 }
 
-function createAttachmentCardExtension(actions: { openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void }) {
+function createAttachmentCardExtension(actions: { openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; readOnly: boolean }) {
   return Node.create({
     name: "attachmentCard",
     group: "block",
@@ -308,11 +315,12 @@ function parseInlineAttachmentDrag(dataTransfer: DataTransfer): InlineAttachment
   }
 }
 
-function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet, openPresentation }: NodeViewProps & { openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void }) {
+function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet, openPresentation, readOnly }: NodeViewProps & { openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; readOnly: boolean }) {
   const attrs = node.attrs as InlineAttachmentAttrs;
   const kind = normalizeKind(attrs.kind);
-  const canEdit = kind === "sheet";
+  const canEdit = kind === "sheet" && !readOnly;
   const canPreview = kind === "slides";
+  const dragHandlers = readOnly ? {} : { onDragStart: startInlineAttachmentDrag, onDragEnd: clearInlineAttachmentDragState };
   const updatedAt = attrs.updatedAt || attrs.createdAt;
   const imageWrapperRef = useRef<HTMLDivElement>(null);
   const pdfWrapperRef = useRef<HTMLDivElement>(null);
@@ -375,7 +383,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
     }
 
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
+      <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
         <div
           ref={imageWrapperRef}
           className={`group/inline-image relative inline-block max-w-full align-top ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
@@ -388,22 +396,22 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
             className="block h-auto max-h-[640px] max-w-full object-contain"
             draggable={false}
           />
-          <button
+          {!readOnly ? <button
             type="button"
             onPointerDown={startImageResize}
             tabIndex={-1}
             className="absolute -right-2 -top-2 grid size-4 cursor-ew-resize place-items-center border border-cyan-500 bg-white opacity-0 shadow-sm transition-opacity group-hover/inline-image:opacity-100 focus:opacity-100"
             title="Resize image"
             aria-label="Resize image"
-          />
-          <button
+          /> : null}
+          {!readOnly ? <button
             type="button"
             onPointerDown={startImageResize}
             tabIndex={-1}
             className="absolute -bottom-2 -right-2 grid size-4 cursor-ew-resize place-items-center border border-cyan-500 bg-white opacity-0 shadow-sm transition-opacity group-hover/inline-image:opacity-100 focus:opacity-100"
             title="Resize image"
             aria-label="Resize image"
-          />
+          /> : null}
         </div>
       </NodeViewWrapper>
     );
@@ -427,16 +435,16 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
     }
 
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
+      <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
         <div
           ref={pdfWrapperRef}
           className={`group/pdf-preview relative max-w-full border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
           style={{ width: `${displayWidth}px` }}
         >
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move PDF" aria-label="Move PDF">
+            {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move PDF" aria-label="Move PDF">
               <GripVertical size={16} />
-            </button>
+            </button> : null}
             <FileText size={17} className="shrink-0 text-rose-600" />
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
@@ -448,22 +456,22 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
             className="block w-full bg-white"
             style={{ height: `${previewHeight}px` }}
           />
-          <button
+          {!readOnly ? <button
             type="button"
             onPointerDown={startPdfResize}
             tabIndex={-1}
             className="absolute -right-2 -top-2 grid size-4 cursor-ew-resize place-items-center border border-cyan-500 bg-white opacity-0 shadow-sm transition-opacity group-hover/pdf-preview:opacity-100 focus:opacity-100"
             title="Resize PDF preview"
             aria-label="Resize PDF preview"
-          />
-          <button
+          /> : null}
+          {!readOnly ? <button
             type="button"
             onPointerDown={startPdfResize}
             tabIndex={-1}
             className="absolute -bottom-2 -right-2 grid size-4 cursor-ew-resize place-items-center border border-cyan-500 bg-white opacity-0 shadow-sm transition-opacity group-hover/pdf-preview:opacity-100 focus:opacity-100"
             title="Resize PDF preview"
             aria-label="Resize PDF preview"
-          />
+          /> : null}
         </div>
       </NodeViewWrapper>
     );
@@ -471,16 +479,16 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
 
   if (kind === "sheet") {
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
+      <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
         <div className={`max-w-3xl border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move spreadsheet" aria-label="Move spreadsheet">
+            {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move spreadsheet" aria-label="Move spreadsheet">
               <GripVertical size={16} />
-            </button>
+            </button> : null}
             <FileSpreadsheet size={17} className="shrink-0 text-emerald-700" />
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
-            <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs, handleSpreadsheetSaved)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Edit3 size={13} />Edit</button>
+            {canEdit ? <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs, handleSpreadsheetSaved)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Edit3 size={13} />Edit</button> : null}
             <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Download size={13} />Download</a>
           </div>
           {sheetPreview ? (
@@ -518,10 +526,10 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
 
   if (kind === "slides") {
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
+      <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
         <div className={`max-w-3xl border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move presentation" aria-label="Move presentation"><GripVertical size={16} /></button>
+            {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move presentation" aria-label="Move presentation"><GripVertical size={16} /></button> : null}
             <Presentation size={17} className="shrink-0 text-orange-600" />
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
@@ -535,7 +543,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
   }
 
   return (
-    <NodeViewWrapper className="my-3" onDragStart={startInlineAttachmentDrag} onDragEnd={clearInlineAttachmentDragState}>
+    <NodeViewWrapper className="my-3" {...dragHandlers}>
       <div data-attachment-card="true" className="max-w-lg border border-slate-300 border-l-cyan-500 border-l-4 bg-slate-50 px-3 py-2.5 text-sm">
         <div className="flex items-start gap-2.5">
           {renderKindIcon(kind)}

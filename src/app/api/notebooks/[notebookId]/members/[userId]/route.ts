@@ -12,6 +12,6 @@ export async function DELETE(_request: Request, context: { params: Promise<{ not
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to remove notebook member.";
-    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : 400 });
+    return NextResponse.json({ error: message }, { status: message === "Forbidden" || message === "Only owners can manage sharing." ? 403 : 400 });
   }
 }

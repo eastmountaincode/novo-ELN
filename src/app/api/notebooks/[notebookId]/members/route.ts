@@ -16,6 +16,6 @@ export async function POST(request: Request, context: { params: Promise<{ notebo
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to share notebook.";
-    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : message === "User not found." ? 404 : 400 });
+    return NextResponse.json({ error: message }, { status: message === "Forbidden" || message === "Only owners can manage sharing." ? 403 : message === "User not found." ? 404 : 400 });
   }
 }

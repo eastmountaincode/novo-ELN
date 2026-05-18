@@ -382,6 +382,7 @@ export default function Home() {
   const selectedProject = workspace?.projects.find((project) => project.id === selectedProjectId) ?? workspace?.projects[0];
   const selectedNotebook = selectedProject?.notebooks.find((notebook) => notebook.id === selectedNotebookId) ?? selectedProject?.notebooks[0];
   const selectedPage = selectedNotebook?.pages.find((page) => page.id === selectedPageId) ?? selectedNotebook?.pages[0];
+  const selectedNotebookCanEdit = canEditNotebook(workspace?.user, selectedNotebook);
 
   const recentPages = useMemo(() => {
     return (
@@ -567,7 +568,7 @@ export default function Home() {
   }
 
   function patchSelectedPage(patch: Partial<PageEntry>) {
-    if (!workspace || !selectedPage) return;
+    if (!workspace || !selectedPage || !selectedNotebookCanEdit) return;
     const pageId = selectedPage.id;
     setWorkspace((current) => current ? {
       ...current,
@@ -582,7 +583,7 @@ export default function Home() {
   }
 
   async function savePage(patch: { title?: string; body?: string; status?: PageStatus }) {
-    if (!selectedPage) return;
+    if (!selectedPage || !selectedNotebookCanEdit) return;
     const pageId = selectedPage.id;
     setSaving("Saving");
     const response = await fetch(`/api/pages/${pageId}`, {
@@ -595,7 +596,7 @@ export default function Home() {
   }
 
   async function setSelectedPageTags(tags: string[]) {
-    if (!selectedPage) return;
+    if (!selectedPage || !selectedNotebookCanEdit) return;
     const normalizedTags = normalizeTagList(tags);
     patchSelectedPage({ tags: normalizedTags });
     setSaving("Saving tags");
@@ -714,7 +715,7 @@ export default function Home() {
   }
 
   async function confirmPageDelete() {
-    if (!pagePendingDelete || !selectedNotebook || deletingPage) return;
+    if (!pagePendingDelete || !selectedNotebook || !selectedNotebookCanEdit || deletingPage) return;
     const remainingPages = selectedNotebook.pages.filter((page) => page.id !== pagePendingDelete.id);
     const deletedIndex = selectedNotebook.pages.findIndex((page) => page.id === pagePendingDelete.id);
     const nextPage = remainingPages[Math.min(Math.max(deletedIndex, 0), remainingPages.length - 1)];
@@ -850,7 +851,7 @@ export default function Home() {
   }
 
   async function createNewPage() {
-    if (!selectedNotebook || creatingPage) return;
+    if (!selectedNotebook || !selectedNotebookCanEdit || creatingPage) return;
     setCreatingPage(true);
     try {
       const response = await fetch("/api/pages", {
@@ -869,7 +870,7 @@ export default function Home() {
   }
 
   async function uploadAttachment(file: File | undefined) {
-    if (!file || !selectedPage) return;
+    if (!file || !selectedPage || !selectedNotebookCanEdit) return;
     const form = new FormData();
     form.set("file", file);
     setSaving("Uploading");
@@ -879,7 +880,7 @@ export default function Home() {
   }
 
   async function deletePageAttachment(attachment: Attachment) {
-    if (!selectedPage) return;
+    if (!selectedPage || !selectedNotebookCanEdit) return;
     const response = await fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" });
     if (!response.ok) {
       setSaving("Delete failed");
@@ -890,7 +891,7 @@ export default function Home() {
   }
 
   async function uploadInlineFile(file: File, blockType: BlockType) {
-    if (!selectedPage) return null;
+    if (!selectedPage || !selectedNotebookCanEdit) return null;
     const pageId = selectedPage.id;
     const form = new FormData();
     form.set("file", file);
@@ -904,7 +905,7 @@ export default function Home() {
   }
 
   function markInlineAttachmentInserted(attachment: Attachment, body: string) {
-    if (!selectedPage) return;
+    if (!selectedPage || !selectedNotebookCanEdit) return;
     const pageId = selectedPage.id;
     setWorkspace((current) => current ? {
       ...current,
@@ -1081,6 +1082,7 @@ export default function Home() {
               selectPage={selectPage}
               createNewPage={createNewPage}
               creatingPage={creatingPage}
+              canEdit={selectedNotebookCanEdit}
               deletePage={requestPageDelete}
             />
 
@@ -1093,6 +1095,7 @@ export default function Home() {
                 selectedProject={selectedProject}
                 selectedNotebook={selectedNotebook}
                 saving={saving}
+                canEdit={selectedNotebookCanEdit}
                 uploadInlineFile={uploadInlineFile}
                 onInlineAttachmentInserted={markInlineAttachmentInserted}
                 openSpreadsheet={openSpreadsheetModal}
@@ -1560,6 +1563,8 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
   function renderNotebook(notebook: Notebook) {
     const selected = selectedNotebook?.id === notebook.id;
     const color = projectColor(notebook);
+    const canEditNotebookActions = canEditNotebook(workspace.user, notebook);
+    const canDeleteNotebookAction = notebook.accessRole === "owner";
     return (
       <div key={notebook.id} className={sidebarCollapsed ? "px-3" : "px-4"}>
         <div
@@ -1588,7 +1593,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
                 <Settings size={15} className="shrink-0 text-slate-400" />
                 <span>Settings</span>
               </button>
-              <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
+              {canEditNotebookActions ? <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
                 <span className="flex min-w-0 items-center gap-2">
                   <Palette size={15} className="shrink-0 text-slate-400" />
                   <span>Color</span>
@@ -1600,15 +1605,15 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
                   className="size-6 cursor-pointer border-0 bg-transparent p-0"
                   title="Notebook color"
                 />
-              </label>
-              <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">
+              </label> : null}
+              {canEditNotebookActions ? <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">
                 <Pencil size={15} className="shrink-0 text-slate-400" />
                 <span>Rename</span>
-              </button>
-              <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">
+              </button> : null}
+              {canDeleteNotebookAction ? <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">
                 <Trash2 size={15} className="shrink-0 text-rose-400" />
                 <span>Delete</span>
-              </button>
+              </button> : null}
             </div>
           ) : null}
         </div>
@@ -1708,7 +1713,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
   );
 }
 
-function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, creatingPage, deletePage }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; creatingPage: boolean; deletePage: (page: PageEntry) => void }) {
+function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, creatingPage, canEdit, deletePage }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; creatingPage: boolean; canEdit: boolean; deletePage: (page: PageEntry) => void }) {
   const pages = useMemo(() => selectedNotebook?.pages ?? [], [selectedNotebook]);
   const [sortKey, setSortKey] = useState<PageSortKey>("updated");
   const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
@@ -1821,7 +1826,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
           </div>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <button onClick={createNewPage} disabled={creatingPage || !selectedNotebook} className="inline-flex h-8 items-center gap-1.5 border bg-white px-2.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-60" style={{ borderColor: color, color }}>
+          <button onClick={createNewPage} disabled={creatingPage || !selectedNotebook || !canEdit} className="inline-flex h-8 items-center gap-1.5 border bg-white px-2.5 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60" style={{ borderColor: color, color }} title={canEdit ? "Create page" : "Viewer access cannot create pages"}>
             {creatingPage ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
             {creatingPage ? "Creating" : "Page"}
           </button>
@@ -2007,7 +2012,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
               menuOpen={pageMenuId === page.id}
               setMenuOpen={(open) => setPageMenuId(open ? page.id : null)}
               onClick={() => selectedProject && selectedNotebook && selectPage(selectedProject, selectedNotebook, page)}
-              onDelete={() => deletePage(page)}
+              onDelete={canEdit ? () => deletePage(page) : undefined}
             />
           ))}
           {sortedPages.length === 0 ? <p className="p-3 text-sm text-slate-500">{filterActive ? "No pages match these filters." : "No pages yet."}</p> : null}
@@ -2250,7 +2255,7 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
 }
 
 function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteNotebook, onChanged }: { notebook: Notebook; user: AppUser; members: AppUser[]; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; onChanged: () => Promise<void> }) {
-  const canManage = user.role === "admin" || notebook.accessRole === "owner";
+  const canManage = notebook.accessRole === "owner";
   const canEdit = canManage || notebook.accessRole === "editor";
   const attachmentCount = notebook.pages.reduce((total, page) => total + page.attachments.length, 0);
   const attachmentBytes = notebook.pages.reduce((total, page) => total + page.attachments.reduce((sum, attachment) => sum + attachment.size, 0), 0);
@@ -2315,7 +2320,7 @@ function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteN
               <h2 className="text-base font-semibold text-slate-950">Share notebook</h2>
               <p className="mt-1 text-sm leading-6 text-slate-500">Add a group member and choose their notebook role.</p>
               <div className="mt-4">
-                {canManage ? <ShareForm members={members} existingMembers={notebook.members} submitLabel="Share" onSubmit={addNotebookMember} /> : <p className="text-sm text-slate-500">Only notebook owners can manage sharing.</p>}
+                <ShareForm members={members} existingMembers={notebook.members} submitLabel="Share" disabled={!canManage} disabledReason={!canManage ? "Only notebook owners can share this notebook." : undefined} onSubmit={addNotebookMember} />
               </div>
             </section>
 
@@ -2376,7 +2381,7 @@ function NotebookAccessList({ members, notebookOwnerId, canManage, onRoleChange,
   );
 }
 
-function ShareForm({ members, existingMembers, submitLabel, onSubmit }: { members: AppUser[]; existingMembers: ShareMember[]; submitLabel: string; onSubmit: (input: { email: string; role: AccessRole }) => Promise<void> }) {
+function ShareForm({ members, existingMembers, submitLabel, disabled: disabledByPermission = false, disabledReason, onSubmit }: { members: AppUser[]; existingMembers: ShareMember[]; submitLabel: string; disabled?: boolean; disabledReason?: string; onSubmit: (input: { email: string; role: AccessRole }) => Promise<void> }) {
   const [query, setQuery] = useState("");
   const [selectedMember, setSelectedMember] = useState<AppUser | null>(null);
   const [role, setRole] = useState<AccessRole>("editor");
@@ -2392,7 +2397,7 @@ function ShareForm({ members, existingMembers, submitLabel, onSubmit }: { member
       : availableMembers;
     return filtered.slice(0, 8);
   }, [availableMembers, normalizedQuery]);
-  const disabled = submitting || !selectedMember;
+  const formDisabled = disabledByPermission || submitting || !selectedMember;
 
   function selectMember(member: AppUser) {
     setSelectedMember(member);
@@ -2403,7 +2408,7 @@ function ShareForm({ members, existingMembers, submitLabel, onSubmit }: { member
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled || !selectedMember) return;
+    if (formDisabled || !selectedMember) return;
     setError("");
     setSubmitting(true);
     try {
@@ -2430,14 +2435,15 @@ function ShareForm({ members, existingMembers, submitLabel, onSubmit }: { member
               setSelectedMember(null);
               setFocused(true);
             }}
-            onFocus={() => setFocused(true)}
+            onFocus={() => !disabledByPermission && setFocused(true)}
             onBlur={() => window.setTimeout(() => setFocused(false), 120)}
             type="text"
             autoComplete="off"
+            disabled={disabledByPermission}
             placeholder="Search by name or email"
-            className="h-9 w-full border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-cyan-600"
+            className="h-9 w-full border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
           />
-          {focused ? (
+          {focused && !disabledByPermission ? (
             <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto border border-slate-300 bg-white py-1 shadow-lg">
               {suggestions.map((member) => (
                 <button
@@ -2460,17 +2466,19 @@ function ShareForm({ members, existingMembers, submitLabel, onSubmit }: { member
         <select
           value={role}
           onChange={(event) => setRole(event.target.value as AccessRole)}
-          className="h-9 flex-1 cursor-pointer border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none"
+          disabled={disabledByPermission}
+          className="h-9 flex-1 cursor-pointer border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
         >
           <option value="editor">Editor</option>
           <option value="viewer">Viewer</option>
           <option value="owner">Owner</option>
         </select>
-        <button disabled={disabled} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-semibold text-white disabled:bg-slate-300">
+        <button disabled={formDisabled} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-semibold text-white disabled:bg-slate-300">
           {submitting ? <Loader2 size={15} className="animate-spin" /> : null}
           {submitting ? "Sharing..." : submitLabel}
         </button>
       </div>
+      {disabledReason ? <p className="text-xs text-slate-500">{disabledReason}</p> : null}
       {selectedMember ? <p className="text-xs text-slate-500">Sharing with {selectedMember.name} ({selectedMember.email})</p> : null}
       {error ? <p className="text-sm text-rose-600">{error}</p> : null}
     </form>
@@ -2951,7 +2959,7 @@ function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCa
   );
 }
 
-function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, setPageTags, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; setPageTags: (tags: string[]) => Promise<void>; openFilePicker: () => void }) {
+function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, setPageTags, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; canEdit: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; setPageTags: (tags: string[]) => Promise<void>; openFilePicker: () => void }) {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const attachmentCount = page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
@@ -2962,12 +2970,14 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
       <header className="border-b border-slate-200 px-6 py-4">
         <div className="mb-2 flex items-center gap-2 text-sm text-slate-500"><span>{selectedNotebook?.name}</span>{saving ? <span className="ml-2 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}</div>
         <div className="flex items-center gap-3">
-          <input value={page.title} onChange={(event) => patchSelectedPage({ title: event.target.value })} onBlur={(event) => void savePage({ title: event.target.value })} className="min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none" />
+          <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
         </div>
-        <PageTagsBar tags={page.tags} setPageTags={setPageTags} />
+        <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} />
         <PageStatusRow
           status={page.status}
+          canEdit={canEdit}
           setStatus={(status) => {
+            if (!canEdit) return;
             patchSelectedPage({ status });
             void savePage({ status });
           }}
@@ -2975,6 +2985,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
       </header>
       <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-white px-6 pb-6 pt-4">
         <RichTextEditor
+          key={`${page.id}-${canEdit ? "edit" : "read"}`}
           pageId={page.id}
           value={page.body}
           onChange={(body) => patchSelectedPage({ body })}
@@ -2983,6 +2994,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
           onInlineAttachmentInserted={onInlineAttachmentInserted}
           openSpreadsheet={openSpreadsheet}
           openPresentation={openPresentation}
+          readOnly={!canEdit}
         />
         <div className="mt-4 border border-slate-200 bg-slate-50 p-2">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2997,12 +3009,12 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
               <span>Attachments</span>
               <span className="bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">{attachmentLabel}</span>
             </button>
-            <button onClick={openFilePicker} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100"><Plus size={14} />File</button>
+            {canEdit ? <button onClick={openFilePicker} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100"><Plus size={14} />File</button> : null}
           </div>
           {attachmentsOpen ? (
             page.attachments.length ? (
               <div className="mt-3 grid max-h-80 gap-2 overflow-y-auto scroll-contained pr-1">
-                {page.attachments.map((attachment, index) => <AttachmentRow key={attachment.id} index={index + 1} attachment={attachment} onDelete={() => void deleteAttachment(attachment)} />)}
+                {page.attachments.map((attachment, index) => <AttachmentRow key={attachment.id} index={index + 1} attachment={attachment} canEdit={canEdit} onDelete={() => void deleteAttachment(attachment)} />)}
               </div>
             ) : (
               <p className="mt-3 border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">No files attached yet.</p>
@@ -3014,17 +3026,19 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, uploadInl
   );
 }
 
-function PageTagsBar({ tags, setPageTags }: { tags: string[]; setPageTags: (tags: string[]) => Promise<void> }) {
+function PageTagsBar({ tags, canEdit, setPageTags }: { tags: string[]; canEdit: boolean; setPageTags: (tags: string[]) => Promise<void> }) {
   const [tagInput, setTagInput] = useState("");
   const normalizedTags = useMemo(() => normalizeTagList(tags), [tags]);
 
   function addTagInput() {
+    if (!canEdit) return;
     const nextTags = normalizeTagList([...normalizedTags, tagInput]);
     setTagInput("");
     if (nextTags.length !== normalizedTags.length) void setPageTags(nextTags);
   }
 
   function removeTag(tag: string) {
+    if (!canEdit) return;
     void setPageTags(normalizedTags.filter((candidate) => candidate !== tag));
   }
 
@@ -3045,31 +3059,32 @@ function PageTagsBar({ tags, setPageTags }: { tags: string[]; setPageTags: (tags
       {normalizedTags.map((tag) => (
         <span key={tag} className="inline-flex h-7 items-center gap-1 border border-slate-200 bg-slate-100 px-2 text-sm text-slate-700">
           {tag}
-          <button type="button" onClick={() => removeTag(tag)} className="-mr-1 grid size-5 place-items-center text-slate-400 hover:text-slate-900" aria-label={`Remove ${tag} tag`}>
+          {canEdit ? <button type="button" onClick={() => removeTag(tag)} className="-mr-1 grid size-5 place-items-center text-slate-400 hover:text-slate-900" aria-label={`Remove ${tag} tag`}>
             <X size={13} />
-          </button>
+          </button> : null}
         </span>
       ))}
-      <input
+      {canEdit ? <input
         value={tagInput}
         onChange={(event) => setTagInput(event.target.value)}
         onKeyDown={handleKeyDown}
         onBlur={addTagInput}
         className="h-7 min-w-36 flex-1 border-0 bg-transparent px-1 text-sm text-slate-700 outline-none placeholder:text-slate-400"
         placeholder="Type to add..."
-      />
+      /> : null}
     </div>
   );
 }
 
-function PageStatusRow({ status, setStatus }: { status: PageStatus; setStatus: (status: PageStatus) => void }) {
+function PageStatusRow({ status, canEdit, setStatus }: { status: PageStatus; canEdit: boolean; setStatus: (status: PageStatus) => void }) {
   return (
     <div className="mt-1 flex min-h-8 flex-wrap items-center gap-1.5 text-sm">
       <Flag size={15} className="mr-1 shrink-0 text-slate-400" />
       <select
         value={status}
         onChange={(event) => setStatus(event.target.value as PageStatus)}
-        className="h-8 w-40 cursor-pointer border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500"
+        disabled={!canEdit}
+        className="h-8 w-40 cursor-pointer border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
         aria-label="Page status"
       >
         {PAGE_STATUS_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
@@ -3078,10 +3093,11 @@ function PageStatusRow({ status, setStatus }: { status: PageStatus; setStatus: (
   );
 }
 
-function AttachmentRow({ attachment, index, onDelete }: { attachment: Attachment; index: number; onDelete: () => void }) {
+function AttachmentRow({ attachment, index, canEdit, onDelete }: { attachment: Attachment; index: number; canEdit: boolean; onDelete: () => void }) {
   const Icon = blockIcons[attachment.blockType];
 
   function handleDragStart(event: React.DragEvent<HTMLDivElement>) {
+    if (!canEdit) return;
     event.dataTransfer.effectAllowed = "copy";
     event.dataTransfer.setData(INLINE_ATTACHMENT_DRAG_TYPE, JSON.stringify(attachmentToInlineAttrs(attachment)));
     event.dataTransfer.setData("text/plain", attachment.originalName);
@@ -3089,13 +3105,13 @@ function AttachmentRow({ attachment, index, onDelete }: { attachment: Attachment
 
   return (
     <div
-      draggable
+      draggable={canEdit}
       onDragStart={handleDragStart}
-      className="flex cursor-grab items-center justify-between gap-4 border border-slate-200 bg-white px-3 py-2 active:cursor-grabbing"
-      title="Drag into the note to place this attachment inline"
+      className={`flex items-center justify-between gap-4 border border-slate-200 bg-white px-3 py-2 ${canEdit ? "cursor-grab active:cursor-grabbing" : ""}`}
+      title={canEdit ? "Drag into the note to place this attachment inline" : undefined}
     >
       <div className="flex min-w-0 items-center gap-2">
-        <GripVertical className="shrink-0 text-slate-400" size={15} aria-hidden="true" />
+        {canEdit ? <GripVertical className="shrink-0 text-slate-400" size={15} aria-hidden="true" /> : null}
         <span className="w-5 shrink-0 text-center text-xs font-medium tabular-nums text-slate-400">{index}</span>
         <Icon className="shrink-0 text-slate-500" size={17} />
         <div className="min-w-0">
@@ -3109,7 +3125,7 @@ function AttachmentRow({ attachment, index, onDelete }: { attachment: Attachment
       </div>
       <div className="flex shrink-0 items-center gap-2 text-xs">
         <a href={`/api/attachments/${attachment.id}/download`} className="inline-flex h-8 items-center gap-1 border border-slate-300 bg-white px-2 text-slate-700 hover:bg-slate-100"><Download size={13} />Download</a>
-        <button onClick={onDelete} className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700" title="Delete attachment"><X size={14} /></button>
+        {canEdit ? <button onClick={onDelete} className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700" title="Delete attachment"><X size={14} /></button> : null}
       </div>
     </div>
   );
@@ -3196,6 +3212,11 @@ function clamp(value: number, min: number, max: number) {
 
 function projectColor(project: Pick<Project | Notebook, "color"> | undefined) {
   return normalizeColor(project?.color);
+}
+
+function canEditNotebook(user: AppUser | undefined, notebook: Notebook | undefined) {
+  if (!user || !notebook) return false;
+  return notebook.accessRole === "owner" || notebook.accessRole === "editor";
 }
 
 const PAGE_CARD_TINT_ALPHA = 0.075;

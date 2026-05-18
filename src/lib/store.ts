@@ -995,7 +995,6 @@ function normalizePageStatus(value: unknown): PageStatus {
 }
 
 function getNotebookRole(userId: string, notebookId: string): AccessRole | null {
-  if (isAdmin(userId)) return queryOne(`SELECT id FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`) ? "owner" : null;
   const row = queryOne(`
     SELECT CASE
       WHEN n.owner_id = ${sql(userId)} OR nm.role = 'owner' THEN 'owner'
@@ -1022,7 +1021,6 @@ function assertNotebookManageAccess(userId: string, notebookId: string) {
 }
 
 function assertPageEditAccess(userId: string, pageId: string) {
-  if (isAdmin(userId)) return;
   const row = queryOne(`
     SELECT CASE
       WHEN n.owner_id = ${sql(userId)} OR nm.role = 'owner' THEN 'owner'

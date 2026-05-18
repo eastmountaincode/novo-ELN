@@ -22,6 +22,7 @@ import {
   Home as HomeIcon,
   Image as ImageIcon,
   KeyRound,
+  Loader2,
   MoreHorizontal,
   Notebook as NotebookIcon,
   Palette,
@@ -164,6 +165,8 @@ export default function Home() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [saving, setSaving] = useState("");
+  const [creatingPage, setCreatingPage] = useState(false);
+  const [deletingPage, setDeletingPage] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_MIN_WIDTH);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(0);
@@ -673,17 +676,22 @@ export default function Home() {
   }
 
   async function confirmPageDelete() {
-    if (!pagePendingDelete || !selectedNotebook) return;
+    if (!pagePendingDelete || !selectedNotebook || deletingPage) return;
     const remainingPages = selectedNotebook.pages.filter((page) => page.id !== pagePendingDelete.id);
     const deletedIndex = selectedNotebook.pages.findIndex((page) => page.id === pagePendingDelete.id);
     const nextPage = remainingPages[Math.min(Math.max(deletedIndex, 0), remainingPages.length - 1)];
     const nextPageId = selectedPage?.id === pagePendingDelete.id ? nextPage?.id ?? "" : selectedPage?.id;
-    const response = await fetch(`/api/pages/${pagePendingDelete.id}`, { method: "DELETE" });
-    if (!response.ok) return;
-    setPagePendingDelete(null);
-    if (nextPageId) writePageUrl(nextPageId, "replace");
-    else writeNotebookUrl(selectedNotebook.id, "replace");
-    await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: nextPageId });
+    setDeletingPage(true);
+    try {
+      const response = await fetch(`/api/pages/${pagePendingDelete.id}`, { method: "DELETE" });
+      if (!response.ok) return;
+      setPagePendingDelete(null);
+      if (nextPageId) writePageUrl(nextPageId, "replace");
+      else writeNotebookUrl(selectedNotebook.id, "replace");
+      await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: nextPageId });
+    } finally {
+      setDeletingPage(false);
+    }
   }
 
   async function confirmNotebookDelete() {
@@ -794,17 +802,22 @@ export default function Home() {
   }
 
   async function createNewPage() {
-    if (!selectedNotebook) return;
-    const response = await fetch("/api/pages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notebookId: selectedNotebook.id }),
-    });
-    if (!response.ok) return;
-    const body = (await response.json()) as { pageId: string };
-    setActiveView("project");
-    writePageUrl(body.pageId, "push");
-    await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: body.pageId });
+    if (!selectedNotebook || creatingPage) return;
+    setCreatingPage(true);
+    try {
+      const response = await fetch("/api/pages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notebookId: selectedNotebook.id }),
+      });
+      if (!response.ok) return;
+      const body = (await response.json()) as { pageId: string };
+      setActiveView("project");
+      writePageUrl(body.pageId, "push");
+      await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: body.pageId });
+    } finally {
+      setCreatingPage(false);
+    }
   }
 
   async function uploadAttachment(file: File | undefined) {
@@ -1019,6 +1032,7 @@ export default function Home() {
               setPageMenuId={setPageMenuId}
               selectPage={selectPage}
               createNewPage={createNewPage}
+              creatingPage={creatingPage}
               deletePage={requestPageDelete}
             />
 
@@ -1066,6 +1080,7 @@ export default function Home() {
         {pagePendingDelete ? (
           <PageDeleteModal
             page={pagePendingDelete}
+            deleting={deletingPage}
             onCancel={() => setPagePendingDelete(null)}
             onConfirm={confirmPageDelete}
           />
@@ -1431,7 +1446,7 @@ function NotebookDeleteModal({ notebook, onCancel, onConfirm }: { notebook: Note
   );
 }
 
-function PageDeleteModal({ page, onCancel, onConfirm }: { page: PageEntry; onCancel: () => void; onConfirm: () => void }) {
+function PageDeleteModal({ page, deleting, onCancel, onConfirm }: { page: PageEntry; deleting: boolean; onCancel: () => void; onConfirm: () => void }) {
   return (
     <ModalFrame>
       <h2 className="text-lg font-semibold text-white">Delete page?</h2>
@@ -1439,8 +1454,11 @@ function PageDeleteModal({ page, onCancel, onConfirm }: { page: PageEntry; onCan
         This will delete <span className="font-semibold text-white">{page.title || "Untitled page"}</span>, including its attachment records. This cannot be undone.
       </p>
       <div className="mt-5 flex justify-end gap-2">
-        <button onClick={onCancel} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">Cancel</button>
-        <button onClick={onConfirm} className="h-9 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400">Delete page</button>
+        <button onClick={onCancel} disabled={deleting} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
+        <button onClick={onConfirm} disabled={deleting} className="inline-flex h-9 items-center gap-2 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200">
+          {deleting ? <Loader2 size={15} className="animate-spin" /> : null}
+          {deleting ? "Deleting..." : "Delete page"}
+        </button>
       </div>
     </ModalFrame>
   );
@@ -1629,7 +1647,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
   );
 }
 
-function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, deletePage }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; deletePage: (page: PageEntry) => void }) {
+function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, creatingPage, deletePage }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; creatingPage: boolean; deletePage: (page: PageEntry) => void }) {
   const pages = useMemo(() => selectedNotebook?.pages ?? [], [selectedNotebook]);
   const [sortKey, setSortKey] = useState<PageSortKey>("updated");
   const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
@@ -1742,7 +1760,10 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
           </div>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <button onClick={createNewPage} className="inline-flex h-8 items-center gap-1.5 border bg-white px-2.5 text-sm font-medium hover:bg-slate-50" style={{ borderColor: color, color }}><Plus size={14} />Page</button>
+          <button onClick={createNewPage} disabled={creatingPage || !selectedNotebook} className="inline-flex h-8 items-center gap-1.5 border bg-white px-2.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-60" style={{ borderColor: color, color }}>
+            {creatingPage ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            {creatingPage ? "Creating" : "Page"}
+          </button>
           <div className="flex items-center gap-2">
             <div ref={sortOptionsRef} data-transient-menu="true" className="relative">
               <button

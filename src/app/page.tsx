@@ -206,6 +206,16 @@ export default function Home() {
     if (urlMode !== "none") writeNotebookUrl(selection.notebook.id, urlMode);
   }, []);
 
+  const applyNotebookSettingsSelection = useCallback((selection: NotebookSelection, urlMode: "none" | "push" | "replace" = "none") => {
+    setPageMenuId(null);
+    setActiveView("notebookSettings");
+    setSelectedProjectId(selection.project.id);
+    setSelectedNotebookId(selection.notebook.id);
+    setSelectedPageId("");
+    setExpandedProjectIds((current) => new Set(current).add(selection.project.id));
+    if (urlMode !== "none") writeNotebookSettingsUrl(selection.notebook.id, urlMode);
+  }, []);
+
   const applyProjectSelection = useCallback((selection: ProjectSelection, urlMode: "none" | "push" | "replace" = "none") => {
     setPageMenuId(null);
     setActiveView("projectHome");
@@ -217,6 +227,12 @@ export default function Home() {
   }, []);
 
   const selectFirstAvailable = useCallback((data: Workspace) => {
+    const linkedSettingsNotebook = findNotebookSelection(data, readNotebookSettingsIdFromUrl());
+    if (linkedSettingsNotebook) {
+      applyNotebookSettingsSelection(linkedSettingsNotebook, "replace");
+      return;
+    }
+
     const linkedSelection = findPageSelection(data, readPageIdFromUrl());
     if (linkedSelection) {
       applyPageSelection(linkedSelection, "replace");
@@ -235,7 +251,7 @@ export default function Home() {
       return;
     }
 
-    if (readPageIdFromUrl() || readNotebookIdFromUrl() || readProjectIdFromUrl()) writePageUrl(null, "replace");
+    if (readNotebookSettingsIdFromUrl() || readPageIdFromUrl() || readNotebookIdFromUrl() || readProjectIdFromUrl()) writePageUrl(null, "replace");
     const project = data.projects[0];
     const notebook = project?.notebooks[0];
     const page = notebook?.pages[0];
@@ -243,7 +259,7 @@ export default function Home() {
     setSelectedNotebookId((current) => current || notebook?.id || "");
     setSelectedPageId((current) => current || page?.id || "");
     if (project) setExpandedProjectIds((current) => new Set(current).add(project.id));
-  }, [applyNotebookSelection, applyPageSelection, applyProjectSelection]);
+  }, [applyNotebookSelection, applyNotebookSettingsSelection, applyPageSelection, applyProjectSelection]);
 
   useEffect(() => {
     function updateViewportWidth() {
@@ -280,6 +296,11 @@ export default function Home() {
     const currentWorkspace = workspace;
 
     function onPopState() {
+      const notebookSettingsSelection = findNotebookSelection(currentWorkspace, readNotebookSettingsIdFromUrl());
+      if (notebookSettingsSelection) {
+        applyNotebookSettingsSelection(notebookSettingsSelection);
+        return;
+      }
       const selection = findPageSelection(currentWorkspace, readPageIdFromUrl());
       if (selection) {
         applyPageSelection(selection);
@@ -301,7 +322,7 @@ export default function Home() {
 
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [applyNotebookSelection, applyPageSelection, applyProjectSelection, workspace]);
+  }, [applyNotebookSelection, applyNotebookSettingsSelection, applyPageSelection, applyProjectSelection, workspace]);
 
   useEffect(() => {
     if (!dragState) return;
@@ -433,7 +454,7 @@ export default function Home() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [closeSearch, searchOpen]);
 
-  async function refreshWorkspace(selection?: { projectId?: string; notebookId?: string; pageId?: string }) {
+  async function refreshWorkspace(selection?: { projectId?: string; notebookId?: string; pageId?: string; view?: "notebookSettings" }) {
     const response = await fetch("/api/workspace");
     if (!response.ok) return;
     const data = (await response.json()) as Workspace;
@@ -441,6 +462,14 @@ export default function Home() {
     if (!selection) {
       selectFirstAvailable(data);
       return;
+    }
+
+    if (selection.view === "notebookSettings" && selection.notebookId) {
+      const linkedNotebook = findNotebookSelection(data, selection.notebookId);
+      if (linkedNotebook) {
+        applyNotebookSettingsSelection(linkedNotebook, "replace");
+        return;
+      }
     }
 
     if (selection.pageId) {
@@ -644,9 +673,16 @@ export default function Home() {
     setNotebookMenuId(null);
     setPageMenuId(null);
     setAccountOpen(false);
+    const notebookSelection = workspace ? findNotebookSelection(workspace, notebook.id) : null;
+    if (notebookSelection) {
+      applyNotebookSettingsSelection(notebookSelection, "push");
+      return;
+    }
     setSelectedProjectId(selectedProject?.id ?? workspace?.projects[0]?.id ?? "");
     setSelectedNotebookId(notebook.id);
+    setSelectedPageId("");
     setActiveView("notebookSettings");
+    writeNotebookSettingsUrl(notebook.id, "push");
   }
 
   async function updateExistingNotebookColor(notebook: Notebook, color: string) {
@@ -1017,7 +1053,7 @@ export default function Home() {
               members={workspace.members}
               renameNotebook={renameExistingNotebook}
               deleteNotebook={requestNotebookDelete}
-              onChanged={() => refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: selectedPage?.id })}
+              onChanged={() => refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, view: "notebookSettings" })}
             />
           ) : (
             <section className="grid place-items-center bg-white p-8 text-slate-500">Select a notebook to view settings.</section>
@@ -3248,6 +3284,11 @@ function findProjectSelection(workspace: Workspace, projectId: string | null): P
   return project ? { project } : null;
 }
 
+function readNotebookSettingsIdFromUrl() {
+  if (typeof window === "undefined") return null;
+  return new URL(window.location.href).searchParams.get("notebookSettings");
+}
+
 function readPageIdFromUrl() {
   if (typeof window === "undefined") return null;
   return new URL(window.location.href).searchParams.get("page");
@@ -3268,9 +3309,28 @@ function writePageUrl(pageId: string | null, mode: "push" | "replace") {
   const url = new URL(window.location.href);
   if (pageId) {
     url.searchParams.set("page", pageId);
+    url.searchParams.delete("notebookSettings");
     url.searchParams.delete("notebook");
     url.searchParams.delete("project");
   } else {
+    url.searchParams.delete("page");
+    url.searchParams.delete("notebookSettings");
+    url.searchParams.delete("notebook");
+    url.searchParams.delete("project");
+  }
+  writeUrl(url, mode);
+}
+
+function writeNotebookSettingsUrl(notebookId: string | null, mode: "push" | "replace") {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (notebookId) {
+    url.searchParams.set("notebookSettings", notebookId);
+    url.searchParams.delete("page");
+    url.searchParams.delete("notebook");
+    url.searchParams.delete("project");
+  } else {
+    url.searchParams.delete("notebookSettings");
     url.searchParams.delete("page");
     url.searchParams.delete("notebook");
     url.searchParams.delete("project");
@@ -3283,10 +3343,12 @@ function writeNotebookUrl(notebookId: string | null, mode: "push" | "replace") {
   const url = new URL(window.location.href);
   if (notebookId) {
     url.searchParams.set("notebook", notebookId);
+    url.searchParams.delete("notebookSettings");
     url.searchParams.delete("page");
     url.searchParams.delete("project");
   } else {
     url.searchParams.delete("notebook");
+    url.searchParams.delete("notebookSettings");
     url.searchParams.delete("page");
     url.searchParams.delete("project");
   }
@@ -3298,10 +3360,12 @@ function writeProjectUrl(projectId: string | null, mode: "push" | "replace") {
   const url = new URL(window.location.href);
   if (projectId) {
     url.searchParams.set("project", projectId);
+    url.searchParams.delete("notebookSettings");
     url.searchParams.delete("page");
     url.searchParams.delete("notebook");
   } else {
     url.searchParams.delete("project");
+    url.searchParams.delete("notebookSettings");
     url.searchParams.delete("page");
     url.searchParams.delete("notebook");
   }

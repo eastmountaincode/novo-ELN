@@ -1997,7 +1997,7 @@ function SearchResultButton({ result, active, compact, onClick }: { result: Hydr
 function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2", tinted = false, menuOpen = false, setMenuOpen, onClick, onDelete }: { page: PageEntry; active?: boolean; contextLabel?: string; accentColor?: string; tinted?: boolean; menuOpen?: boolean; setMenuOpen?: (open: boolean) => void; onClick: () => void; onDelete?: () => void }) {
   const fileLabel = page.attachments.length ? `${page.attachments.length} files` : "No files";
   const color = normalizeColor(accentColor);
-  const cardStyle = active || tinted ? pageCardTintStyle(color) : undefined;
+  const cardStyle = active ? pageCardActiveStyle(color) : tinted ? pageCardTintStyle(color) : undefined;
   const visibleTags = page.tags.slice(0, 3);
   return (
     <div className="group relative min-w-0">
@@ -3043,6 +3043,14 @@ function pageCardTintStyle(value: string | undefined) {
   return {
     backgroundColor: colorWithAlpha(value, PAGE_CARD_TINT_ALPHA),
     borderColor: "#e2e8f0",
+  };
+}
+
+function pageCardActiveStyle(value: string | undefined) {
+  const color = normalizeColor(value);
+  return {
+    backgroundColor: colorWithAlpha(color, PAGE_CARD_TINT_ALPHA),
+    borderColor: colorWithAlpha(color, 0.65),
   };
 }
 

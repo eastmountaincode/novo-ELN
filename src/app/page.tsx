@@ -3362,19 +3362,21 @@ function userDisplayName(user: Pick<AppUser | ShareMember, "firstName" | "lastNa
   return `${user.firstName} ${user.lastName}`.trim() || user.email;
 }
 
-const PAGE_CARD_TINT_ALPHA = 0.075;
+const PAGE_CARD_TINT_ALPHA = 0.035;
+const PAGE_CARD_ACTIVE_ALPHA = 0.075;
 
 function pageCardTintStyle(value: string | undefined) {
+  const color = normalizeColor(value);
   return {
-    backgroundColor: colorWithAlpha(value, PAGE_CARD_TINT_ALPHA),
-    borderColor: "#e2e8f0",
+    backgroundColor: colorWithAlpha(color, PAGE_CARD_TINT_ALPHA),
+    borderColor: colorWithAlpha(color, 0.65),
   };
 }
 
 function pageCardActiveStyle(value: string | undefined) {
   const color = normalizeColor(value);
   return {
-    backgroundColor: colorWithAlpha(color, PAGE_CARD_TINT_ALPHA),
+    backgroundColor: colorWithAlpha(color, PAGE_CARD_ACTIVE_ALPHA),
     borderColor: colorWithAlpha(color, 0.65),
   };
 }

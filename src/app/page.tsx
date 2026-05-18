@@ -2081,8 +2081,7 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
           <section className="min-w-0 border border-slate-200 bg-white p-4">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold text-slate-950">Recently edited notes</h2>
-                <p className="mt-1 text-sm text-slate-500">Latest pages across notebooks.</p>
+                <h2 className="text-base font-semibold text-slate-950">Recently edited pages</h2>
               </div>
             </div>
             <div className="grid min-w-0 gap-2">

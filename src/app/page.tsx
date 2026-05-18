@@ -1650,15 +1650,22 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
       <div className="space-y-2 border-b border-white/10 py-4">
         <div className={sidebarCollapsed ? "px-3" : "px-4"}>
           <div className={`flex min-w-0 items-start ${sidebarCollapsed ? "justify-center" : "justify-between gap-3"}`}>
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={openHome}
-              className="novo-wordmark sidebar-wide min-w-0 cursor-pointer select-none px-1 py-1 text-left text-6xl leading-none tracking-normal text-slate-100 transition hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openHome();
+                }
+              }}
+              className="novo-wordmark sidebar-wide min-w-0 cursor-pointer select-none px-1 py-1 text-6xl leading-none tracking-normal text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
               aria-label="Go to home"
               title="Home"
             >
               novo
-            </button>
+            </div>
             <button
               type="button"
               onClick={toggleSidebarCollapsed}

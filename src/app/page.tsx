@@ -2084,12 +2084,13 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
               </div>
             </div>
             <div className="grid min-w-0 gap-2">
-              {recentPages.slice(0, 8).map(({ page, project, notebook }) => (
+              {recentPages.slice(0, 3).map(({ page, project, notebook }) => (
                 <PageCard
                   key={page.id}
                   page={page}
                   accentColor={notebook.color}
                   contextLabel={notebook.name}
+                  tinted
                   onClick={() => selectPage(project, notebook, page)}
                 />
               ))}

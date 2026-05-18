@@ -84,6 +84,10 @@ export type PageEntry = {
   ownerId: string;
   ownerFirstName: string;
   ownerLastName: string;
+  lockedAt: string;
+  lockedBy: string;
+  lockedByFirstName: string;
+  lockedByLastName: string;
   createdAt: string;
   updatedAt: string;
   tags: string[];

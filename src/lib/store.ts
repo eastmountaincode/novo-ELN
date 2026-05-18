@@ -76,6 +76,8 @@ export function ensureDatabase() {
       body TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT '',
       owner_id TEXT NOT NULL REFERENCES users(id),
+      locked_at TEXT,
+      locked_by TEXT REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -131,6 +133,7 @@ export function ensureDatabase() {
   migrateUserNameColumns();
   migrateProjectsToTopLevelNotebooks();
   ensureNotebookColumns();
+  ensurePageLockColumns();
   ensureImportJobsColumns();
   execSql(`
     DROP TABLE IF EXISTS search_pages_fts;
@@ -286,6 +289,13 @@ function ensureNotebookColumns() {
     `);
   }
   if (!names.has("color")) execSql("ALTER TABLE notebooks ADD COLUMN color TEXT NOT NULL DEFAULT '#0891b2';");
+}
+
+function ensurePageLockColumns() {
+  const columns = querySql("PRAGMA table_info(pages);");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("locked_at")) execSql("ALTER TABLE pages ADD COLUMN locked_at TEXT;");
+  if (!names.has("locked_by")) execSql("ALTER TABLE pages ADD COLUMN locked_by TEXT REFERENCES users(id);");
 }
 
 function ensureImportJobsColumns() {
@@ -628,9 +638,24 @@ export function getWorkspace(userId: string): Workspace {
   const notebookIds = notebookRows.map((notebook) => notebook.id);
   const pageRows = notebookIds.length
     ? querySql(`
-        SELECT p.id, p.notebook_id, p.title, p.body, p.status, p.owner_id, u.first_name AS owner_first_name, u.last_name AS owner_last_name, p.created_at, p.updated_at
+        SELECT
+          p.id,
+          p.notebook_id,
+          p.title,
+          p.body,
+          p.status,
+          p.owner_id,
+          u.first_name AS owner_first_name,
+          u.last_name AS owner_last_name,
+          COALESCE(p.locked_at, '') AS locked_at,
+          COALESCE(p.locked_by, '') AS locked_by,
+          COALESCE(locker.first_name, '') AS locked_by_first_name,
+          COALESCE(locker.last_name, '') AS locked_by_last_name,
+          p.created_at,
+          p.updated_at
         FROM pages p
         JOIN users u ON u.id = p.owner_id
+        LEFT JOIN users locker ON locker.id = p.locked_by
         WHERE p.notebook_id IN (${inList(notebookIds)})
         ORDER BY datetime(p.created_at) DESC, lower(p.title) ASC
       `)
@@ -678,6 +703,10 @@ export function getWorkspace(userId: string): Workspace {
       ownerId: page.owner_id,
       ownerFirstName: page.owner_first_name,
       ownerLastName: page.owner_last_name,
+      lockedAt: page.locked_at,
+      lockedBy: page.locked_by,
+      lockedByFirstName: page.locked_by_first_name,
+      lockedByLastName: page.locked_by_last_name,
       createdAt: page.created_at,
       updatedAt: page.updated_at,
       tags: pageTagRowsToList(tagsByPage[page.id] ?? []),
@@ -780,6 +809,27 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, ${sql(summary)}, ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
+  `);
+  rebuildSearchIndex();
+}
+
+export function setPageLocked(userId: string, pageId: string, locked: boolean) {
+  ensureDatabase();
+  assertPageManageAccess(userId, pageId);
+  const page = queryOne(`SELECT notebook_id, locked_at FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+  if (!page) throw new Error("Page not found");
+  const currentlyLocked = Boolean(page.locked_at);
+  if (currentlyLocked === locked) return;
+
+  execSql(`
+    UPDATE pages
+    SET locked_at = ${locked ? "datetime('now')" : "NULL"},
+        locked_by = ${locked ? sql(userId) : "NULL"},
+        updated_at = datetime('now')
+    WHERE id = ${sql(pageId)};
+    INSERT INTO page_versions (id, page_id, summary, created_by)
+    VALUES (${sql(randomUUID())}, ${sql(pageId)}, ${sql(locked ? "Locked page" : "Unlocked page")}, ${sql(userId)});
+    UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(page.notebook_id)};
   `);
   rebuildSearchIndex();
 }
@@ -1072,7 +1122,8 @@ export function assertPageEditAccess(userId: string, pageId: string) {
       WHEN nm.role = 'owner' THEN 'owner'
       WHEN nm.role = 'editor' THEN 'editor'
       ELSE 'viewer'
-    END AS role
+    END AS role,
+    COALESCE(p.locked_at, '') AS locked_at
     FROM pages p
     JOIN notebooks n ON n.id = p.notebook_id
     JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
@@ -1080,6 +1131,23 @@ export function assertPageEditAccess(userId: string, pageId: string) {
     LIMIT 1
   `);
   if (roleRank(normalizeAccessRole(row?.role)) < roleRank("editor")) throw new Error("Forbidden");
+  if (row?.locked_at) throw new Error("Page is locked.");
+}
+
+export function assertPageManageAccess(userId: string, pageId: string) {
+  const row = queryOne(`
+    SELECT CASE
+      WHEN nm.role = 'owner' THEN 'owner'
+      WHEN nm.role = 'editor' THEN 'editor'
+      ELSE 'viewer'
+    END AS role
+    FROM pages p
+    JOIN notebooks n ON n.id = p.notebook_id
+    JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    WHERE p.id = ${sql(pageId)}
+    LIMIT 1
+  `);
+  if (normalizeAccessRole(row?.role) !== "owner") throw new Error("Only owners can lock pages.");
 }
 
 function countNotebookOwners(notebookId: string) {

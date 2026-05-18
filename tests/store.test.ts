@@ -321,6 +321,7 @@ describe("store", () => {
       getWorkspace,
       renameNotebook,
       setPageTags,
+      setPageLocked,
       shareNotebook,
       updateAttachmentFile,
       updateNotebookColor,
@@ -387,6 +388,30 @@ describe("store", () => {
     });
     expect(() => shareNotebook({ actorUserId: editor.id, notebookId, email: viewer.email, role: "editor" })).toThrow("Only owners can manage sharing.");
     expect(() => deleteNotebook(editor.id, notebookId)).toThrow("Only owners can manage sharing.");
+
+    expect(() => setPageLocked(editor.id, pageId, true)).toThrow("Only owners can lock pages.");
+    setPageLocked(owner.id, pageId, true);
+    const lockedPage = getWorkspace(owner.id).notebooks.find((notebook) => notebook.id === notebookId)?.pages.find((page) => page.id === pageId);
+    expect(lockedPage?.lockedAt).toBeTruthy();
+    expect(lockedPage?.lockedBy).toBe(owner.id);
+    expect(() => updatePage(owner.id, pageId, { title: "Owner edit while locked" })).toThrow("Page is locked.");
+    expect(() => updatePage(editor.id, pageId, { title: "Editor edit while locked" })).toThrow("Page is locked.");
+    expect(() => setPageTags(owner.id, pageId, ["locked"])).toThrow("Page is locked.");
+    expect(() => createAttachment({
+      userId: owner.id,
+      pageId,
+      originalName: "locked.txt",
+      mimeType: "text/plain",
+      size: 1,
+      storageKey: "locked.txt",
+      blockType: "file",
+      previewText: "",
+    })).toThrow("Page is locked.");
+    expect(() => deleteAttachment(owner.id, attachmentId)).toThrow("Page is locked.");
+    expect(() => deletePage(owner.id, pageId)).toThrow("Page is locked.");
+
+    setPageLocked(owner.id, pageId, false);
+    updatePage(editor.id, pageId, { title: "Editor edit after unlock" });
   });
 
   it("uses notebook membership roles for ownership instead of creator status", async () => {

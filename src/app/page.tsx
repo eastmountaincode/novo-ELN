@@ -23,6 +23,7 @@ import {
   Home as HomeIcon,
   Image as ImageIcon,
   KeyRound,
+  Lock,
   Loader2,
   MoreHorizontal,
   Notebook as NotebookIcon,
@@ -36,6 +37,7 @@ import {
   SlidersHorizontal,
   Tag,
   Trash2,
+  Unlock,
   Users,
   X,
   UserCircle,
@@ -392,6 +394,8 @@ export default function Home() {
   const selectedNotebook = selectedProject?.notebooks.find((notebook) => notebook.id === selectedNotebookId) ?? selectedProject?.notebooks[0];
   const selectedPage = selectedNotebook?.pages.find((page) => page.id === selectedPageId) ?? selectedNotebook?.pages[0];
   const selectedNotebookCanEdit = canEditNotebook(workspace?.user, selectedNotebook);
+  const selectedPageCanEdit = selectedNotebookCanEdit && !selectedPage?.lockedAt;
+  const selectedPageCanManageLock = selectedNotebook?.accessRole === "owner";
 
   const recentPages = useMemo(() => {
     return (
@@ -598,7 +602,7 @@ export default function Home() {
   }
 
   async function savePage(patch: { title?: string; body?: string; status?: PageStatus }) {
-    if (!selectedPage || !selectedNotebookCanEdit) return;
+    if (!selectedPage || !selectedPageCanEdit) return;
     const pageId = selectedPage.id;
     setSaving("Saving");
     const response = await fetch(`/api/pages/${pageId}`, {
@@ -611,7 +615,7 @@ export default function Home() {
   }
 
   async function setSelectedPageTags(tags: string[]) {
-    if (!selectedPage || !selectedNotebookCanEdit) return;
+    if (!selectedPage || !selectedPageCanEdit) return;
     const normalizedTags = normalizeTagList(tags);
     patchSelectedPage({ tags: normalizedTags });
     setSaving("Saving tags");
@@ -622,6 +626,18 @@ export default function Home() {
     });
     setSaving(response.ok ? "Saved" : "Tag save failed");
     if (!response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
+  }
+
+  async function setSelectedPageLocked(locked: boolean) {
+    if (!selectedPage || !selectedPageCanManageLock) return;
+    setSaving(locked ? "Locking" : "Unlocking");
+    const response = await fetch(`/api/pages/${selectedPage.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locked }),
+    });
+    setSaving(response.ok ? (locked ? "Locked" : "Unlocked") : "Lock update failed");
+    if (response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
 
   function openHome() {
@@ -730,7 +746,7 @@ export default function Home() {
   }
 
   async function confirmPageDelete() {
-    if (!pagePendingDelete || !selectedNotebook || !selectedNotebookCanEdit || deletingPage) return;
+    if (!pagePendingDelete || !selectedNotebook || !selectedNotebookCanEdit || pagePendingDelete.lockedAt || deletingPage) return;
     const remainingPages = selectedNotebook.pages.filter((page) => page.id !== pagePendingDelete.id);
     const deletedIndex = selectedNotebook.pages.findIndex((page) => page.id === pagePendingDelete.id);
     const nextPage = remainingPages[Math.min(Math.max(deletedIndex, 0), remainingPages.length - 1)];
@@ -885,7 +901,7 @@ export default function Home() {
   }
 
   async function uploadAttachment(file: File | undefined) {
-    if (!file || !selectedPage || !selectedNotebookCanEdit) return;
+    if (!file || !selectedPage || !selectedPageCanEdit) return;
     const form = new FormData();
     form.set("file", file);
     setSaving("Uploading");
@@ -895,7 +911,7 @@ export default function Home() {
   }
 
   async function deletePageAttachment(attachment: Attachment) {
-    if (!selectedPage || !selectedNotebookCanEdit) return;
+    if (!selectedPage || !selectedPageCanEdit) return;
     const response = await fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" });
     if (!response.ok) {
       setSaving("Delete failed");
@@ -906,7 +922,7 @@ export default function Home() {
   }
 
   async function uploadInlineFile(file: File, blockType: BlockType) {
-    if (!selectedPage || !selectedNotebookCanEdit) return null;
+    if (!selectedPage || !selectedPageCanEdit) return null;
     const pageId = selectedPage.id;
     const form = new FormData();
     form.set("file", file);
@@ -920,7 +936,7 @@ export default function Home() {
   }
 
   function markInlineAttachmentInserted(attachment: Attachment, body: string) {
-    if (!selectedPage || !selectedNotebookCanEdit) return;
+    if (!selectedPage || !selectedPageCanEdit) return;
     const pageId = selectedPage.id;
     setWorkspace((current) => current ? {
       ...current,
@@ -1119,7 +1135,8 @@ export default function Home() {
                 selectedProject={selectedProject}
                 selectedNotebook={selectedNotebook}
                 saving={saving}
-                canEdit={selectedNotebookCanEdit}
+                canEdit={selectedPageCanEdit}
+                canManageLock={selectedPageCanManageLock}
                 uploadInlineFile={uploadInlineFile}
                 onInlineAttachmentInserted={markInlineAttachmentInserted}
                 openSpreadsheet={openSpreadsheetModal}
@@ -1128,6 +1145,7 @@ export default function Home() {
                 patchSelectedPage={patchSelectedPage}
                 savePage={savePage}
                 setPageTags={setSelectedPageTags}
+                setPageLocked={setSelectedPageLocked}
                 openFilePicker={() => fileInputRef.current?.click()}
               />
             ) : (
@@ -2049,7 +2067,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
               menuOpen={pageMenuId === page.id}
               setMenuOpen={(open) => setPageMenuId(open ? page.id : null)}
               onClick={() => selectedProject && selectedNotebook && selectPage(selectedProject, selectedNotebook, page)}
-              onDelete={canEdit ? () => deletePage(page) : undefined}
+              onDelete={canEdit && !page.lockedAt ? () => deletePage(page) : undefined}
             />
           ))}
           {sortedPages.length === 0 ? <p className="p-3 text-sm text-slate-500">{filterActive ? "No pages match these filters." : "No pages yet."}</p> : null}
@@ -2163,8 +2181,9 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
           <h3 className="min-w-0 break-words text-sm font-semibold leading-5 text-slate-900">{page.title || "Untitled"}</h3>
         </div>
         <p className="mt-2 max-h-10 min-w-0 overflow-hidden break-words text-sm leading-5 text-slate-500">{bodyToEditorText(page.body) || "Empty page"}</p>
-        {(page.status || visibleTags.length > 0) ? (
+        {(page.lockedAt || page.status || visibleTags.length > 0) ? (
           <div className="mt-3 flex flex-wrap gap-1.5">
+            {page.lockedAt ? <span className="inline-flex h-6 items-center gap-1 border border-slate-300 bg-slate-100 px-2 text-[11px] font-medium text-slate-600"><Lock size={11} />Locked</span> : null}
             {page.status ? <span className="inline-flex h-6 items-center border px-2 text-[11px] font-medium" style={pageStatusStyle(page.status)}>{getPageStatusLabel(page.status)}</span> : null}
             {visibleTags.map((tag) => <span key={tag} className="inline-flex h-6 max-w-full items-center truncate border border-slate-200 bg-slate-100 px-2 text-[11px] font-medium text-slate-600">{tag}</span>)}
             {page.tags.length > visibleTags.length ? <span className="inline-flex h-6 items-center px-1 text-[11px] font-medium text-slate-400">+{page.tags.length - visibleTags.length}</span> : null}
@@ -3059,11 +3078,12 @@ function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCa
   );
 }
 
-function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, setPageTags, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; canEdit: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; setPageTags: (tags: string[]) => Promise<void>; openFilePicker: () => void }) {
+function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, setPageTags, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; setPageTags: (tags: string[]) => Promise<void>; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const attachmentCount = page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
   const color = projectColor(selectedNotebook ?? selectedProject);
+  const locked = Boolean(page.lockedAt);
 
   return (
     <section className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-white">
@@ -3071,6 +3091,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
         <div className="flex items-center gap-3">
           <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
           {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
+          <PageLockControl locked={locked} canManage={canManageLock} setLocked={setPageLocked} />
         </div>
         <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} />
         <PageStatusRow
@@ -3123,6 +3144,28 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
         </div>
       </div>
     </section>
+  );
+}
+
+function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; canManage: boolean; setLocked: (locked: boolean) => Promise<void> }) {
+  const Icon = locked ? Lock : Unlock;
+  if (!canManage && !locked) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => canManage && void setLocked(!locked)}
+      disabled={!canManage}
+      className={`inline-flex h-8 shrink-0 items-center gap-1.5 border px-2 text-xs font-semibold ${
+        locked
+          ? "border-slate-300 bg-slate-100 text-slate-700"
+          : "border-slate-300 bg-white text-slate-600 hover:border-slate-500 hover:text-slate-950"
+      } disabled:cursor-default disabled:opacity-80`}
+      title={canManage ? (locked ? "Unlock page" : "Lock page") : "Locked page"}
+      aria-label={canManage ? (locked ? "Unlock page" : "Lock page") : "Locked page"}
+    >
+      <Icon size={14} />
+      <span>{locked ? "Locked" : "Lock"}</span>
+    </button>
   );
 }
 

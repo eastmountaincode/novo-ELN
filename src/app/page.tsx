@@ -3156,11 +3156,7 @@ function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; ca
       type="button"
       onClick={() => canManage && void setLocked(!locked)}
       disabled={!canManage}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 border px-2 text-xs font-medium ${
-        locked
-          ? "border-slate-300 bg-slate-100 text-slate-600"
-          : "border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-800"
-      } disabled:cursor-default disabled:opacity-80`}
+      className="inline-flex h-7 shrink-0 items-center gap-1.5 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-default disabled:bg-slate-50 disabled:text-slate-500"
       title={canManage ? (locked ? "Unlock page" : "Lock page") : "Locked page"}
       aria-label={canManage ? (locked ? "Unlock page" : "Lock page") : "Locked page"}
     >

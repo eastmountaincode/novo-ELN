@@ -985,6 +985,7 @@ export default function Home() {
             <NotebookSettingsView
               notebook={selectedNotebook}
               user={workspace.user}
+              members={workspace.members}
               renameNotebook={renameExistingNotebook}
               deleteNotebook={requestNotebookDelete}
               onChanged={() => refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: selectedPage?.id })}
@@ -2138,7 +2139,7 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
   );
 }
 
-function NotebookSettingsView({ notebook, user, renameNotebook, deleteNotebook, onChanged }: { notebook: Notebook; user: AppUser; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; onChanged: () => Promise<void> }) {
+function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteNotebook, onChanged }: { notebook: Notebook; user: AppUser; members: AppUser[]; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; onChanged: () => Promise<void> }) {
   const canManage = user.role === "admin" || notebook.accessRole === "owner";
   const canEdit = canManage || notebook.accessRole === "editor";
   const attachmentCount = notebook.pages.reduce((total, page) => total + page.attachments.length, 0);
@@ -2204,7 +2205,7 @@ function NotebookSettingsView({ notebook, user, renameNotebook, deleteNotebook, 
               <h2 className="text-base font-semibold text-slate-950">Share notebook</h2>
               <p className="mt-1 text-sm leading-6 text-slate-500">Add a group member and choose their notebook role.</p>
               <div className="mt-4">
-                {canManage ? <ShareForm label="User email" submitLabel="Share" onSubmit={addNotebookMember} /> : <p className="text-sm text-slate-500">Only notebook owners can manage sharing.</p>}
+                {canManage ? <ShareForm members={members} existingMembers={notebook.members} submitLabel="Share" onSubmit={addNotebookMember} /> : <p className="text-sm text-slate-500">Only notebook owners can manage sharing.</p>}
               </div>
             </section>
 
@@ -2265,21 +2266,40 @@ function NotebookAccessList({ members, notebookOwnerId, canManage, onRoleChange,
   );
 }
 
-function ShareForm({ label, submitLabel, dark = false, onSubmit }: { label: string; submitLabel: string; dark?: boolean; onSubmit: (input: { email: string; role: AccessRole }) => Promise<void> }) {
-  const [email, setEmail] = useState("");
+function ShareForm({ members, existingMembers, submitLabel, onSubmit }: { members: AppUser[]; existingMembers: ShareMember[]; submitLabel: string; onSubmit: (input: { email: string; role: AccessRole }) => Promise<void> }) {
+  const [query, setQuery] = useState("");
+  const [selectedMember, setSelectedMember] = useState<AppUser | null>(null);
   const [role, setRole] = useState<AccessRole>("editor");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const disabled = submitting || !email.trim();
+  const [focused, setFocused] = useState(false);
+  const existingMemberIds = useMemo(() => new Set(existingMembers.map((member) => member.userId)), [existingMembers]);
+  const availableMembers = useMemo(() => members.filter((member) => !existingMemberIds.has(member.id)), [existingMemberIds, members]);
+  const normalizedQuery = query.trim().toLowerCase();
+  const suggestions = useMemo(() => {
+    const filtered = normalizedQuery
+      ? availableMembers.filter((member) => `${member.name} ${member.email}`.toLowerCase().includes(normalizedQuery))
+      : availableMembers;
+    return filtered.slice(0, 8);
+  }, [availableMembers, normalizedQuery]);
+  const disabled = submitting || !selectedMember;
+
+  function selectMember(member: AppUser) {
+    setSelectedMember(member);
+    setQuery(member.name);
+    setFocused(false);
+    setError("");
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled) return;
+    if (disabled || !selectedMember) return;
     setError("");
     setSubmitting(true);
     try {
-      await onSubmit({ email: email.trim(), role });
-      setEmail("");
+      await onSubmit({ email: selectedMember.email, role });
+      setQuery("");
+      setSelectedMember(null);
       setRole("editor");
     } catch (error) {
       setError(error instanceof Error ? error.message : "Unable to share.");
@@ -2290,30 +2310,58 @@ function ShareForm({ label, submitLabel, dark = false, onSubmit }: { label: stri
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
-      <label className={`block text-sm font-medium ${dark ? "text-slate-200" : "text-slate-700"}`}>
-        {label}
-        <input
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          type="email"
-          className={`mt-1 h-9 w-full border px-3 text-sm outline-none ${dark ? "border-white/10 bg-slate-950 text-white focus:border-cyan-400" : "border-slate-300 bg-white text-slate-950 focus:border-cyan-600"}`}
-        />
+      <label className="block text-sm font-medium text-slate-700">
+        Group member
+        <div className="relative mt-1">
+          <input
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setSelectedMember(null);
+              setFocused(true);
+            }}
+            onFocus={() => setFocused(true)}
+            onBlur={() => window.setTimeout(() => setFocused(false), 120)}
+            type="text"
+            autoComplete="off"
+            placeholder="Search by name or email"
+            className="h-9 w-full border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-cyan-600"
+          />
+          {focused ? (
+            <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto border border-slate-300 bg-white py-1 shadow-lg">
+              {suggestions.map((member) => (
+                <button
+                  key={member.id}
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => selectMember(member)}
+                  className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-100"
+                >
+                  <span className="block truncate font-medium text-slate-950">{member.name}</span>
+                  <span className="block truncate text-xs text-slate-500">{member.email}</span>
+                </button>
+              ))}
+              {suggestions.length === 0 ? <p className="px-3 py-2 text-sm text-slate-500">No available members found.</p> : null}
+            </div>
+          ) : null}
+        </div>
       </label>
       <div className="flex gap-2">
         <select
           value={role}
           onChange={(event) => setRole(event.target.value as AccessRole)}
-          className={`h-9 flex-1 cursor-pointer border px-2 text-sm outline-none ${dark ? "border-white/10 bg-slate-950 text-white" : "border-slate-300 bg-white text-slate-950"}`}
+          className="h-9 flex-1 cursor-pointer border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none"
         >
           <option value="editor">Editor</option>
           <option value="viewer">Viewer</option>
           <option value="owner">Owner</option>
         </select>
-        <button disabled={disabled} className={`h-9 px-3 text-sm font-semibold ${dark ? "bg-cyan-400 text-slate-950 disabled:bg-slate-700 disabled:text-slate-400" : "bg-slate-950 text-white disabled:bg-slate-300"}`}>
+        <button disabled={disabled} className="h-9 bg-slate-950 px-3 text-sm font-semibold text-white disabled:bg-slate-300">
           {submitting ? "Saving..." : submitLabel}
         </button>
       </div>
-      {error ? <p className={`text-sm ${dark ? "text-rose-300" : "text-rose-600"}`}>{error}</p> : null}
+      {selectedMember ? <p className="text-xs text-slate-500">Sharing with {selectedMember.name} ({selectedMember.email})</p> : null}
+      {error ? <p className="text-sm text-rose-600">{error}</p> : null}
     </form>
   );
 }

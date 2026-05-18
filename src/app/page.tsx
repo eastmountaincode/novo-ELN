@@ -166,6 +166,7 @@ export default function Home() {
   const [saving, setSaving] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_MIN_WIDTH);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(0);
   const [pagesWidth, setPagesWidth] = useState(340);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(new Set());
@@ -240,6 +241,15 @@ export default function Home() {
     setSelectedPageId((current) => current || page?.id || "");
     if (project) setExpandedProjectIds((current) => new Set(current).add(project.id));
   }, [applyNotebookSelection, applyPageSelection, applyProjectSelection]);
+
+  useEffect(() => {
+    function updateViewportWidth() {
+      setViewportWidth(window.innerWidth);
+    }
+    updateViewportWidth();
+    window.addEventListener("resize", updateViewportWidth);
+    return () => window.removeEventListener("resize", updateViewportWidth);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -938,7 +948,10 @@ export default function Home() {
     );
   }
 
-  const effectiveSidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
+  const expandedLayoutWidth = activeView === "project" ? sidebarWidth + 1 + pagesWidth + 1 + 560 : sidebarWidth + 1 + 560;
+  const sidebarAutoCollapsed = viewportWidth > 0 && viewportWidth < expandedLayoutWidth;
+  const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed;
+  const effectiveSidebarWidth = effectiveSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
   return (
     <main className="app-scroll-root overflow-x-auto bg-white text-slate-950">
@@ -950,7 +963,7 @@ export default function Home() {
           activeView={activeView}
           selectedProject={selectedProject}
           selectedNotebook={selectedNotebook}
-          sidebarCollapsed={sidebarCollapsed}
+          sidebarCollapsed={effectiveSidebarCollapsed}
           accountOpen={accountOpen}
           projectMenuId={projectMenuId}
           notebookMenuId={notebookMenuId}
@@ -977,7 +990,7 @@ export default function Home() {
           handleLogout={handleLogout}
         />
 
-        <ResizeHandle disabled={sidebarCollapsed} onPointerDown={(event) => setDragState({ pane: "sidebar", startX: event.clientX, startWidth: sidebarWidth })} />
+        <ResizeHandle disabled={effectiveSidebarCollapsed} onPointerDown={(event) => setDragState({ pane: "sidebar", startX: event.clientX, startWidth: sidebarWidth })} />
 
         {activeView === "home" || activeView === "projectHome" ? (
           <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} importEnexNotebook={() => createNewNotebook(undefined, "import")} />

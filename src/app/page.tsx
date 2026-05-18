@@ -1585,7 +1585,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
   const [sharedNotebooksCollapsed, setSharedNotebooksCollapsed] = useState(false);
 
   function renderNotebook(notebook: Notebook) {
-    const selected = selectedNotebook?.id === notebook.id;
+    const selected = (activeView === "project" || activeView === "notebookSettings") && selectedNotebook?.id === notebook.id;
     const color = projectColor(notebook);
     const canEditNotebookActions = canEditNotebook(workspace.user, notebook);
     const canDeleteNotebookAction = notebook.accessRole === "owner";

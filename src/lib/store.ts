@@ -252,40 +252,28 @@ function migrateProjectsToTopLevelNotebooks() {
 function migrateUserNameColumns() {
   const columns = querySql("PRAGMA table_info(users);");
   const columnNames = new Set(columns.map((column) => column.name));
-  if (!columnNames.has("name") && columnNames.has("first_name") && columnNames.has("last_name")) return;
+  if (!columnNames.has("first_name")) {
+    execSql("ALTER TABLE users ADD COLUMN first_name TEXT NOT NULL DEFAULT '';");
+  }
+  if (!columnNames.has("last_name")) {
+    execSql("ALTER TABLE users ADD COLUMN last_name TEXT NOT NULL DEFAULT '';");
+  }
+  if (!columnNames.has("name")) return;
 
   const rows = querySql(`
-    SELECT id, email, ${columnNames.has("name") ? "name" : "first_name || ' ' || last_name AS name"}, password_hash, role, created_at
+    SELECT id, name
     FROM users
-  `);
-
-  execSql(`
-    PRAGMA foreign_keys=OFF;
-
-    CREATE TABLE users_new (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      first_name TEXT NOT NULL,
-      last_name TEXT NOT NULL DEFAULT '',
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'member',
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+    WHERE COALESCE(first_name, '') = ''
   `);
 
   for (const row of rows) {
     const { firstName, lastName } = splitDisplayName(row.name);
     execSql(`
-      INSERT INTO users_new (id, email, first_name, last_name, password_hash, role, created_at)
-      VALUES (${sql(row.id)}, ${sql(row.email)}, ${sql(firstName)}, ${sql(lastName)}, ${sql(row.password_hash)}, ${sql(row.role)}, ${sql(row.created_at)});
+      UPDATE users
+      SET first_name = ${sql(firstName)}, last_name = ${sql(lastName)}
+      WHERE id = ${sql(row.id)};
     `);
   }
-
-  execSql(`
-    DROP TABLE users;
-    ALTER TABLE users_new RENAME TO users;
-    PRAGMA foreign_keys=ON;
-  `);
 }
 
 function ensureNotebookColumns() {

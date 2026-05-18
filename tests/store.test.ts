@@ -24,6 +24,68 @@ describe("store", () => {
     expect(workspace.notebooks[0].pages.length).toBeGreaterThan(0);
   });
 
+  it("migrates legacy user names without deleting notebook data", async () => {
+    const { execSql, queryOne } = await import("../src/lib/sqlite");
+    execSql(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE notebooks (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        color TEXT NOT NULL DEFAULT '#0891b2',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE pages (
+        id TEXT PRIMARY KEY,
+        notebook_id TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT '',
+        owner_id TEXT NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE attachments (
+        id TEXT PRIMARY KEY,
+        page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        original_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        storage_key TEXT NOT NULL,
+        block_type TEXT NOT NULL DEFAULT 'file',
+        preview_text TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      INSERT INTO users (id, email, name, password_hash, role, created_at)
+      VALUES ('user-1', 'legacy@example.local', 'Legacy User', 'hash', 'member', '2026-05-18 12:00:00');
+      INSERT INTO notebooks (id, name, owner_id, color, created_at, updated_at)
+      VALUES ('notebook-1', 'Legacy Notebook', 'user-1', '#0891b2', '2026-05-18 12:01:00', '2026-05-18 12:01:00');
+      INSERT INTO pages (id, notebook_id, title, body, status, owner_id, created_at, updated_at)
+      VALUES ('page-1', 'notebook-1', 'Legacy Page', 'body', '', 'user-1', '2026-05-18 12:02:00', '2026-05-18 12:02:00');
+      INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type)
+      VALUES ('attachment-1', 'page-1', 'legacy.pdf', 'application/pdf', 12, 'legacy.pdf', 'pdf');
+    `);
+
+    const { ensureDatabase } = await import("../src/lib/store");
+    ensureDatabase();
+
+    expect(queryOne("SELECT COUNT(*) AS count FROM notebooks")?.count).toBe("1");
+    expect(queryOne("SELECT COUNT(*) AS count FROM pages")?.count).toBe("1");
+    expect(queryOne("SELECT COUNT(*) AS count FROM attachments")?.count).toBe("1");
+    const migratedUser = queryOne("SELECT first_name, last_name FROM users WHERE id = 'user-1'");
+    expect(migratedUser?.first_name).toBe("Legacy");
+    expect(migratedUser?.last_name).toBe("User");
+  });
+
   it("creates and updates pages through the repository API", async () => {
     const { verifyCredentials, getWorkspace, createPage, updatePage } = await import("../src/lib/store");
     const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;

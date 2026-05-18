@@ -167,6 +167,8 @@ export default function Home() {
   const [saving, setSaving] = useState("");
   const [creatingPage, setCreatingPage] = useState(false);
   const [deletingPage, setDeletingPage] = useState(false);
+  const [deletingNotebook, setDeletingNotebook] = useState(false);
+  const [deletingProject, setDeletingProject] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_MIN_WIDTH);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(0);
@@ -731,27 +733,37 @@ export default function Home() {
   }
 
   async function confirmNotebookDelete() {
-    if (!notebookPendingDelete) return;
-    const response = await fetch(`/api/notebooks/${notebookPendingDelete.id}`, { method: "DELETE" });
-    if (!response.ok) return;
-    setNotebookPendingDelete(null);
-    setSelectedNotebookId("");
-    setSelectedPageId("");
-    writePageUrl(null, "replace");
-    await refreshWorkspace({ projectId: selectedProject?.id });
+    if (!notebookPendingDelete || deletingNotebook) return;
+    setDeletingNotebook(true);
+    try {
+      const response = await fetch(`/api/notebooks/${notebookPendingDelete.id}`, { method: "DELETE" });
+      if (!response.ok) return;
+      setNotebookPendingDelete(null);
+      setSelectedNotebookId("");
+      setSelectedPageId("");
+      writePageUrl(null, "replace");
+      await refreshWorkspace({ projectId: selectedProject?.id });
+    } finally {
+      setDeletingNotebook(false);
+    }
   }
 
   async function confirmProjectDelete() {
-    if (!projectPendingDelete) return;
-    const response = await fetch(`/api/projects/${projectPendingDelete.id}`, { method: "DELETE" });
-    if (!response.ok) return;
-    setProjectPendingDelete(null);
-    setSelectedProjectId("");
-    setSelectedNotebookId("");
-    setSelectedPageId("");
-    setActiveView("home");
-    writePageUrl(null, "replace");
-    await refreshWorkspace();
+    if (!projectPendingDelete || deletingProject) return;
+    setDeletingProject(true);
+    try {
+      const response = await fetch(`/api/projects/${projectPendingDelete.id}`, { method: "DELETE" });
+      if (!response.ok) return;
+      setProjectPendingDelete(null);
+      setSelectedProjectId("");
+      setSelectedNotebookId("");
+      setSelectedPageId("");
+      setActiveView("home");
+      writePageUrl(null, "replace");
+      await refreshWorkspace();
+    } finally {
+      setDeletingProject(false);
+    }
   }
 
   function createNewProject() {
@@ -1100,6 +1112,7 @@ export default function Home() {
         {projectPendingDelete ? (
           <ProjectDeleteModal
             project={projectPendingDelete}
+            deleting={deletingProject}
             onCancel={() => setProjectPendingDelete(null)}
             onConfirm={confirmProjectDelete}
           />
@@ -1108,6 +1121,7 @@ export default function Home() {
         {notebookPendingDelete ? (
           <NotebookDeleteModal
             notebook={notebookPendingDelete}
+            deleting={deletingNotebook}
             onCancel={() => setNotebookPendingDelete(null)}
             onConfirm={confirmNotebookDelete}
           />
@@ -1189,6 +1203,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const title = getNameModalTitle(dialog);
   const description = getNameModalDescription(dialog);
   const submitLabel = dialog.kind.startsWith("rename") ? "Rename" : "Create";
+  const pendingSubmitLabel = dialog.kind.startsWith("rename") ? "Renaming..." : "Creating...";
   const isNotebookCreate = dialog.kind === "createNotebook";
   const importing = job?.state === "queued" || job?.state === "running" || job?.state === "canceling";
   const cancelingImport = job?.state === "canceling";
@@ -1229,8 +1244,11 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
     event.preventDefault();
     if (disabled) return;
     setSubmitting(true);
-    await onSubmit(name);
-    setSubmitting(false);
+    try {
+      await onSubmit(name);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function inspectEnex() {
@@ -1401,8 +1419,9 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
               {importing ? "Importing" : "Import"}
             </button>
           ) : (
-            <button type="submit" disabled={disabled} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">
-              {submitting ? "Saving" : submitLabel}
+            <button type="submit" disabled={disabled} className="inline-flex h-9 items-center gap-2 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">
+              {submitting ? <Loader2 size={15} className="animate-spin" /> : null}
+              {submitting ? pendingSubmitLabel : submitLabel}
             </button>
           )}
         </div>
@@ -1467,7 +1486,7 @@ function getNameModalDescription(dialog: NameDialogState) {
   return "Update the notebook name shown in the sidebar.";
 }
 
-function NotebookDeleteModal({ notebook, onCancel, onConfirm }: { notebook: Notebook; onCancel: () => void; onConfirm: () => void }) {
+function NotebookDeleteModal({ notebook, deleting, onCancel, onConfirm }: { notebook: Notebook; deleting: boolean; onCancel: () => void; onConfirm: () => void }) {
   return (
     <ModalFrame>
       <h2 className="text-lg font-semibold text-white">Delete notebook?</h2>
@@ -1475,8 +1494,11 @@ function NotebookDeleteModal({ notebook, onCancel, onConfirm }: { notebook: Note
         This will delete <span className="font-semibold text-white">{notebook.name}</span>, including its pages and attachment records. This cannot be undone.
       </p>
       <div className="mt-5 flex justify-end gap-2">
-        <button onClick={onCancel} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">Cancel</button>
-        <button onClick={onConfirm} className="h-9 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400">Delete notebook</button>
+        <button onClick={onCancel} disabled={deleting} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
+        <button onClick={onConfirm} disabled={deleting} className="inline-flex h-9 items-center gap-2 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200">
+          {deleting ? <Loader2 size={15} className="animate-spin" /> : null}
+          {deleting ? "Deleting..." : "Delete notebook"}
+        </button>
       </div>
     </ModalFrame>
   );
@@ -1500,7 +1522,7 @@ function PageDeleteModal({ page, deleting, onCancel, onConfirm }: { page: PageEn
   );
 }
 
-function ProjectDeleteModal({ project, onCancel, onConfirm }: { project: Project; onCancel: () => void; onConfirm: () => void }) {
+function ProjectDeleteModal({ project, deleting, onCancel, onConfirm }: { project: Project; deleting: boolean; onCancel: () => void; onConfirm: () => void }) {
   return (
     <ModalFrame>
       <h2 className="text-lg font-semibold text-white">Delete project?</h2>
@@ -1508,8 +1530,11 @@ function ProjectDeleteModal({ project, onCancel, onConfirm }: { project: Project
         This will delete <span className="font-semibold text-white">{project.name}</span>, including its notebooks, pages, and attachment records. This cannot be undone.
       </p>
       <div className="mt-5 flex justify-end gap-2">
-        <button onClick={onCancel} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">Cancel</button>
-        <button onClick={onConfirm} className="h-9 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400">Delete project</button>
+        <button onClick={onCancel} disabled={deleting} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
+        <button onClick={onConfirm} disabled={deleting} className="inline-flex h-9 items-center gap-2 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200">
+          {deleting ? <Loader2 size={15} className="animate-spin" /> : null}
+          {deleting ? "Deleting..." : "Delete project"}
+        </button>
       </div>
     </ModalFrame>
   );
@@ -2441,8 +2466,9 @@ function ShareForm({ members, existingMembers, submitLabel, onSubmit }: { member
           <option value="viewer">Viewer</option>
           <option value="owner">Owner</option>
         </select>
-        <button disabled={disabled} className="h-9 bg-slate-950 px-3 text-sm font-semibold text-white disabled:bg-slate-300">
-          {submitting ? "Saving..." : submitLabel}
+        <button disabled={disabled} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-semibold text-white disabled:bg-slate-300">
+          {submitting ? <Loader2 size={15} className="animate-spin" /> : null}
+          {submitting ? "Sharing..." : submitLabel}
         </button>
       </div>
       {selectedMember ? <p className="text-xs text-slate-500">Sharing with {selectedMember.name} ({selectedMember.email})</p> : null}

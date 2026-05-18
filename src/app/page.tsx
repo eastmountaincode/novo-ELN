@@ -70,16 +70,6 @@ const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
   { key: "title", label: "Title" },
 ];
 
-const NOTEBOOK_COLORS = [
-  "#0891b2",
-  "#2563eb",
-  "#7c3aed",
-  "#16a34a",
-  "#ca8a04",
-  "#dc2626",
-  "#0f766e",
-  "#9333ea",
-];
 
 const PAGE_STATUS_OPTIONS: Array<{ value: PageStatus; label: string }> = [
   { value: "", label: "No status" },
@@ -1471,30 +1461,19 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
             <MoreHorizontal size={14} />
           </button>
           {notebookMenuId === notebook.id ? (
-            <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-8 z-20 w-44 border border-white/10 bg-slate-900 py-1 shadow-lg">
+            <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-8 z-20 w-40 border border-white/10 bg-slate-900 py-1 shadow-lg">
               <button onClick={() => { setNotebookMenuId(null); shareNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Share</button>
+              <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
+                <span>Color</span>
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(event) => updateNotebookColor(notebook, event.target.value)}
+                  className="size-6 cursor-pointer border-0 bg-transparent p-0"
+                  title="Notebook color"
+                />
+              </label>
               <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Rename</button>
-              <div className="border-y border-white/10 px-3 py-2">
-                <div className="mb-2 text-xs font-medium text-slate-400">Color</div>
-                <div className="grid grid-cols-4 gap-2">
-                  {NOTEBOOK_COLORS.map((swatch) => {
-                    const selectedColor = normalizeColor(swatch) === color;
-                    return (
-                      <button
-                        key={swatch}
-                        type="button"
-                        onClick={() => updateNotebookColor(notebook, swatch)}
-                        className={`grid size-6 place-items-center border ${selectedColor ? "border-white" : "border-white/20 hover:border-white/60"}`}
-                        style={{ backgroundColor: swatch }}
-                        title={`Set notebook color ${swatch}`}
-                        aria-label={`Set notebook color ${swatch}`}
-                      >
-                        {selectedColor ? <Check size={13} className="text-white drop-shadow" /> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
               <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">Delete</button>
             </div>
           ) : null}

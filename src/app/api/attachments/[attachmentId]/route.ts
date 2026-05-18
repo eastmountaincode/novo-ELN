@@ -4,13 +4,20 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { uploadDir } from "@/lib/paths";
-import { deleteAttachment, getAttachmentForUser, updateAttachmentFile } from "@/lib/store";
+import { assertAttachmentEditAccess, deleteAttachment, getAttachmentForUser, updateAttachmentFile } from "@/lib/store";
 
 export async function PUT(request: Request, context: { params: Promise<{ attachmentId: string }> }) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { attachmentId } = await context.params;
+  try {
+    assertAttachmentEditAccess(user.id, attachmentId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Forbidden";
+    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : message === "Attachment not found" ? 404 : 400 });
+  }
+
   const attachment = getAttachmentForUser(user.id, attachmentId);
   if (!attachment) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

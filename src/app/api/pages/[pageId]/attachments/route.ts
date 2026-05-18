@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { attachmentPreviewText, resolveAttachmentBlockType } from "@/lib/attachmentTypes";
 import { uploadDir } from "@/lib/paths";
-import { createAttachment } from "@/lib/store";
+import { assertPageEditAccess, createAttachment } from "@/lib/store";
 import type { Attachment } from "@/lib/types";
 
 export async function POST(request: Request, context: { params: Promise<{ pageId: string }> }) {
@@ -13,6 +13,13 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { pageId } = await context.params;
+  try {
+    assertPageEditAccess(user.id, pageId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Forbidden";
+    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : 400 });
+  }
+
   const form = await request.formData();
   const file = form.get("file");
   if (!(file instanceof File)) return NextResponse.json({ error: "file is required" }, { status: 400 });

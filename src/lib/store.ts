@@ -1052,17 +1052,33 @@ function getNotebookRole(userId: string, notebookId: string): AccessRole | null 
   return row ? normalizeAccessRole(row.role) : null;
 }
 
-function assertNotebookEditAccess(userId: string, notebookId: string) {
+export function assertNotebookReadAccess(userId: string, notebookId: string) {
+  if (!getNotebookRole(userId, notebookId)) throw new Error("Forbidden");
+}
+
+export function assertNotebookEditAccess(userId: string, notebookId: string) {
   const role = getNotebookRole(userId, notebookId);
   if (!role || roleRank(role) < roleRank("editor")) throw new Error("Forbidden");
 }
 
-function assertNotebookManageAccess(userId: string, notebookId: string) {
+export function assertNotebookManageAccess(userId: string, notebookId: string) {
   const role = getNotebookRole(userId, notebookId);
   if (role !== "owner") throw new Error("Only owners can manage sharing.");
 }
 
-function assertPageEditAccess(userId: string, pageId: string) {
+export function assertPageReadAccess(userId: string, pageId: string) {
+  const row = queryOne(`
+    SELECT nm.role AS role
+    FROM pages p
+    JOIN notebooks n ON n.id = p.notebook_id
+    JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    WHERE p.id = ${sql(pageId)}
+    LIMIT 1
+  `);
+  if (!row) throw new Error("Forbidden");
+}
+
+export function assertPageEditAccess(userId: string, pageId: string) {
   const row = queryOne(`
     SELECT CASE
       WHEN nm.role = 'owner' THEN 'owner'
@@ -1082,7 +1098,13 @@ function countNotebookOwners(notebookId: string) {
   return Number(queryOne(`SELECT COUNT(*) AS count FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND role = 'owner'`)?.count ?? 0);
 }
 
-function assertAttachmentEditAccess(userId: string, attachmentId: string) {
+export function assertAttachmentReadAccess(userId: string, attachmentId: string) {
+  const row = queryOne(`SELECT page_id FROM attachments WHERE id = ${sql(attachmentId)} LIMIT 1`);
+  if (!row) throw new Error("Attachment not found");
+  assertPageReadAccess(userId, row.page_id);
+}
+
+export function assertAttachmentEditAccess(userId: string, attachmentId: string) {
   const row = queryOne(`SELECT page_id FROM attachments WHERE id = ${sql(attachmentId)} LIMIT 1`);
   if (!row) throw new Error("Attachment not found");
   assertPageEditAccess(userId, row.page_id);

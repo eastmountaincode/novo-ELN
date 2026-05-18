@@ -246,6 +246,87 @@ describe("store", () => {
     expect(viewerWorkspace.notebooks.some((candidate) => candidate.id === privateNotebookId)).toBe(false);
   });
 
+  it("enforces notebook roles for server-side page and attachment changes", async () => {
+    const {
+      createAttachment,
+      createNotebook,
+      createPage,
+      createUser,
+      deleteAttachment,
+      deleteNotebook,
+      deletePage,
+      getAttachmentForUser,
+      getWorkspace,
+      renameNotebook,
+      setPageTags,
+      shareNotebook,
+      updateAttachmentFile,
+      updateNotebookColor,
+      updatePage,
+      verifyCredentials,
+    } = await import("../src/lib/store");
+    const owner = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const viewer = createUser({ email: "viewer.permissions@example.local", firstName: "Viewer", password: "Viewer-password-2026!" });
+    const editor = createUser({ email: "editor.permissions@example.local", firstName: "Editor", password: "Editor-password-2026!" });
+    const notebookId = createNotebook(owner.id, "Permission Notebook").notebookId;
+    const pageId = createPage(owner.id, notebookId);
+    const attachmentId = createAttachment({
+      userId: owner.id,
+      pageId,
+      originalName: "permissions.txt",
+      mimeType: "text/plain",
+      size: 4,
+      storageKey: "permissions.txt",
+      blockType: "file",
+      previewText: "permissions",
+    });
+
+    shareNotebook({ actorUserId: owner.id, notebookId, email: viewer.email, role: "viewer" });
+    shareNotebook({ actorUserId: owner.id, notebookId, email: editor.email, role: "editor" });
+
+    expect(getWorkspace(viewer.id).notebooks.find((notebook) => notebook.id === notebookId)?.accessRole).toBe("viewer");
+    expect(getAttachmentForUser(viewer.id, attachmentId)?.id).toBe(attachmentId);
+    expect(() => createPage(viewer.id, notebookId)).toThrow("Forbidden");
+    expect(() => updatePage(viewer.id, pageId, { title: "Viewer edit" })).toThrow("Forbidden");
+    expect(() => setPageTags(viewer.id, pageId, ["viewer"])).toThrow("Forbidden");
+    expect(() => createAttachment({
+      userId: viewer.id,
+      pageId,
+      originalName: "viewer.txt",
+      mimeType: "text/plain",
+      size: 1,
+      storageKey: "viewer.txt",
+      blockType: "file",
+      previewText: "",
+    })).toThrow("Forbidden");
+    expect(() => updateAttachmentFile({
+      userId: viewer.id,
+      attachmentId,
+      mimeType: "text/plain",
+      size: 5,
+      storageKey: "viewer-replacement.txt",
+    })).toThrow("Forbidden");
+    expect(() => deleteAttachment(viewer.id, attachmentId)).toThrow("Forbidden");
+    expect(() => deletePage(viewer.id, pageId)).toThrow("Forbidden");
+    expect(() => renameNotebook(viewer.id, notebookId, "Viewer Rename")).toThrow("Forbidden");
+    expect(() => updateNotebookColor(viewer.id, notebookId, "#111111")).toThrow("Forbidden");
+    expect(() => shareNotebook({ actorUserId: viewer.id, notebookId, email: editor.email, role: "viewer" })).toThrow("Only owners can manage sharing.");
+
+    updatePage(editor.id, pageId, { title: "Editor edit" });
+    createAttachment({
+      userId: editor.id,
+      pageId,
+      originalName: "editor.txt",
+      mimeType: "text/plain",
+      size: 1,
+      storageKey: "editor.txt",
+      blockType: "file",
+      previewText: "",
+    });
+    expect(() => shareNotebook({ actorUserId: editor.id, notebookId, email: viewer.email, role: "editor" })).toThrow("Only owners can manage sharing.");
+    expect(() => deleteNotebook(editor.id, notebookId)).toThrow("Only owners can manage sharing.");
+  });
+
   it("uses notebook membership roles for ownership instead of creator status", async () => {
     const { createNotebook, createUser, getWorkspace, shareNotebook, unshareNotebook, verifyCredentials } = await import("../src/lib/store");
     const creator = verifyCredentials("test@example.local", "Secret-password-2026!")!;

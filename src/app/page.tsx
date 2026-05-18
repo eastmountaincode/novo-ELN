@@ -1462,7 +1462,6 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
           </button>
           {notebookMenuId === notebook.id ? (
             <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-8 z-20 w-40 border border-white/10 bg-slate-900 py-1 shadow-lg">
-              <button onClick={() => { setNotebookMenuId(null); shareNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Share</button>
               <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-slate-200 hover:bg-white/10">
                 <span>Color</span>
                 <input
@@ -1473,6 +1472,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
                   title="Notebook color"
                 />
               </label>
+              <button onClick={() => { setNotebookMenuId(null); shareNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Share</button>
               <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Rename</button>
               <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">Delete</button>
             </div>

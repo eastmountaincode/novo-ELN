@@ -41,13 +41,17 @@ describe("store", () => {
 
   it("registers a member with a private starter workspace", async () => {
     const { createUser, verifyCredentials, getWorkspace } = await import("../src/lib/store");
-    const user = createUser({ email: "new.user@example.local", name: "New User", password: "Strong-password-2026!" });
+    const user = createUser({ email: "new.user@example.local", firstName: "New", lastName: "User", password: "Strong-password-2026!" });
 
     expect(user.role).toBe("member");
+    expect(user.firstName).toBe("New");
+    expect(user.lastName).toBe("User");
     expect(verifyCredentials("new.user@example.local", "Strong-password-2026!")?.id).toBe(user.id);
 
     const workspace = getWorkspace(user.id);
     expect(workspace.user.email).toBe("new.user@example.local");
+    expect(workspace.user.firstName).toBe("New");
+    expect(workspace.user.lastName).toBe("User");
     expect(workspace.notebooks.length).toBeGreaterThan(0);
     expect(workspace.notebooks[0].pages[0].ownerId).toBe(user.id);
   });
@@ -56,7 +60,7 @@ describe("store", () => {
     const { createUser, changeOwnPassword, verifyCredentials } = await import("../src/lib/store");
     const admin = verifyCredentials("test@example.local", "Secret-password-2026!")!;
 
-    expect(() => createUser({ email: "weak@example.local", name: "Weak User", password: "simplepass" })).toThrow(
+    expect(() => createUser({ email: "weak@example.local", firstName: "Weak", lastName: "User", password: "simplepass" })).toThrow(
       "Password must be at least 12 characters and include uppercase, lowercase, number, and symbol characters.",
     );
     expect(() => changeOwnPassword(admin.id, "Secret-password-2026!", "lowercase-password-2026")).toThrow(
@@ -166,7 +170,7 @@ describe("store", () => {
   it("lets admins list users and set another user's password", async () => {
     const { createUser, verifyCredentials, listUsersForAdmin, adminSetUserPassword } = await import("../src/lib/store");
     const admin = verifyCredentials("test@example.local", "Secret-password-2026!")!;
-    const member = createUser({ email: "lab.member@example.local", name: "Lab Member", password: "Member-password-2026!" });
+    const member = createUser({ email: "lab.member@example.local", firstName: "Lab", lastName: "Member", password: "Member-password-2026!" });
 
     const users = listUsersForAdmin(admin.id);
     expect(users.some((user) => user.email === "lab.member@example.local" && user.notebookCount === 1)).toBe(true);
@@ -216,8 +220,8 @@ describe("store", () => {
 
   it("blocks non-admins from listing users or setting passwords", async () => {
     const { createUser, listUsersForAdmin, adminSetUserPassword, getAdminDataOverview } = await import("../src/lib/store");
-    const member = createUser({ email: "member@example.local", name: "Member", password: "Member-password-2026!" });
-    const other = createUser({ email: "other@example.local", name: "Other", password: "Other-password-2026!" });
+    const member = createUser({ email: "member@example.local", firstName: "Member", password: "Member-password-2026!" });
+    const other = createUser({ email: "other@example.local", firstName: "Other", password: "Other-password-2026!" });
 
     expect(() => listUsersForAdmin(member.id)).toThrow("Forbidden");
     expect(() => adminSetUserPassword(member.id, other.id, "Temporary-password-2026!")).toThrow("Forbidden");
@@ -227,7 +231,7 @@ describe("store", () => {
   it("shares individual notebooks without exposing sibling notebooks", async () => {
     const { createNotebook, createUser, getWorkspace, shareNotebook, verifyCredentials } = await import("../src/lib/store");
     const owner = verifyCredentials("test@example.local", "Secret-password-2026!")!;
-    const viewer = createUser({ email: "notebook.viewer@example.local", name: "Notebook Viewer", password: "Viewer-password-2026!" });
+    const viewer = createUser({ email: "notebook.viewer@example.local", firstName: "Notebook", lastName: "Viewer", password: "Viewer-password-2026!" });
     const sharedNotebookId = createNotebook(owner.id, "Shared Notebook").notebookId;
     const privateNotebookId = createNotebook(owner.id, "Private Notebook").notebookId;
 
@@ -242,8 +246,8 @@ describe("store", () => {
   it("uses notebook membership roles for ownership instead of creator status", async () => {
     const { createNotebook, createUser, getWorkspace, shareNotebook, unshareNotebook, verifyCredentials } = await import("../src/lib/store");
     const creator = verifyCredentials("test@example.local", "Secret-password-2026!")!;
-    const secondOwner = createUser({ email: "second.owner@example.local", name: "Second Owner", password: "Owner-password-2026!" });
-    const viewer = createUser({ email: "shared.viewer@example.local", name: "Shared Viewer", password: "Viewer-password-2026!" });
+    const secondOwner = createUser({ email: "second.owner@example.local", firstName: "Second", lastName: "Owner", password: "Owner-password-2026!" });
+    const viewer = createUser({ email: "shared.viewer@example.local", firstName: "Shared", lastName: "Viewer", password: "Viewer-password-2026!" });
     const notebookId = createNotebook(creator.id, "Multiple Owner Notebook").notebookId;
 
     shareNotebook({ actorUserId: creator.id, notebookId, email: secondOwner.email, role: "owner" });

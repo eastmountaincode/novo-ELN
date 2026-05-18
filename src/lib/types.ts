@@ -6,7 +6,8 @@ export type BlockType = "image" | "sheet" | "pdf" | "slides" | "sequence" | "fil
 export type AppUser = {
   id: string;
   email: string;
-  name: string;
+  firstName: string;
+  lastName: string;
   role: UserRole;
 };
 
@@ -56,7 +57,8 @@ export type AdminDataOverview = {
 export type ShareMember = {
   userId: string;
   email: string;
-  name: string;
+  firstName: string;
+  lastName: string;
   role: AccessRole;
 };
 
@@ -80,7 +82,8 @@ export type PageEntry = {
   body: string;
   status: PageStatus;
   ownerId: string;
-  ownerName: string;
+  ownerFirstName: string;
+  ownerLastName: string;
   createdAt: string;
   updatedAt: string;
   tags: string[];

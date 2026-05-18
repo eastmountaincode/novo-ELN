@@ -24,7 +24,7 @@ export async function login(email: string, password: string, rememberDevice = fa
   return user;
 }
 
-export async function register(input: { email: string; name: string; password: string }) {
+export async function register(input: { email: string; firstName: string; lastName?: string; password: string }) {
   const user = createUser(input);
   await setSession(user.id, defaultMaxAgeSeconds);
   return user;

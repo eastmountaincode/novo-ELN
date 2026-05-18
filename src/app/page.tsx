@@ -1709,7 +1709,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
             data-transient-menu="true"
             className={`${sidebarCollapsed ? "absolute bottom-4 left-[calc(100%+8px)] z-50 w-64 border border-white/10 bg-slate-900 p-3 shadow-2xl shadow-slate-950/40" : "sidebar-wide absolute bottom-16 left-4 right-4 border border-white/10 bg-slate-900 p-3 shadow-lg"}`}
           >
-            <p className="text-sm font-medium text-white">{workspace.user.name}</p>
+            <p className="text-sm font-medium text-white">{userDisplayName(workspace.user)}</p>
             <p className="mt-1 truncate text-xs text-slate-400">{workspace.user.email}</p>
             <p className="mt-2 text-xs capitalize text-slate-500">{workspace.user.role}</p>
             <button onClick={openAccount} className="mt-3 h-8 w-full border border-white/10 text-sm text-slate-200 hover:bg-white/10">Account settings</button>
@@ -2264,7 +2264,7 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
               <div className="space-y-2">
                 {members.map((member) => (
                   <div key={member.id} className="border border-slate-100 px-3 py-2">
-                    <div className="text-sm font-medium text-slate-950">{member.name}</div>
+                    <div className="text-sm font-medium text-slate-950">{userDisplayName(member)}</div>
                     <div className="mt-1 truncate text-xs text-slate-500">{member.email}</div>
                   </div>
                 ))}
@@ -2383,7 +2383,7 @@ function NotebookAccessList({ members, currentUserId, canManage, onRoleChange, o
         return (
         <div key={member.userId} className="grid gap-3 border border-slate-200 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_170px_36px] sm:items-center">
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-slate-950">{member.name}{isCurrentUser ? <span className="ml-1 font-normal text-slate-500">(you)</span> : null}</p>
+            <p className="truncate text-sm font-medium text-slate-950">{userDisplayName(member)}{isCurrentUser ? <span className="ml-1 font-normal text-slate-500">(you)</span> : null}</p>
             <p className="truncate text-xs text-slate-500">{member.email}</p>
           </div>
           {canManage && !isCurrentUser ? (
@@ -2425,7 +2425,7 @@ function ShareForm({ members, existingMembers, submitLabel, disabled: disabledBy
   const normalizedQuery = query.trim().toLowerCase();
   const suggestions = useMemo(() => {
     const filtered = normalizedQuery
-      ? availableMembers.filter((member) => `${member.name} ${member.email}`.toLowerCase().includes(normalizedQuery))
+      ? availableMembers.filter((member) => `${userDisplayName(member)} ${member.email}`.toLowerCase().includes(normalizedQuery))
       : availableMembers;
     return filtered.slice(0, 8);
   }, [availableMembers, normalizedQuery]);
@@ -2433,7 +2433,7 @@ function ShareForm({ members, existingMembers, submitLabel, disabled: disabledBy
 
   function selectMember(member: AppUser) {
     setSelectedMember(member);
-    setQuery(member.name);
+    setQuery(userDisplayName(member));
     setFocused(false);
     setError("");
   }
@@ -2485,7 +2485,7 @@ function ShareForm({ members, existingMembers, submitLabel, disabled: disabledBy
                   onClick={() => selectMember(member)}
                   className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-100"
                 >
-                  <span className="block truncate font-medium text-slate-950">{member.name}</span>
+                  <span className="block truncate font-medium text-slate-950">{userDisplayName(member)}</span>
                   <span className="block truncate text-xs text-slate-500">{member.email}</span>
                 </button>
               ))}
@@ -2511,7 +2511,7 @@ function ShareForm({ members, existingMembers, submitLabel, disabled: disabledBy
         </button>
       </div>
       {disabledReason ? <p className="text-xs text-slate-500">{disabledReason}</p> : null}
-      {selectedMember ? <p className="text-xs text-slate-500">Sharing with {selectedMember.name} ({selectedMember.email})</p> : null}
+      {selectedMember ? <p className="text-xs text-slate-500">Sharing with {userDisplayName(selectedMember)} ({selectedMember.email})</p> : null}
       {error ? <p className="text-sm text-rose-600">{error}</p> : null}
     </form>
   );
@@ -2578,7 +2578,7 @@ function AccountProfile({ user }: { user: AppUser }) {
           <UserCircle size={22} />
         </div>
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-slate-950">{user.name}</h2>
+          <h2 className="text-lg font-semibold text-slate-950">{userDisplayName(user)}</h2>
           <p className="mt-1 truncate text-sm text-slate-500">{user.email}</p>
         </div>
       </div>
@@ -2749,7 +2749,7 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
               {users.map((user) => (
                 <tr key={user.id}>
                   <td className="px-4 py-3">
-                    <div className="font-medium text-slate-950">{user.name}</div>
+                    <div className="font-medium text-slate-950">{userDisplayName(user)}</div>
                     <div className="mt-1 text-xs text-slate-500">{user.email}</div>
                   </td>
                   <td className="px-4 py-3 capitalize text-slate-700">{user.role}</td>
@@ -3305,6 +3305,10 @@ function projectColor(project: Pick<Project | Notebook, "color"> | undefined) {
 function canEditNotebook(user: AppUser | undefined, notebook: Notebook | undefined) {
   if (!user || !notebook) return false;
   return notebook.accessRole === "owner" || notebook.accessRole === "editor";
+}
+
+function userDisplayName(user: Pick<AppUser | ShareMember, "firstName" | "lastName" | "email">) {
+  return `${user.firstName} ${user.lastName}`.trim() || user.email;
 }
 
 const PAGE_CARD_TINT_ALPHA = 0.075;

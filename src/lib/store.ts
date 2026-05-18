@@ -37,7 +37,8 @@ export function ensureDatabase() {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL DEFAULT '',
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -127,6 +128,7 @@ export function ensureDatabase() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+  migrateUserNameColumns();
   migrateProjectsToTopLevelNotebooks();
   ensureNotebookColumns();
   ensureImportJobsColumns();
@@ -247,6 +249,45 @@ function migrateProjectsToTopLevelNotebooks() {
   }
 }
 
+function migrateUserNameColumns() {
+  const columns = querySql("PRAGMA table_info(users);");
+  const columnNames = new Set(columns.map((column) => column.name));
+  if (!columnNames.has("name") && columnNames.has("first_name") && columnNames.has("last_name")) return;
+
+  const rows = querySql(`
+    SELECT id, email, ${columnNames.has("name") ? "name" : "first_name || ' ' || last_name AS name"}, password_hash, role, created_at
+    FROM users
+  `);
+
+  execSql(`
+    PRAGMA foreign_keys=OFF;
+
+    CREATE TABLE users_new (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL DEFAULT '',
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  for (const row of rows) {
+    const { firstName, lastName } = splitDisplayName(row.name);
+    execSql(`
+      INSERT INTO users_new (id, email, first_name, last_name, password_hash, role, created_at)
+      VALUES (${sql(row.id)}, ${sql(row.email)}, ${sql(firstName)}, ${sql(lastName)}, ${sql(row.password_hash)}, ${sql(row.role)}, ${sql(row.created_at)});
+    `);
+  }
+
+  execSql(`
+    DROP TABLE users;
+    ALTER TABLE users_new RENAME TO users;
+    PRAGMA foreign_keys=ON;
+  `);
+}
+
 function ensureNotebookColumns() {
   const columns = querySql("PRAGMA table_info(notebooks);");
   const names = new Set(columns.map((column) => column.name));
@@ -304,8 +345,8 @@ function seedIfEmpty() {
   const pageThreeId = randomUUID();
 
   execSql(`
-    INSERT INTO users (id, email, name, password_hash, role)
-    VALUES (${sql(userId)}, ${sql(bootstrapEmail)}, 'Andrew', ${sql(bcrypt.hashSync(bootstrapPassword, 10))}, 'admin');
+    INSERT INTO users (id, email, first_name, last_name, password_hash, role)
+    VALUES (${sql(userId)}, ${sql(bootstrapEmail)}, 'Andrew', '', ${sql(bcrypt.hashSync(bootstrapPassword, 10))}, 'admin');
 
     INSERT INTO notebooks (id, name, owner_id, color)
     VALUES (${sql(constructNotebookId)}, 'Construct Design', ${sql(userId)}, ${sql(defaultNotebookColor(constructNotebookId))}),
@@ -341,12 +382,13 @@ function seedIfEmpty() {
 
 export function findUserByEmail(email: string) {
   ensureDatabase();
-  const row = queryOne(`SELECT id, email, name, password_hash, role FROM users WHERE lower(email) = lower(${sql(email)}) LIMIT 1`);
+  const row = queryOne(`SELECT id, email, first_name, last_name, password_hash, role FROM users WHERE lower(email) = lower(${sql(email)}) LIMIT 1`);
   if (!row) return null;
   return {
     id: row.id,
     email: row.email,
-    name: row.name,
+    firstName: row.first_name,
+    lastName: row.last_name,
     passwordHash: row.password_hash,
     role: row.role as UserRole,
   };
@@ -354,15 +396,15 @@ export function findUserByEmail(email: string) {
 
 export function findUserById(id: string): AppUser | null {
   ensureDatabase();
-  const row = queryOne(`SELECT id, email, name, role FROM users WHERE id = ${sql(id)} LIMIT 1`);
+  const row = queryOne(`SELECT id, email, first_name, last_name, role FROM users WHERE id = ${sql(id)} LIMIT 1`);
   if (!row) return null;
-  return { id: row.id, email: row.email, name: row.name, role: row.role as UserRole };
+  return { id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, role: row.role as UserRole };
 }
 
 export function verifyCredentials(email: string, password: string): AppUser | null {
   const user = findUserByEmail(email);
   if (!user || !bcrypt.compareSync(password, user.passwordHash)) return null;
-  return { id: user.id, email: user.email, name: user.name, role: user.role };
+  return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role };
 }
 
 export function getLoginRateLimit(email: string, ipAddress: string, now = Date.now()) {
@@ -420,15 +462,16 @@ function pruneLoginAttempts(now = Date.now()) {
   execSql(`DELETE FROM login_attempts WHERE last_failed_at <= ${sql(now - loginAttemptRetentionMs)};`);
 }
 
-export function createUser(input: { email: string; name: string; password: string; role?: UserRole }): AppUser {
+export function createUser(input: { email: string; firstName: string; lastName?: string; password: string; role?: UserRole }): AppUser {
   ensureDatabase();
   const email = input.email.trim().toLowerCase();
-  const name = input.name.trim();
+  const firstName = normalizeUserNamePart(input.firstName);
+  const lastName = normalizeUserNamePart(input.lastName ?? "");
   const password = input.password;
   const role = input.role ?? "member";
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter a valid email address.");
-  if (!name) throw new Error("Name is required.");
+  if (!firstName) throw new Error("First name is required.");
   validatePassword(password);
   if (!["admin", "member", "viewer"].includes(role)) throw new Error("Invalid role.");
   if (findUserByEmail(email)) throw new Error("An account with that email already exists.");
@@ -438,8 +481,8 @@ export function createUser(input: { email: string; name: string; password: strin
   const pageId = randomUUID();
 
   execSql(`
-    INSERT INTO users (id, email, name, password_hash, role)
-    VALUES (${sql(userId)}, ${sql(email)}, ${sql(name)}, ${sql(bcrypt.hashSync(password, 10))}, ${sql(role)});
+    INSERT INTO users (id, email, first_name, last_name, password_hash, role)
+    VALUES (${sql(userId)}, ${sql(email)}, ${sql(firstName)}, ${sql(lastName)}, ${sql(bcrypt.hashSync(password, 10))}, ${sql(role)});
 
     INSERT INTO notebooks (id, name, owner_id, color)
     VALUES (${sql(notebookId)}, 'Notebook', ${sql(userId)}, ${sql(defaultNotebookColor(notebookId))});
@@ -454,7 +497,7 @@ export function createUser(input: { email: string; name: string; password: strin
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created account', ${sql(userId)});
   `);
   rebuildSearchIndex();
-  return { id: userId, email, name, role };
+  return { id: userId, email, firstName, lastName, role };
 }
 
 export function listUsersForAdmin(adminUserId: string): AdminUser[] {
@@ -464,18 +507,20 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
     SELECT
       u.id,
       u.email,
-      u.name,
+      u.first_name,
+      u.last_name,
       u.role,
       u.created_at,
       COUNT(DISTINCT nm.notebook_id) AS notebook_count
     FROM users u
     LEFT JOIN notebook_members nm ON nm.user_id = u.id AND nm.role = 'owner'
     GROUP BY u.id
-    ORDER BY lower(u.name) ASC, lower(u.email) ASC
+    ORDER BY lower(u.first_name) ASC, lower(u.last_name) ASC, lower(u.email) ASC
   `).map((row) => ({
     id: row.id,
     email: row.email,
-    name: row.name,
+    firstName: row.first_name,
+    lastName: row.last_name,
     role: row.role as UserRole,
     createdAt: row.created_at,
     notebookCount: Number(row.notebook_count),
@@ -595,7 +640,7 @@ export function getWorkspace(userId: string): Workspace {
   const notebookIds = notebookRows.map((notebook) => notebook.id);
   const pageRows = notebookIds.length
     ? querySql(`
-        SELECT p.id, p.notebook_id, p.title, p.body, p.status, p.owner_id, u.name AS owner_name, p.created_at, p.updated_at
+        SELECT p.id, p.notebook_id, p.title, p.body, p.status, p.owner_id, u.first_name AS owner_first_name, u.last_name AS owner_last_name, p.created_at, p.updated_at
         FROM pages p
         JOIN users u ON u.id = p.owner_id
         WHERE p.notebook_id IN (${inList(notebookIds)})
@@ -612,14 +657,14 @@ export function getWorkspace(userId: string): Workspace {
     : [];
   const notebookMemberRows = notebookIds.length
     ? querySql(`
-        SELECT nm.notebook_id, nm.user_id, nm.role, u.email, u.name
+        SELECT nm.notebook_id, nm.user_id, nm.role, u.email, u.first_name, u.last_name
         FROM notebook_members nm
         JOIN users u ON u.id = nm.user_id
         WHERE nm.notebook_id IN (${inList(notebookIds)})
-        ORDER BY lower(u.name) ASC, lower(u.email) ASC
+        ORDER BY lower(u.first_name) ASC, lower(u.last_name) ASC, lower(u.email) ASC
       `)
     : [];
-  const memberRows = querySql(`SELECT id, email, name, role FROM users ORDER BY lower(name) ASC, lower(email) ASC`);
+  const memberRows = querySql(`SELECT id, email, first_name, last_name, role FROM users ORDER BY lower(first_name) ASC, lower(last_name) ASC, lower(email) ASC`);
 
   const tagsByPage = groupBy(tagRows, "page_id");
   const attachmentsByPage = groupBy(attachmentRows, "page_id");
@@ -643,7 +688,8 @@ export function getWorkspace(userId: string): Workspace {
       body: page.body,
       status: normalizePageStatus(page.status),
       ownerId: page.owner_id,
-      ownerName: page.owner_name,
+      ownerFirstName: page.owner_first_name,
+      ownerLastName: page.owner_last_name,
       createdAt: page.created_at,
       updatedAt: page.updated_at,
       tags: pageTagRowsToList(tagsByPage[page.id] ?? []),
@@ -668,7 +714,7 @@ export function getWorkspace(userId: string): Workspace {
 
   return {
     user,
-    members: memberRows.map((row) => ({ id: row.id, email: row.email, name: row.name, role: row.role as UserRole })),
+    members: memberRows.map((row) => ({ id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, role: row.role as UserRole })),
     notebooks,
     projects: [workspaceProject],
   };
@@ -1080,9 +1126,21 @@ function toShareMember(row: Record<string, string>): ShareMember {
   return {
     userId: row.user_id,
     email: row.email,
-    name: row.name,
+    firstName: row.first_name,
+    lastName: row.last_name,
     role: normalizeAccessRole(row.role),
   };
+}
+
+function normalizeUserNamePart(value: string) {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function splitDisplayName(value: string) {
+  const normalized = normalizeUserNamePart(value);
+  if (!normalized) return { firstName: "", lastName: "" };
+  const [firstName, ...rest] = normalized.split(" ");
+  return { firstName, lastName: rest.join(" ") };
 }
 
 function defaultNotebookColor(seed: string) {

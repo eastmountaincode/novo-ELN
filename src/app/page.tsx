@@ -3091,18 +3091,20 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
         <div className="flex items-center gap-3">
           <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
           {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
-          <PageLockControl locked={locked} canManage={canManageLock} setLocked={setPageLocked} />
         </div>
         <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} />
-        <PageStatusRow
-          status={page.status}
-          canEdit={canEdit}
-          setStatus={(status) => {
-            if (!canEdit) return;
-            patchSelectedPage({ status });
-            void savePage({ status });
-          }}
-        />
+        <div className="flex items-end justify-between gap-3">
+          <PageStatusRow
+            status={page.status}
+            canEdit={canEdit}
+            setStatus={(status) => {
+              if (!canEdit) return;
+              patchSelectedPage({ status });
+              void savePage({ status });
+            }}
+          />
+          <PageLockControl locked={locked} canManage={canManageLock} setLocked={setPageLocked} />
+        </div>
       </header>
       <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-white px-6 pb-6 pt-4">
         <RichTextEditor
@@ -3155,16 +3157,15 @@ function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; ca
       type="button"
       onClick={() => canManage && void setLocked(!locked)}
       disabled={!canManage}
-      className={`inline-flex h-8 shrink-0 items-center gap-1.5 border px-2 text-xs font-semibold ${
+      className={`grid size-7 shrink-0 place-items-center border ${
         locked
-          ? "border-slate-300 bg-slate-100 text-slate-700"
-          : "border-slate-300 bg-white text-slate-600 hover:border-slate-500 hover:text-slate-950"
+          ? "border-slate-300 bg-slate-100 text-slate-600"
+          : "border-slate-200 bg-white text-slate-400 hover:border-slate-400 hover:text-slate-700"
       } disabled:cursor-default disabled:opacity-80`}
       title={canManage ? (locked ? "Unlock page" : "Lock page") : "Locked page"}
       aria-label={canManage ? (locked ? "Unlock page" : "Lock page") : "Locked page"}
     >
-      <Icon size={14} />
-      <span>{locked ? "Locked" : "Lock"}</span>
+      <Icon size={13} />
     </button>
   );
 }

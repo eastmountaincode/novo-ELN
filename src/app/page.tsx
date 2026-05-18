@@ -70,6 +70,17 @@ const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
   { key: "title", label: "Title" },
 ];
 
+const NOTEBOOK_COLORS = [
+  "#0891b2",
+  "#2563eb",
+  "#7c3aed",
+  "#16a34a",
+  "#ca8a04",
+  "#dc2626",
+  "#0f766e",
+  "#9333ea",
+];
+
 const PAGE_STATUS_OPTIONS: Array<{ value: PageStatus; label: string }> = [
   { value: "", label: "No status" },
   { value: "Working", label: "Working" },
@@ -629,6 +640,24 @@ export default function Home() {
     setNotebookShareDialog(notebook);
   }
 
+  async function updateExistingNotebookColor(notebook: Notebook, color: string) {
+    const nextColor = normalizeColor(color);
+    setWorkspace((current) => current ? {
+      ...current,
+      projects: current.projects.map((project) => ({
+        ...project,
+        notebooks: project.notebooks.map((candidate) => candidate.id === notebook.id ? { ...candidate, color: nextColor } : candidate),
+      })),
+      notebooks: current.notebooks.map((candidate) => candidate.id === notebook.id ? { ...candidate, color: nextColor } : candidate),
+    } : current);
+    const response = await fetch(`/api/notebooks/${notebook.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ color: nextColor }),
+    });
+    if (!response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage?.id });
+  }
+
   function requestPageDelete(page: PageEntry) {
     setProjectMenuId(null);
     setNotebookMenuId(null);
@@ -924,6 +953,7 @@ export default function Home() {
           deleteProject={requestProjectDelete}
           renameNotebook={renameExistingNotebook}
           deleteNotebook={requestNotebookDelete}
+          updateNotebookColor={updateExistingNotebookColor}
           shareNotebook={shareExistingNotebook}
           createNewNotebook={createNewNotebook}
           handleLogout={handleLogout}
@@ -1408,7 +1438,7 @@ function ModalFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
-function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollapsed, accountOpen, notebookMenuId, openSearch, toggleSidebarCollapsed, setAccountOpen, setProjectMenuId, setNotebookMenuId, openHome, openAccount, selectNotebook, renameNotebook, deleteNotebook, shareNotebook, createNewNotebook, handleLogout }: { workspace: Workspace; activeView: "home" | "projectHome" | "project" | "account"; selectedProject?: Project; selectedNotebook?: Notebook; sidebarCollapsed: boolean; accountOpen: boolean; projectMenuId: string | null; notebookMenuId: string | null; expandedProjectIds: Set<string>; openSearch: () => void; toggleSidebarCollapsed: () => void; setAccountOpen: (value: boolean) => void; setProjectMenuId: (value: string | null) => void; setNotebookMenuId: (value: string | null) => void; openHome: () => void; openAccount: () => void; selectProject: (project: Project) => void; toggleProject: (project: Project) => void; selectNotebook: (project: Project, notebook: Notebook) => void; createNewProject: () => void; renameProject: (project: Project) => void; updateProjectColor: (project: Project, color: string) => void; deleteProject: (project: Project) => void; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; shareNotebook: (notebook: Notebook) => void; createNewNotebook: (projectId?: string) => void; handleLogout: () => void }) {
+function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollapsed, accountOpen, notebookMenuId, openSearch, toggleSidebarCollapsed, setAccountOpen, setProjectMenuId, setNotebookMenuId, openHome, openAccount, selectNotebook, renameNotebook, deleteNotebook, updateNotebookColor, shareNotebook, createNewNotebook, handleLogout }: { workspace: Workspace; activeView: "home" | "projectHome" | "project" | "account"; selectedProject?: Project; selectedNotebook?: Notebook; sidebarCollapsed: boolean; accountOpen: boolean; projectMenuId: string | null; notebookMenuId: string | null; expandedProjectIds: Set<string>; openSearch: () => void; toggleSidebarCollapsed: () => void; setAccountOpen: (value: boolean) => void; setProjectMenuId: (value: string | null) => void; setNotebookMenuId: (value: string | null) => void; openHome: () => void; openAccount: () => void; selectProject: (project: Project) => void; toggleProject: (project: Project) => void; selectNotebook: (project: Project, notebook: Notebook) => void; createNewProject: () => void; renameProject: (project: Project) => void; updateProjectColor: (project: Project, color: string) => void; deleteProject: (project: Project) => void; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; updateNotebookColor: (notebook: Notebook, color: string) => void; shareNotebook: (notebook: Notebook) => void; createNewNotebook: (projectId?: string) => void; handleLogout: () => void }) {
   const workspaceProject = workspace.projects[0];
   const ownNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId === workspace.user.id);
   const sharedNotebooks = workspace.notebooks.filter((notebook) => notebook.ownerId !== workspace.user.id);
@@ -1441,9 +1471,30 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
             <MoreHorizontal size={14} />
           </button>
           {notebookMenuId === notebook.id ? (
-            <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-8 z-20 w-32 border border-white/10 bg-slate-900 py-1 shadow-lg">
+            <div data-transient-menu="true" className="sidebar-wide absolute right-1 top-8 z-20 w-44 border border-white/10 bg-slate-900 py-1 shadow-lg">
               <button onClick={() => { setNotebookMenuId(null); shareNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Share</button>
               <button onClick={() => { setNotebookMenuId(null); renameNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10">Rename</button>
+              <div className="border-y border-white/10 px-3 py-2">
+                <div className="mb-2 text-xs font-medium text-slate-400">Color</div>
+                <div className="grid grid-cols-4 gap-2">
+                  {NOTEBOOK_COLORS.map((swatch) => {
+                    const selectedColor = normalizeColor(swatch) === color;
+                    return (
+                      <button
+                        key={swatch}
+                        type="button"
+                        onClick={() => updateNotebookColor(notebook, swatch)}
+                        className={`grid size-6 place-items-center border ${selectedColor ? "border-white" : "border-white/20 hover:border-white/60"}`}
+                        style={{ backgroundColor: swatch }}
+                        title={`Set notebook color ${swatch}`}
+                        aria-label={`Set notebook color ${swatch}`}
+                      >
+                        {selectedColor ? <Check size={13} className="text-white drop-shadow" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <button onClick={() => { setNotebookMenuId(null); deleteNotebook(notebook); }} className="block w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10">Delete</button>
             </div>
           ) : null}

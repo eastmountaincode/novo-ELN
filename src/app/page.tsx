@@ -149,6 +149,7 @@ type EnexImportJob = {
 export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [authError, setAuthError] = useState("");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authMode, setAuthMode] = useState<"signin" | "register">("signin");
   const [email, setEmail] = useState("");
@@ -506,18 +507,24 @@ export default function Home() {
 
   async function handleAuth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (authSubmitting) return;
     setAuthError("");
-    const response = await fetch(authMode === "register" ? "/api/auth/register" : "/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(authMode === "register" ? { email, name, password } : { email, password, rememberDevice }),
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setAuthError(body?.error ?? (authMode === "register" ? "Registration failed." : "Login failed."));
-      return;
+    setAuthSubmitting(true);
+    try {
+      const response = await fetch(authMode === "register" ? "/api/auth/register" : "/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(authMode === "register" ? { email, name, password } : { email, password, rememberDevice }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setAuthError(body?.error ?? (authMode === "register" ? "Registration failed." : "Login failed."));
+        return;
+      }
+      await refreshWorkspace();
+    } finally {
+      setAuthSubmitting(false);
     }
-    await refreshWorkspace();
   }
 
   async function handleLogout() {
@@ -955,7 +962,8 @@ export default function Home() {
                   setAuthError("");
                   setAuthMode("signin");
                 }}
-                className={`h-8 ${authMode === "signin" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                disabled={authSubmitting}
+                className={`h-8 disabled:cursor-not-allowed disabled:opacity-60 ${authMode === "signin" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}
               >
                 Sign in
               </button>
@@ -965,16 +973,17 @@ export default function Home() {
                   setAuthError("");
                   setAuthMode("register");
                 }}
-                className={`h-8 ${authMode === "register" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                disabled={authSubmitting}
+                className={`h-8 disabled:cursor-not-allowed disabled:opacity-60 ${authMode === "register" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}
               >
                 Register
               </button>
             </div>
           </div>
           {authMode === "register" ? (
-            <label className="mb-3 block text-sm font-medium text-slate-700">Name<input value={name} onChange={(event) => setName(event.target.value)} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" autoComplete="name" /></label>
+            <label className="mb-3 block text-sm font-medium text-slate-700">Name<input value={name} onChange={(event) => setName(event.target.value)} disabled={authSubmitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="name" /></label>
           ) : null}
-          <label className="mb-3 block text-sm font-medium text-slate-700">Email<input value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600" /></label>
+          <label className="mb-3 block text-sm font-medium text-slate-700">Email<input value={email} onChange={(event) => setEmail(event.target.value)} disabled={authSubmitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" /></label>
           <label className="mb-2 block text-sm font-medium text-slate-700">
             Password
             <div className="relative mt-1">
@@ -982,7 +991,8 @@ export default function Home() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 type={showPassword ? "text" : "password"}
-                className="h-10 w-full border border-slate-300 px-3 pr-10 outline-none focus:border-cyan-600"
+                disabled={authSubmitting}
+                className="h-10 w-full border border-slate-300 px-3 pr-10 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50"
                 autoComplete={authMode === "register" ? "new-password" : "current-password"}
               />
               <button
@@ -999,12 +1009,15 @@ export default function Home() {
           {authMode === "register" ? <p className="mb-4 text-xs leading-5 text-slate-500">{passwordRequirementText}</p> : null}
           {authMode === "signin" ? (
             <label className="mb-4 flex items-center gap-2 text-sm text-slate-600">
-              <input checked={rememberDevice} onChange={(event) => setRememberDevice(event.target.checked)} type="checkbox" className="size-4 border border-slate-300 accent-slate-950" />
+              <input checked={rememberDevice} onChange={(event) => setRememberDevice(event.target.checked)} disabled={authSubmitting} type="checkbox" className="size-4 border border-slate-300 accent-slate-950 disabled:cursor-not-allowed" />
               Remember this device for 14 days
             </label>
           ) : null}
           {authError ? <p className="mb-3 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{authError}</p> : null}
-          <button className="h-10 w-full bg-slate-950 text-sm font-semibold text-white hover:bg-slate-800">{authMode === "register" ? "Create account" : "Sign in"}</button>
+          <button disabled={authSubmitting} className="inline-flex h-10 w-full items-center justify-center gap-2 bg-slate-950 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-500">
+            {authSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
+            {authSubmitting ? (authMode === "register" ? "Creating account..." : "Signing in...") : (authMode === "register" ? "Create account" : "Sign in")}
+          </button>
         </form>
       </main>
     );
@@ -2968,9 +2981,9 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
   return (
     <section className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-white">
       <header className="border-b border-slate-200 px-6 py-4">
-        <div className="mb-2 flex items-center gap-2 text-sm text-slate-500"><span>{selectedNotebook?.name}</span>{saving ? <span className="ml-2 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}</div>
         <div className="flex items-center gap-3">
           <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
+          {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
         </div>
         <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} />
         <PageStatusRow

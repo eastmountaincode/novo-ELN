@@ -2180,12 +2180,15 @@ function NotebookSettingsView({ notebook, user, renameNotebook, deleteNotebook, 
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-4">
-          <NotebookStat label="Pages" value={notebook.pages.length.toLocaleString()} />
-          <NotebookStat label="Attachments" value={attachmentCount.toLocaleString()} />
-          <NotebookStat label="Storage" value={formatBytes(attachmentBytes)} />
-          <NotebookStat label="Members" value={memberCount.toLocaleString()} />
-        </div>
+        <section className="border border-slate-200 bg-white p-4">
+          <h2 className="text-base font-semibold text-slate-950">Summary</h2>
+          <dl className="mt-3 max-w-md divide-y divide-slate-100 text-sm">
+            <SummaryRow label="Pages" value={notebook.pages.length.toLocaleString()} />
+            <SummaryRow label="Attachments" value={attachmentCount.toLocaleString()} />
+            <SummaryRow label="Storage" value={formatBytes(attachmentBytes)} />
+            <SummaryRow label="Members" value={memberCount.toLocaleString()} />
+          </dl>
+        </section>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
           <section className="border border-slate-200 bg-white p-4">
@@ -2220,11 +2223,11 @@ function NotebookSettingsView({ notebook, user, renameNotebook, deleteNotebook, 
   );
 }
 
-function NotebookStat({ label, value }: { label: string; value: string }) {
+function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-slate-200 bg-white p-4">
-      <p className="text-sm text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-slate-950">{value}</p>
+    <div className="grid grid-cols-[minmax(0,1fr)_minmax(120px,auto)] gap-6 py-2">
+      <dt className="text-slate-500">{label}</dt>
+      <dd className="text-left font-medium text-slate-950">{value}</dd>
     </div>
   );
 }

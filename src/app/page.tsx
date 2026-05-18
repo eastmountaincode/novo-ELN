@@ -3150,15 +3150,14 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
 
 function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; canManage: boolean; setLocked: (locked: boolean) => Promise<void> }) {
   const Icon = locked ? Lock : Unlock;
-  if (!canManage && !locked) return null;
+  if (!canManage) return null;
   return (
     <button
       type="button"
-      onClick={() => canManage && void setLocked(!locked)}
-      disabled={!canManage}
-      className="inline-flex h-7 shrink-0 items-center gap-1.5 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-default disabled:bg-slate-50 disabled:text-slate-500"
-      title={canManage ? (locked ? "Unlock page" : "Lock page") : "Locked page"}
-      aria-label={canManage ? (locked ? "Unlock page" : "Lock page") : "Locked page"}
+      onClick={() => void setLocked(!locked)}
+      className="inline-flex h-7 shrink-0 items-center gap-1.5 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
+      title={locked ? "Unlock page" : "Lock page"}
+      aria-label={locked ? "Unlock page" : "Lock page"}
     >
       <Icon size={12} />
       <span>{locked ? "Locked page" : "Lock page"}</span>

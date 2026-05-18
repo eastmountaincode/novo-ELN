@@ -3069,7 +3069,7 @@ function PageStatusRow({ status, setStatus }: { status: PageStatus; setStatus: (
       <select
         value={status}
         onChange={(event) => setStatus(event.target.value as PageStatus)}
-        className="h-8 w-40 border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500"
+        className="h-8 w-40 cursor-pointer border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500"
         aria-label="Page status"
       >
         {PAGE_STATUS_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}

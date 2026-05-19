@@ -610,8 +610,9 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
+    const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
     setSaving(response.ok ? "Saved" : "Save failed");
-    if (response.ok) patchSelectedPage({ ...patch, updatedAt: "Just now" });
+    if (response.ok) patchSelectedPage({ ...patch, ...(result?.changed ? { updatedAt: "Just now" } : {}) });
   }
 
   async function setSelectedPageTags(tags: string[]) {

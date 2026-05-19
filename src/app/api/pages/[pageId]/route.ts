@@ -10,16 +10,23 @@ export async function PATCH(request: Request, context: { params: Promise<{ pageI
   const body = (await request.json().catch(() => null)) as { title?: string; body?: string; status?: PageStatus; locked?: boolean } | null;
   if (!body) return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   try {
+    let changed = false;
     const contentPatch = {
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(body.body !== undefined ? { body: body.body } : {}),
       ...(body.status !== undefined ? { status: body.status } : {}),
     };
     const hasContentPatch = Object.keys(contentPatch).length > 0;
-    if (typeof body.locked === "boolean" && !body.locked) setPageLocked(user.id, pageId, false);
-    if (hasContentPatch) updatePage(user.id, pageId, contentPatch);
-    if (typeof body.locked === "boolean" && body.locked) setPageLocked(user.id, pageId, true);
-    return NextResponse.json({ ok: true });
+    if (typeof body.locked === "boolean" && !body.locked) {
+      setPageLocked(user.id, pageId, false);
+      changed = true;
+    }
+    if (hasContentPatch) changed = updatePage(user.id, pageId, contentPatch) || changed;
+    if (typeof body.locked === "boolean" && body.locked) {
+      setPageLocked(user.id, pageId, true);
+      changed = true;
+    }
+    return NextResponse.json({ ok: true, changed });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not update page";
     const status = message === "Forbidden" || message === "Only owners can lock pages." ? 403 : message === "Page is locked." ? 423 : 400;

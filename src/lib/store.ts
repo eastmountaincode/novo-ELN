@@ -796,14 +796,17 @@ export function createPage(userId: string, notebookId: string) {
 export function updatePage(userId: string, pageId: string, patch: { title?: string; body?: string; status?: PageStatus }) {
   ensureDatabase();
   assertPageEditAccess(userId, pageId);
+  const row = queryOne(`SELECT title, body, status FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+  if (!row) throw new Error("Page not found");
   const assignments: string[] = [];
-  if (patch.title !== undefined) assignments.push(`title = ${sql(patch.title)}`);
-  if (patch.body !== undefined) assignments.push(`body = ${sql(patch.body)}`);
-  if (patch.status !== undefined) assignments.push(`status = ${sql(normalizePageStatus(patch.status))}`);
-  if (!assignments.length) return;
+  const normalizedStatus = patch.status !== undefined ? normalizePageStatus(patch.status) : undefined;
+  if (patch.title !== undefined && patch.title !== row.title) assignments.push(`title = ${sql(patch.title)}`);
+  if (patch.body !== undefined && patch.body !== row.body) assignments.push(`body = ${sql(patch.body)}`);
+  if (normalizedStatus !== undefined && normalizedStatus !== normalizePageStatus(row.status)) assignments.push(`status = ${sql(normalizedStatus)}`);
+  if (!assignments.length) return false;
   assignments.push("updated_at = datetime('now')");
 
-  const summary = patch.status !== undefined ? `Status changed to ${normalizePageStatus(patch.status) || "No status"}` : "Edited page";
+  const summary = normalizedStatus !== undefined && normalizedStatus !== normalizePageStatus(row.status) ? `Status changed to ${normalizedStatus || "No status"}` : "Edited page";
   execSql(`
     UPDATE pages SET ${assignments.join(", ")} WHERE id = ${sql(pageId)};
     INSERT INTO page_versions (id, page_id, summary, created_by)
@@ -811,6 +814,7 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
   `);
   rebuildSearchIndex();
+  return true;
 }
 
 export function setPageLocked(userId: string, pageId: string, locked: boolean) {

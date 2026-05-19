@@ -106,6 +106,7 @@ export function attachmentToInlineAttrs(attachment: Attachment): InlineAttachmen
 
 export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, readOnly = false }: RichTextEditorProps) {
   const lastPageId = useRef(pageId);
+  const dirty = useRef(false);
   const AttachmentCard = useMemo(() => createAttachmentCardExtension({ openSpreadsheet, openPresentation, readOnly }), [openPresentation, openSpreadsheet, readOnly]);
   const editor = useEditor({
     immediatelyRender: false,
@@ -139,10 +140,16 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       },
     },
     onUpdate: ({ editor: activeEditor }) => {
-      if (!readOnly) onChange(editorDocumentToBody(activeEditor.getJSON()));
+      if (!readOnly) {
+        dirty.current = true;
+        onChange(editorDocumentToBody(activeEditor.getJSON()));
+      }
     },
     onBlur: ({ editor: activeEditor }) => {
-      if (!readOnly) onBlur(editorDocumentToBody(activeEditor.getJSON()));
+      if (!readOnly && dirty.current) {
+        dirty.current = false;
+        onBlur(editorDocumentToBody(activeEditor.getJSON()));
+      }
     },
   });
 
@@ -156,6 +163,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     const currentBody = editorDocumentToBody(editor.getJSON());
     if (lastPageId.current === pageId && currentBody === value) return;
     lastPageId.current = pageId;
+    dirty.current = false;
     let canceled = false;
     queueMicrotask(() => {
       if (!canceled && !editor.isDestroyed) {

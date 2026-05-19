@@ -20,6 +20,7 @@ import {
   FileSpreadsheet,
   FileText,
   GripVertical,
+  History,
   Home as HomeIcon,
   Image as ImageIcon,
   KeyRound,
@@ -47,7 +48,7 @@ import { PresentationModal } from "@/components/PresentationModal";
 import { INLINE_ATTACHMENT_DRAG_TYPE, RichTextEditor, attachmentToInlineAttrs, type InlineAttachmentAttrs } from "@/components/RichTextEditor";
 import { SpreadsheetModal } from "@/components/SpreadsheetModal";
 import { bodyToEditorText } from "@/lib/editor";
-import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
+import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageEntry, PageStatus, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
 
 const blockIcons: Record<BlockType, typeof ImageIcon> = {
   image: ImageIcon,
@@ -3106,50 +3107,78 @@ function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCa
 
 function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: () => void; setPageTags: (tags: string[]) => Promise<void>; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [activityEvents, setActivityEvents] = useState<AuditEvent[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState("");
   const attachmentCount = page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
   const color = projectColor(selectedNotebook ?? selectedProject);
   const locked = Boolean(page.lockedAt);
 
+  async function openActivity() {
+    setActivityOpen(true);
+    setActivityLoading(true);
+    setActivityError("");
+    const response = await fetch(`/api/pages/${page.id}/activity`);
+    const body = (await response.json().catch(() => null)) as { events?: AuditEvent[]; error?: string } | null;
+    setActivityLoading(false);
+    if (!response.ok) {
+      setActivityError(body?.error ?? "Could not load activity.");
+      return;
+    }
+    setActivityEvents(body?.events ?? []);
+  }
+
   return (
-    <section className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-white">
-      <header className="border-b border-slate-200 px-6 py-4">
-        <div className="flex items-center gap-3">
-          <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
-          {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
-        </div>
-        <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} />
-        <div className="flex items-end justify-between gap-3">
-          <PageStatusRow
-            status={page.status}
-            canEdit={canEdit}
-            setStatus={(status) => {
-              if (!canEdit) return;
-              patchSelectedPage({ status });
-              void savePage({ status });
+    <>
+      <section className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-white">
+        <header className="border-b border-slate-200 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
+            <button
+              type="button"
+              onClick={() => void openActivity()}
+              className="grid size-8 shrink-0 place-items-center border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+              title="Page activity"
+              aria-label="Page activity"
+            >
+              <History size={16} />
+            </button>
+            {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
+          </div>
+          <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} />
+          <div className="flex items-end justify-between gap-3">
+            <PageStatusRow
+              status={page.status}
+              canEdit={canEdit}
+              setStatus={(status) => {
+                if (!canEdit) return;
+                patchSelectedPage({ status });
+                void savePage({ status });
+              }}
+            />
+            <PageLockControl locked={locked} canManage={canManageLock} setLocked={setPageLocked} />
+          </div>
+        </header>
+        <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-white px-6 pb-6 pt-4">
+          <RichTextEditor
+            key={`${page.id}-${canEdit ? "edit" : "read"}`}
+            pageId={page.id}
+            value={page.body}
+            onChange={(body) => {
+              patchSelectedPage({ body });
+              if (canEdit) markUnsaved();
             }}
+            onBlur={(body) => void savePage({ body })}
+            uploadInlineFile={uploadInlineFile}
+            onInlineAttachmentInserted={onInlineAttachmentInserted}
+            openSpreadsheet={openSpreadsheet}
+            openPresentation={openPresentation}
+            readOnly={!canEdit}
           />
-          <PageLockControl locked={locked} canManage={canManageLock} setLocked={setPageLocked} />
-        </div>
-      </header>
-      <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-white px-6 pb-6 pt-4">
-        <RichTextEditor
-          key={`${page.id}-${canEdit ? "edit" : "read"}`}
-          pageId={page.id}
-          value={page.body}
-          onChange={(body) => {
-            patchSelectedPage({ body });
-            if (canEdit) markUnsaved();
-          }}
-          onBlur={(body) => void savePage({ body })}
-          uploadInlineFile={uploadInlineFile}
-          onInlineAttachmentInserted={onInlineAttachmentInserted}
-          openSpreadsheet={openSpreadsheet}
-          openPresentation={openPresentation}
-          readOnly={!canEdit}
-        />
-        <div className="mt-4 border border-slate-200 bg-slate-50 p-2">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="mt-4 border border-slate-200 bg-slate-50 p-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
             <button
               type="button"
               onClick={() => setAttachmentsOpen((open) => !open)}
@@ -3162,20 +3191,85 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
               <span className="bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">{attachmentLabel}</span>
             </button>
             {canEdit ? <button onClick={openFilePicker} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100"><Plus size={14} />File</button> : null}
+            </div>
+            {attachmentsOpen ? (
+              page.attachments.length ? (
+                <div className="mt-3 grid max-h-80 gap-2 overflow-y-auto scroll-contained pr-1">
+                  {page.attachments.map((attachment, index) => <AttachmentRow key={attachment.id} index={index + 1} attachment={attachment} canEdit={canEdit} onDelete={() => void deleteAttachment(attachment)} />)}
+                </div>
+              ) : (
+                <p className="mt-3 border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">No files attached yet.</p>
+              )
+            ) : null}
           </div>
-          {attachmentsOpen ? (
-            page.attachments.length ? (
-              <div className="mt-3 grid max-h-80 gap-2 overflow-y-auto scroll-contained pr-1">
-                {page.attachments.map((attachment, index) => <AttachmentRow key={attachment.id} index={index + 1} attachment={attachment} canEdit={canEdit} onDelete={() => void deleteAttachment(attachment)} />)}
+        </div>
+      </section>
+      {activityOpen ? (
+        <PageActivityDrawer
+          events={activityEvents}
+          loading={activityLoading}
+          error={activityError}
+          onRefresh={openActivity}
+          onClose={() => setActivityOpen(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function PageActivityDrawer({ events, loading, error, onRefresh, onClose }: { events: AuditEvent[]; loading: boolean; error: string; onRefresh: () => Promise<void>; onClose: () => void }) {
+  return (
+    <aside className="fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[calc(100vw-32px)] flex-col border-l border-slate-200 bg-white shadow-2xl">
+      <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">Activity</h2>
+          <p className="mt-0.5 text-sm text-slate-500">Page history and audit events.</p>
+        </div>
+        <button type="button" onClick={onClose} className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-950" aria-label="Close activity">
+          <X size={16} />
+        </button>
+      </div>
+      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-2">
+        <span className="text-sm font-medium text-slate-700">All events</span>
+        <button type="button" onClick={() => void onRefresh()} disabled={loading} className="inline-flex h-8 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:text-slate-400">
+          {loading ? <Loader2 size={14} className="animate-spin" /> : <History size={14} />}
+          Refresh
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        {error ? <p className="mb-4 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+        {loading && !events.length ? (
+          <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Loading activity...</div>
+        ) : null}
+        {!loading && !events.length && !error ? <p className="text-sm text-slate-500">No activity recorded for this page yet.</p> : null}
+        <div className="space-y-5">
+          {events.map((event) => (
+            <div key={event.id} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3">
+              <div className="grid size-8 place-items-center rounded-full bg-slate-950 text-xs font-semibold text-white">{auditInitials(event)}</div>
+              <div className="min-w-0">
+                <p className="text-sm leading-5 text-slate-700">
+                  <span className="font-semibold text-slate-950">{auditActorName(event)}</span>{" "}
+                  {event.summary}
+                  {event.eventCount > 1 ? <span className="ml-1 text-xs text-slate-500">({event.eventCount} saves)</span> : null}
+                </p>
+                <p className="mt-1 text-xs font-medium text-blue-700">{formatDateTime(event.updatedAt)}</p>
               </div>
-            ) : (
-              <p className="mt-3 border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">No files attached yet.</p>
-            )
-          ) : null}
+            </div>
+          ))}
         </div>
       </div>
-    </section>
+    </aside>
   );
+}
+
+function auditActorName(event: AuditEvent) {
+  return [event.actorFirstName, event.actorLastName].filter(Boolean).join(" ") || event.actorEmail || "Unknown user";
+}
+
+function auditInitials(event: AuditEvent) {
+  const nameParts = [event.actorFirstName, event.actorLastName].filter(Boolean);
+  if (nameParts.length) return nameParts.map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  return (event.actorEmail || "?").slice(0, 2).toUpperCase();
 }
 
 function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; canManage: boolean; setLocked: (locked: boolean) => Promise<void> }) {

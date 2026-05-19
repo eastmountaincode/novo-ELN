@@ -104,7 +104,7 @@ describe("store", () => {
   it("does not version or timestamp no-op page saves", async () => {
     const { queryOne } = await import("../src/lib/sqlite");
     const { bodyToEditorDocument, editorDocumentToBody } = await import("../src/lib/editor");
-    const { verifyCredentials, getWorkspace, createPage, updatePage, setPageTags } = await import("../src/lib/store");
+    const { getPageActivityEvents, verifyCredentials, getWorkspace, createPage, updatePage, setPageTags } = await import("../src/lib/store");
     const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
     const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
@@ -121,6 +121,52 @@ describe("store", () => {
     const versionCountAfter = queryOne(`SELECT COUNT(*) AS count FROM page_versions WHERE page_id = '${pageId}'`)?.count;
     expect(after?.updated_at).toBe(before?.updated_at);
     expect(versionCountAfter).toBe(versionCountBefore);
+    expect(getPageActivityEvents(user.id, pageId).filter((event) => event.action !== "page.created")).toHaveLength(2);
+  });
+
+  it("records page activity and coalesces body edits within five minutes", async () => {
+    const { execSql } = await import("../src/lib/sqlite");
+    const { createAttachment, createPage, getPageActivityEvents, getWorkspace, setPageLocked, setPageTags, updatePage, verifyCredentials } = await import("../src/lib/store");
+    const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const notebookId = getWorkspace(user.id).notebooks[0].id;
+    const pageId = createPage(user.id, notebookId);
+
+    updatePage(user.id, pageId, { title: "Audit note" });
+    updatePage(user.id, pageId, { body: "first body edit" });
+    updatePage(user.id, pageId, { body: "second body edit" });
+    setPageTags(user.id, pageId, ["Megan"]);
+    updatePage(user.id, pageId, { status: "Needs review" });
+    setPageLocked(user.id, pageId, true);
+    setPageLocked(user.id, pageId, false);
+    createAttachment({
+      userId: user.id,
+      pageId,
+      originalName: "audit.pdf",
+      mimeType: "application/pdf",
+      size: 10,
+      storageKey: "audit.pdf",
+      blockType: "pdf",
+      previewText: "",
+    });
+
+    let events = getPageActivityEvents(user.id, pageId);
+    expect(events.some((event) => event.action === "page.title.updated" && event.summary.includes("Audit note"))).toBe(true);
+    expect(events.some((event) => event.action === "page.tags.updated" && event.summary.includes("Megan"))).toBe(true);
+    expect(events.some((event) => event.action === "page.status.updated" && event.summary.includes("Needs review"))).toBe(true);
+    expect(events.some((event) => event.action === "page.locked")).toBe(true);
+    expect(events.some((event) => event.action === "page.unlocked")).toBe(true);
+    expect(events.some((event) => event.action === "attachment.created" && event.summary.includes("audit.pdf"))).toBe(true);
+
+    let bodyEvents = events.filter((event) => event.action === "page.body.updated");
+    expect(bodyEvents).toHaveLength(1);
+    expect(bodyEvents[0].eventCount).toBe(2);
+
+    execSql(`UPDATE audit_events SET updated_at = datetime('now', '-6 minutes') WHERE id = '${bodyEvents[0].id}';`);
+    updatePage(user.id, pageId, { body: "third body edit after the audit window" });
+
+    events = getPageActivityEvents(user.id, pageId);
+    bodyEvents = events.filter((event) => event.action === "page.body.updated");
+    expect(bodyEvents).toHaveLength(2);
   });
 
   it("registers a member with a private starter workspace", async () => {

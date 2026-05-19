@@ -75,6 +75,24 @@ export type Attachment = {
   updatedAt: string;
 };
 
+export type AuditEvent = {
+  id: string;
+  entityType: "page" | "notebook" | "attachment";
+  entityId: string;
+  pageId: string;
+  notebookId: string;
+  actorUserId: string;
+  actorFirstName: string;
+  actorLastName: string;
+  actorEmail: string;
+  action: string;
+  summary: string;
+  metadata: Record<string, unknown>;
+  eventCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type PageEntry = {
   id: string;
   notebookId: string;

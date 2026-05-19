@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
-import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
+import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
 import { bodyToEditorDocument, editorDocumentToBody, removeAttachmentCardsFromBody } from "./editor";
 import { uploadDir } from "./paths";
 import { rebuildSearchIndex } from "./search";
@@ -16,6 +16,7 @@ const passwordRequirementMessage = "Password must be at least 12 characters and 
 const loginRateLimitWindowMs = 15 * 60 * 1000;
 const loginRateLimitMaxFailures = 10;
 const loginAttemptRetentionMs = 24 * 60 * 60 * 1000;
+export const pageBodyEditAuditCoalesceSeconds = 5 * 60;
 
 function validatePassword(password: string) {
   if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
@@ -107,6 +108,25 @@ export function ensureDatabase() {
       created_by TEXT NOT NULL REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      page_id TEXT,
+      notebook_id TEXT,
+      actor_user_id TEXT,
+      action TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      event_count INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS audit_events_page_idx ON audit_events(page_id, updated_at);
+    CREATE INDEX IF NOT EXISTS audit_events_notebook_idx ON audit_events(notebook_id, updated_at);
+    CREATE INDEX IF NOT EXISTS audit_events_actor_idx ON audit_events(actor_user_id, updated_at);
 
     CREATE TABLE IF NOT EXISTS import_jobs (
       id TEXT PRIMARY KEY,
@@ -737,6 +757,34 @@ export function getWorkspace(userId: string): Workspace {
   };
 }
 
+export function getPageActivityEvents(userId: string, pageId: string): AuditEvent[] {
+  ensureDatabase();
+  assertPageReadAccess(userId, pageId);
+  return querySql(`
+    SELECT
+      ae.id,
+      ae.entity_type,
+      ae.entity_id,
+      COALESCE(ae.page_id, '') AS page_id,
+      COALESCE(ae.notebook_id, '') AS notebook_id,
+      COALESCE(ae.actor_user_id, '') AS actor_user_id,
+      COALESCE(u.first_name, '') AS actor_first_name,
+      COALESCE(u.last_name, '') AS actor_last_name,
+      COALESCE(u.email, '') AS actor_email,
+      ae.action,
+      ae.summary,
+      ae.metadata_json,
+      ae.event_count,
+      ae.created_at,
+      ae.updated_at
+    FROM audit_events ae
+    LEFT JOIN users u ON u.id = ae.actor_user_id
+    WHERE ae.page_id = ${sql(pageId)}
+    ORDER BY datetime(ae.updated_at) DESC, datetime(ae.created_at) DESC, ae.rowid DESC
+    LIMIT 200
+  `).map(toAuditEvent);
+}
+
 export function createNotebook(userId: string, name = "New Notebook") {
   ensureDatabase();
   const notebookId = randomUUID();
@@ -751,6 +799,8 @@ export function createNotebook(userId: string, name = "New Notebook") {
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created notebook', ${sql(userId)});
   `);
+  recordNotebookAuditEvent(userId, notebookId, "notebook.created", `created notebook ${quoteAuditValue(name)}`, { name });
+  recordPageAuditEvent(userId, pageId, "page.created", "created page", { source: "notebook.create" });
   rebuildSearchIndex();
   return { notebookId, pageId };
 }
@@ -758,9 +808,15 @@ export function createNotebook(userId: string, name = "New Notebook") {
 export function renameNotebook(userId: string, notebookId: string, name: string) {
   ensureDatabase();
   assertNotebookEditAccess(userId, notebookId);
+  const current = queryOne(`SELECT name FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`);
   const nextName = name.trim();
   if (!nextName) throw new Error("Notebook name is required");
+  if (current?.name === nextName) return;
   execSql(`UPDATE notebooks SET name = ${sql(nextName)}, updated_at = datetime('now') WHERE id = ${sql(notebookId)};`);
+  recordNotebookAuditEvent(userId, notebookId, "notebook.renamed", `renamed notebook from ${quoteAuditValue(current?.name ?? "Untitled")} to ${quoteAuditValue(nextName)}`, {
+    oldName: current?.name ?? "",
+    newName: nextName,
+  });
   rebuildSearchIndex();
 }
 
@@ -768,12 +824,22 @@ export function updateNotebookColor(userId: string, notebookId: string, color: s
   ensureDatabase();
   assertNotebookEditAccess(userId, notebookId);
   const nextColor = normalizeNotebookColor(color);
+  const current = queryOne(`SELECT color FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`);
+  if (normalizeNotebookColor(current?.color) === nextColor) return;
   execSql(`UPDATE notebooks SET color = ${sql(nextColor)}, updated_at = datetime('now') WHERE id = ${sql(notebookId)};`);
+  recordNotebookAuditEvent(userId, notebookId, "notebook.color.updated", "changed notebook color", {
+    oldColor: normalizeNotebookColor(current?.color),
+    newColor: nextColor,
+  });
 }
 
 export function deleteNotebook(userId: string, notebookId: string) {
   ensureDatabase();
   assertNotebookManageAccess(userId, notebookId);
+  const notebook = queryOne(`SELECT name FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`);
+  recordNotebookAuditEvent(userId, notebookId, "notebook.deleted", `deleted notebook ${quoteAuditValue(notebook?.name ?? "Untitled")}`, {
+    name: notebook?.name ?? "",
+  });
   execSql(`DELETE FROM notebooks WHERE id = ${sql(notebookId)};`);
   rebuildSearchIndex();
 }
@@ -789,6 +855,7 @@ export function createPage(userId: string, notebookId: string) {
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created page', ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
   `);
+  recordPageAuditEvent(userId, pageId, "page.created", "created page");
   rebuildSearchIndex();
   return pageId;
 }
@@ -796,23 +863,71 @@ export function createPage(userId: string, notebookId: string) {
 export function updatePage(userId: string, pageId: string, patch: { title?: string; body?: string; status?: PageStatus }) {
   ensureDatabase();
   assertPageEditAccess(userId, pageId);
-  const row = queryOne(`SELECT title, body, status FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+  const row = queryOne(`SELECT notebook_id, title, body, status FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
   if (!row) throw new Error("Page not found");
   const assignments: string[] = [];
   const normalizedStatus = patch.status !== undefined ? normalizePageStatus(patch.status) : undefined;
-  if (patch.title !== undefined && patch.title !== row.title) assignments.push(`title = ${sql(patch.title)}`);
-  if (patch.body !== undefined && normalizePageBody(patch.body) !== normalizePageBody(String(row.body ?? ""))) assignments.push(`body = ${sql(patch.body)}`);
-  if (normalizedStatus !== undefined && normalizedStatus !== normalizePageStatus(row.status)) assignments.push(`status = ${sql(normalizedStatus)}`);
+  const previousTitle = String(row.title ?? "");
+  const previousBody = String(row.body ?? "");
+  const previousStatus = normalizePageStatus(row.status);
+  const titleChanged = patch.title !== undefined && patch.title !== previousTitle;
+  const bodyChanged = patch.body !== undefined && normalizePageBody(patch.body) !== normalizePageBody(previousBody);
+  const statusChanged = normalizedStatus !== undefined && normalizedStatus !== previousStatus;
+  if (titleChanged) assignments.push(`title = ${sql(patch.title)}`);
+  if (bodyChanged) assignments.push(`body = ${sql(patch.body)}`);
+  if (statusChanged) assignments.push(`status = ${sql(normalizedStatus)}`);
   if (!assignments.length) return false;
   assignments.push("updated_at = datetime('now')");
 
-  const summary = normalizedStatus !== undefined && normalizedStatus !== normalizePageStatus(row.status) ? `Status changed to ${normalizedStatus || "No status"}` : "Edited page";
+  const summary = statusChanged ? `Status changed to ${normalizedStatus || "No status"}` : titleChanged ? "Renamed page" : "Edited page";
   execSql(`
     UPDATE pages SET ${assignments.join(", ")} WHERE id = ${sql(pageId)};
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, ${sql(summary)}, ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
   `);
+  if (titleChanged) {
+    recordAuditEvent({
+      entityType: "page",
+      entityId: pageId,
+      pageId,
+      notebookId: row.notebook_id,
+      actorUserId: userId,
+      action: "page.title.updated",
+      summary: `renamed page from ${quoteAuditValue(previousTitle || "Untitled")} to ${quoteAuditValue(patch.title || "Untitled")}`,
+      metadata: { oldTitle: previousTitle, newTitle: patch.title ?? "" },
+    });
+  }
+  if (statusChanged) {
+    recordAuditEvent({
+      entityType: "page",
+      entityId: pageId,
+      pageId,
+      notebookId: row.notebook_id,
+      actorUserId: userId,
+      action: "page.status.updated",
+      summary: `changed status from ${quoteAuditValue(statusLabel(previousStatus))} to ${quoteAuditValue(statusLabel(normalizedStatus))}`,
+      metadata: { oldStatus: previousStatus, newStatus: normalizedStatus },
+    });
+  }
+  if (bodyChanged) {
+    recordAuditEvent({
+      entityType: "page",
+      entityId: pageId,
+      pageId,
+      notebookId: row.notebook_id,
+      actorUserId: userId,
+      action: "page.body.updated",
+      summary: "edited page body",
+      metadata: {
+        oldHash: hashAuditValue(normalizePageBody(previousBody)),
+        newHash: hashAuditValue(normalizePageBody(patch.body ?? "")),
+        oldLength: normalizePageBody(previousBody).length,
+        newLength: normalizePageBody(patch.body ?? "").length,
+      },
+      coalesce: true,
+    });
+  }
   rebuildSearchIndex();
   return true;
 }
@@ -835,6 +950,16 @@ export function setPageLocked(userId: string, pageId: string, locked: boolean) {
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, ${sql(locked ? "Locked page" : "Unlocked page")}, ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(page.notebook_id)};
   `);
+  recordAuditEvent({
+    entityType: "page",
+    entityId: pageId,
+    pageId,
+    notebookId: page.notebook_id,
+    actorUserId: userId,
+    action: locked ? "page.locked" : "page.unlocked",
+    summary: locked ? "locked page" : "unlocked page",
+    metadata: { locked },
+  });
   rebuildSearchIndex();
 }
 
@@ -844,6 +969,7 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
   const normalizedTags = normalizePageTags(tags);
   const currentTags = pageTagRowsToList(querySql(`SELECT tag FROM page_tags WHERE page_id = ${sql(pageId)} ORDER BY rowid ASC`));
   if (tagListsEqual(normalizedTags, currentTags)) return false;
+  const page = queryOne(`SELECT notebook_id FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
   execSql(`
     DELETE FROM page_tags WHERE page_id = ${sql(pageId)};
     ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
@@ -852,6 +978,21 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
     VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Updated tags', ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
   `);
+  recordAuditEvent({
+    entityType: "page",
+    entityId: pageId,
+    pageId,
+    notebookId: page?.notebook_id ?? "",
+    actorUserId: userId,
+    action: "page.tags.updated",
+    summary: tagAuditSummary(currentTags, normalizedTags),
+    metadata: {
+      oldTags: currentTags,
+      newTags: normalizedTags,
+      addedTags: normalizedTags.filter((tag) => !currentTags.includes(tag)),
+      removedTags: currentTags.filter((tag) => !normalizedTags.includes(tag)),
+    },
+  });
   rebuildSearchIndex();
   return true;
 }
@@ -859,8 +1000,18 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
 export function deletePage(userId: string, pageId: string) {
   ensureDatabase();
   assertPageEditAccess(userId, pageId);
-  const page = queryOne(`SELECT notebook_id FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+  const page = queryOne(`SELECT notebook_id, title FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
   if (!page) throw new Error("Page not found");
+  recordAuditEvent({
+    entityType: "page",
+    entityId: pageId,
+    pageId,
+    notebookId: page.notebook_id,
+    actorUserId: userId,
+    action: "page.deleted",
+    summary: `deleted page ${quoteAuditValue(page.title || "Untitled")}`,
+    metadata: { title: page.title ?? "" },
+  });
   execSql(`
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(page.notebook_id)};
     DELETE FROM pages WHERE id = ${sql(pageId)};
@@ -889,6 +1040,13 @@ export function createAttachment(input: {
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(input.pageId)};
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(input.pageId)});
   `);
+  recordPageAuditEvent(input.userId, input.pageId, "attachment.created", `added attachment ${quoteAuditValue(input.originalName)}`, {
+    attachmentId: id,
+    originalName: input.originalName,
+    mimeType: input.mimeType,
+    size: input.size,
+    blockType: input.blockType,
+  });
   rebuildSearchIndex();
   return id;
 }
@@ -927,6 +1085,13 @@ export function updateAttachmentFile(input: {
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(attachment.pageId)};
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(attachment.pageId)});
   `);
+  recordPageAuditEvent(input.userId, attachment.pageId, "attachment.updated", `updated attachment ${quoteAuditValue(attachment.originalName)}`, {
+    attachmentId: input.attachmentId,
+    originalName: attachment.originalName,
+    oldSize: attachment.size,
+    newSize: input.size,
+    mimeType: input.mimeType,
+  });
   rebuildSearchIndex();
   return getAttachmentForUser(input.userId, input.attachmentId);
 }
@@ -1034,6 +1199,12 @@ export function deleteAttachment(userId: string, attachmentId: string) {
     INSERT INTO page_versions (id, page_id, summary, created_by)
     VALUES (${sql(randomUUID())}, ${sql(attachment.pageId)}, ${sql(`Deleted ${attachment.originalName}`)}, ${sql(userId)});
   `);
+  recordPageAuditEvent(userId, attachment.pageId, "attachment.deleted", `deleted attachment ${quoteAuditValue(attachment.originalName)}`, {
+    attachmentId,
+    originalName: attachment.originalName,
+    size: attachment.size,
+    blockType: attachment.blockType,
+  });
   rebuildSearchIndex();
   return attachment;
 }
@@ -1046,12 +1217,23 @@ export function shareNotebook(input: { actorUserId: string; notebookId: string; 
   if (user.id === input.actorUserId) throw new Error("Owners cannot change their own role.");
   const role = normalizeInputAccessRole(input.role);
   const currentRole = normalizeAccessRole(queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(input.notebookId)} AND user_id = ${sql(user.id)} LIMIT 1`)?.role);
+  const hadExistingRole = Boolean(queryOne(`SELECT 1 AS exists_flag FROM notebook_members WHERE notebook_id = ${sql(input.notebookId)} AND user_id = ${sql(user.id)} LIMIT 1`));
+  if (hadExistingRole && currentRole === role) return user;
   if (currentRole === "owner" && role !== "owner" && countNotebookOwners(input.notebookId) <= 1) throw new Error("Notebooks need at least one owner.");
   execSql(`
     INSERT INTO notebook_members (notebook_id, user_id, role)
     VALUES (${sql(input.notebookId)}, ${sql(user.id)}, ${sql(role)})
     ON CONFLICT(notebook_id, user_id) DO UPDATE SET role = excluded.role;
   `);
+  recordNotebookAuditEvent(
+    input.actorUserId,
+    input.notebookId,
+    hadExistingRole ? "notebook.member.role.updated" : "notebook.member.added",
+    hadExistingRole
+      ? `changed ${displayName(user)} from ${currentRole} to ${role}`
+      : `shared notebook with ${displayName(user)} as ${role}`,
+    { targetUserId: user.id, targetEmail: user.email, oldRole: hadExistingRole ? currentRole : null, newRole: role },
+  );
   return user;
 }
 
@@ -1061,7 +1243,13 @@ export function unshareNotebook(actorUserId: string, notebookId: string, targetU
   if (actorUserId === targetUserId) throw new Error("Owners cannot remove themselves.");
   const targetRole = queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(targetUserId)} LIMIT 1`)?.role;
   if (targetRole === "owner" && countNotebookOwners(notebookId) <= 1) throw new Error("Notebooks need at least one owner.");
+  const targetUser = findUserById(targetUserId);
   execSql(`DELETE FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(targetUserId)};`);
+  recordNotebookAuditEvent(actorUserId, notebookId, "notebook.member.removed", `removed ${targetUser ? displayName(targetUser) : "a member"} from notebook`, {
+    targetUserId,
+    targetEmail: targetUser?.email ?? "",
+    oldRole: targetRole ?? "",
+  });
 }
 
 export function importNotebook(input: {
@@ -1209,6 +1397,164 @@ function normalizeInputAccessRole(value: AccessRole): AccessRole {
 
 function roleRank(role: AccessRole) {
   return role === "owner" ? 3 : role === "editor" ? 2 : 1;
+}
+
+type AuditEventInput = {
+  entityType: AuditEvent["entityType"];
+  entityId: string;
+  pageId?: string;
+  notebookId?: string;
+  actorUserId: string;
+  action: string;
+  summary: string;
+  metadata?: Record<string, unknown>;
+  coalesce?: boolean;
+};
+
+function recordPageAuditEvent(userId: string, pageId: string, action: string, summary: string, metadata: Record<string, unknown> = {}) {
+  const page = queryOne(`SELECT notebook_id FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+  recordAuditEvent({
+    entityType: action.startsWith("attachment.") ? "attachment" : "page",
+    entityId: metadata.attachmentId && typeof metadata.attachmentId === "string" ? metadata.attachmentId : pageId,
+    pageId,
+    notebookId: page?.notebook_id ?? "",
+    actorUserId: userId,
+    action,
+    summary,
+    metadata,
+  });
+}
+
+function recordNotebookAuditEvent(userId: string, notebookId: string, action: string, summary: string, metadata: Record<string, unknown> = {}) {
+  recordAuditEvent({
+    entityType: "notebook",
+    entityId: notebookId,
+    notebookId,
+    actorUserId: userId,
+    action,
+    summary,
+    metadata,
+  });
+}
+
+function recordAuditEvent(input: AuditEventInput) {
+  const metadataJson = JSON.stringify(input.metadata ?? {});
+  if (input.coalesce && input.pageId) {
+    const existing = queryOne(`
+      SELECT id, metadata_json, event_count
+      FROM audit_events
+      WHERE page_id = ${sql(input.pageId)}
+        AND actor_user_id = ${sql(input.actorUserId)}
+        AND action = ${sql(input.action)}
+        AND datetime(updated_at) >= datetime('now', '-${pageBodyEditAuditCoalesceSeconds} seconds')
+      ORDER BY datetime(updated_at) DESC, rowid DESC
+      LIMIT 1
+    `);
+    if (existing?.id) {
+      const previousMetadata = parseAuditMetadata(existing.metadata_json);
+      const eventCount = Number(existing.event_count || 1) + 1;
+      const nextMetadata = {
+        ...previousMetadata,
+        ...input.metadata,
+        coalescedEditCount: eventCount,
+      };
+      execSql(`
+        UPDATE audit_events
+        SET summary = ${sql(input.summary)},
+            metadata_json = ${sql(JSON.stringify(nextMetadata))},
+            event_count = ${eventCount},
+            updated_at = datetime('now')
+        WHERE id = ${sql(existing.id)};
+      `);
+      return;
+    }
+  }
+
+  execSql(`
+    INSERT INTO audit_events (
+      id,
+      entity_type,
+      entity_id,
+      page_id,
+      notebook_id,
+      actor_user_id,
+      action,
+      summary,
+      metadata_json,
+      event_count
+    ) VALUES (
+      ${sql(randomUUID())},
+      ${sql(input.entityType)},
+      ${sql(input.entityId)},
+      ${sql(input.pageId ?? null)},
+      ${sql(input.notebookId ?? null)},
+      ${sql(input.actorUserId)},
+      ${sql(input.action)},
+      ${sql(input.summary)},
+      ${sql(metadataJson)},
+      1
+    );
+  `);
+}
+
+function parseAuditMetadata(value: string | undefined) {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function toAuditEvent(row: Record<string, string>): AuditEvent {
+  return {
+    id: row.id,
+    entityType: auditEntityType(row.entity_type),
+    entityId: row.entity_id,
+    pageId: row.page_id,
+    notebookId: row.notebook_id,
+    actorUserId: row.actor_user_id,
+    actorFirstName: row.actor_first_name,
+    actorLastName: row.actor_last_name,
+    actorEmail: row.actor_email,
+    action: row.action,
+    summary: row.summary,
+    metadata: parseAuditMetadata(row.metadata_json),
+    eventCount: Number(row.event_count || 1),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function auditEntityType(value: string): AuditEvent["entityType"] {
+  if (value === "notebook" || value === "attachment") return value;
+  return "page";
+}
+
+function statusLabel(status: PageStatus | undefined) {
+  return status || "No status";
+}
+
+function quoteAuditValue(value: string) {
+  const normalized = value.trim() || "Untitled";
+  return `"${normalized.length > 72 ? `${normalized.slice(0, 69)}...` : normalized}"`;
+}
+
+function hashAuditValue(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function tagAuditSummary(oldTags: string[], newTags: string[]) {
+  const added = newTags.filter((tag) => !oldTags.includes(tag));
+  const removed = oldTags.filter((tag) => !newTags.includes(tag));
+  if (added.length && !removed.length) return `added ${added.length === 1 ? "tag" : "tags"} ${added.map(quoteAuditValue).join(", ")}`;
+  if (removed.length && !added.length) return `removed ${removed.length === 1 ? "tag" : "tags"} ${removed.map(quoteAuditValue).join(", ")}`;
+  return "updated tags";
+}
+
+function displayName(user: Pick<AppUser, "email" | "firstName" | "lastName">) {
+  return [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email;
 }
 
 function toShareMember(row: Record<string, string>): ShareMember {

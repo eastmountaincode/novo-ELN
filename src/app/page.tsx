@@ -612,7 +612,7 @@ export default function Home() {
     });
     const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
     setSaving(response.ok ? "Saved" : "Save failed");
-    if (response.ok) patchSelectedPage({ ...patch, ...(result?.changed ? { updatedAt: "Just now" } : {}) });
+    if (response.ok && result?.changed) patchSelectedPage({ updatedAt: "Just now" });
   }
 
   async function setSelectedPageTags(tags: string[]) {

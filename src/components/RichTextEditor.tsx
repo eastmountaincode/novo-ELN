@@ -107,7 +107,29 @@ export function attachmentToInlineAttrs(attachment: Attachment): InlineAttachmen
 export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, readOnly = false }: RichTextEditorProps) {
   const lastPageId = useRef(pageId);
   const dirty = useRef(false);
+  const latestBody = useRef(value);
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const AttachmentCard = useMemo(() => createAttachmentCardExtension({ openSpreadsheet, openPresentation, readOnly }), [openPresentation, openSpreadsheet, readOnly]);
+
+  function clearAutosaveTimer() {
+    if (!autosaveTimer.current) return;
+    clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = null;
+  }
+
+  function saveDirtyBody(body = latestBody.current) {
+    if (readOnly || !dirty.current) return;
+    clearAutosaveTimer();
+    dirty.current = false;
+    onBlur(body);
+  }
+
+  function scheduleAutosave(body: string) {
+    latestBody.current = body;
+    clearAutosaveTimer();
+    autosaveTimer.current = setTimeout(() => saveDirtyBody(body), 1200);
+  }
+
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -141,15 +163,14 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     },
     onUpdate: ({ editor: activeEditor }) => {
       if (!readOnly) {
+        const body = editorDocumentToBody(activeEditor.getJSON());
         dirty.current = true;
-        onChange(editorDocumentToBody(activeEditor.getJSON()));
+        onChange(body);
+        scheduleAutosave(body);
       }
     },
     onBlur: ({ editor: activeEditor }) => {
-      if (!readOnly && dirty.current) {
-        dirty.current = false;
-        onBlur(editorDocumentToBody(activeEditor.getJSON()));
-      }
+      saveDirtyBody(editorDocumentToBody(activeEditor.getJSON()));
     },
   });
 
@@ -163,7 +184,9 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     const currentBody = editorDocumentToBody(editor.getJSON());
     if (lastPageId.current === pageId && currentBody === value) return;
     lastPageId.current = pageId;
+    latestBody.current = value;
     dirty.current = false;
+    clearAutosaveTimer();
     let canceled = false;
     queueMicrotask(() => {
       if (!canceled && !editor.isDestroyed) {
@@ -174,6 +197,12 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       canceled = true;
     };
   }, [editor, pageId, value]);
+
+  useEffect(() => {
+    return () => {
+      saveDirtyBody();
+    };
+  }, []);
 
   if (!editor) {
     return <div className="min-h-[460px] border border-slate-300 bg-white p-4 text-sm text-slate-500">Loading editor...</div>;

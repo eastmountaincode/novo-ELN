@@ -3174,7 +3174,7 @@ function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; ca
       aria-label={locked ? "Unlock page" : "Lock page"}
     >
       {pending ? <Loader2 size={12} className="animate-spin" /> : <Icon size={12} />}
-      <span>{pending ? (locked ? "Unlocking" : "Locking") : failed ? "Lock failed" : locked ? "Locked page" : "Lock page"}</span>
+      <span>{pending ? (locked ? "Unlocking" : "Locking") : failed ? "Lock failed" : locked ? "Unlock page" : "Lock page"}</span>
     </button>
   );
 }

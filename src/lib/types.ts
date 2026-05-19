@@ -35,7 +35,6 @@ export type AdminDataOverview = {
     notebooks: number;
     pages: number;
     attachments: number;
-    pageVersions: number;
   };
   storage: {
     attachmentBytes: number;
@@ -109,7 +108,6 @@ export type PageEntry = {
   updatedAt: string;
   tags: string[];
   attachments: Attachment[];
-  versions: string[];
 };
 
 export type Notebook = {

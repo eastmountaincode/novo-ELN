@@ -2954,7 +2954,6 @@ function DataAdminPanel() {
             { label: "Users", value: overview.counts.users.toLocaleString() },
             { label: "Notebooks", value: overview.counts.notebooks.toLocaleString() },
             { label: "Pages", value: overview.counts.pages.toLocaleString() },
-            { label: "Page versions", value: overview.counts.pageVersions.toLocaleString() },
           ],
         },
         {

@@ -101,14 +101,6 @@ export function ensureDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    CREATE TABLE IF NOT EXISTS page_versions (
-      id TEXT PRIMARY KEY,
-      page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-      summary TEXT NOT NULL,
-      created_by TEXT NOT NULL REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
     CREATE TABLE IF NOT EXISTS audit_events (
       id TEXT PRIMARY KEY,
       entity_type TEXT NOT NULL,
@@ -129,6 +121,7 @@ export function ensureDatabase() {
     CREATE INDEX IF NOT EXISTS audit_events_actor_idx ON audit_events(actor_user_id, updated_at);
 
     DROP TABLE IF EXISTS import_jobs;
+    DROP TABLE IF EXISTS page_versions;
   `);
   migrateUserNameColumns();
   migrateProjectsToTopLevelNotebooks();
@@ -205,7 +198,10 @@ function migrateProjectsToTopLevelNotebooks() {
     `);
   }
 
-  execSql("DROP TABLE IF EXISTS import_jobs;");
+  execSql(`
+    DROP TABLE IF EXISTS import_jobs;
+    DROP TABLE IF EXISTS page_versions;
+  `);
 }
 
 function migrateUserNameColumns() {
@@ -319,11 +315,6 @@ function seedIfEmpty() {
       (${sql(pageTwoId)}, 'Running'),
       (${sql(pageThreeId)}, 'requirements'),
       (${sql(pageThreeId)}, 'Meeting');
-
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(pageOneId)}, 'Created seed page', ${sql(userId)}),
-           (${sql(randomUUID())}, ${sql(pageTwoId)}, 'Created seed page', ${sql(userId)}),
-           (${sql(randomUUID())}, ${sql(pageThreeId)}, 'Created seed page', ${sql(userId)});
   `);
 }
 
@@ -439,9 +430,6 @@ export function createUser(input: { email: string; firstName: string; lastName?:
 
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
-
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created account', ${sql(userId)});
   `);
   rebuildSearchIndex();
   return { id: userId, email, firstName, lastName, role };
@@ -485,7 +473,6 @@ export function getAdminDataOverview(adminUserId: string, options: { fileLimit?:
     notebooks: countRows("notebooks"),
     pages: countRows("pages"),
     attachments: countRows("attachments"),
-    pageVersions: countRows("page_versions"),
   };
   const files = querySql(`
     SELECT
@@ -613,9 +600,6 @@ export function getWorkspace(userId: string): Workspace {
   const attachmentRows = pageIds.length
     ? querySql(`SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, preview_text, created_at FROM attachments WHERE page_id IN (${inList(pageIds)}) ORDER BY created_at DESC`)
     : [];
-  const versionRows = pageIds.length
-    ? querySql(`SELECT page_id, summary FROM page_versions WHERE page_id IN (${inList(pageIds)}) ORDER BY datetime(created_at) DESC, rowid DESC LIMIT 250`)
-    : [];
   const notebookMemberRows = notebookIds.length
     ? querySql(`
         SELECT nm.notebook_id, nm.user_id, nm.role, u.email, u.first_name, u.last_name
@@ -629,7 +613,6 @@ export function getWorkspace(userId: string): Workspace {
 
   const tagsByPage = groupBy(tagRows, "page_id");
   const attachmentsByPage = groupBy(attachmentRows, "page_id");
-  const versionsByPage = groupBy(versionRows, "page_id");
   const pagesByNotebook = groupBy(pageRows, "notebook_id");
   const membersByNotebook = groupBy(notebookMemberRows, "notebook_id");
 
@@ -659,7 +642,6 @@ export function getWorkspace(userId: string): Workspace {
       updatedAt: page.updated_at,
       tags: pageTagRowsToList(tagsByPage[page.id] ?? []),
       attachments: (attachmentsByPage[page.id] ?? []).map(toAttachment),
-      versions: (versionsByPage[page.id] ?? []).map((version) => version.summary),
     })),
   }));
 
@@ -734,8 +716,6 @@ export function createNotebook(userId: string, name = "New Notebook") {
     VALUES (${sql(notebookId)}, ${sql(userId)}, 'owner');
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created notebook', ${sql(userId)});
   `);
   recordNotebookAuditEvent(userId, notebookId, "notebook.created", `created notebook ${quoteAuditValue(name)}`, { name });
   recordPageAuditEvent(userId, pageId, "page.created", "created page", { source: "notebook.create" });
@@ -789,8 +769,6 @@ export function createPage(userId: string, notebookId: string) {
   execSql(`
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Created page', ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
   `);
   recordPageAuditEvent(userId, pageId, "page.created", "created page");
@@ -817,11 +795,8 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
   if (!assignments.length) return false;
   assignments.push("updated_at = datetime('now')");
 
-  const summary = statusChanged ? `Status changed to ${normalizedStatus || "No status"}` : titleChanged ? "Renamed page" : "Edited page";
   execSql(`
     UPDATE pages SET ${assignments.join(", ")} WHERE id = ${sql(pageId)};
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(pageId)}, ${sql(summary)}, ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
   `);
   if (titleChanged) {
@@ -884,8 +859,6 @@ export function setPageLocked(userId: string, pageId: string, locked: boolean) {
         locked_by = ${locked ? sql(userId) : "NULL"},
         updated_at = datetime('now')
     WHERE id = ${sql(pageId)};
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(pageId)}, ${sql(locked ? "Locked page" : "Unlocked page")}, ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(page.notebook_id)};
   `);
   recordAuditEvent({
@@ -912,8 +885,6 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
     DELETE FROM page_tags WHERE page_id = ${sql(pageId)};
     ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(pageId)};
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Updated tags', ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
   `);
   recordAuditEvent({
@@ -973,8 +944,6 @@ export function createAttachment(input: {
   execSql(`
     INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, preview_text)
     VALUES (${sql(id)}, ${sql(input.pageId)}, ${sql(input.originalName)}, ${sql(input.mimeType)}, ${input.size}, ${sql(input.storageKey)}, ${sql(input.blockType)}, ${sql(input.previewText)});
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(input.pageId)}, ${sql(`Attached ${input.originalName}`)}, ${sql(input.userId)});
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(input.pageId)};
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(input.pageId)});
   `);
@@ -1018,8 +987,6 @@ export function updateAttachmentFile(input: {
     UPDATE attachments
     SET mime_type = ${sql(input.mimeType)}, size = ${input.size}, storage_key = ${sql(input.storageKey)}
     WHERE id = ${sql(input.attachmentId)};
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(attachment.pageId)}, ${sql(`Updated ${attachment.originalName}`)}, ${sql(input.userId)});
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(attachment.pageId)};
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(attachment.pageId)});
   `);
@@ -1072,8 +1039,6 @@ export function createImportedPage(input: {
       WHERE id = ${sql(pageId)};
       DELETE FROM page_tags WHERE page_id = ${sql(pageId)};
       ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
-      INSERT INTO page_versions (id, page_id, summary, created_by, created_at)
-      VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Imported from ENEX', ${sql(input.userId)}, ${sql(updatedAt)});
     `);
     return pageId;
   }
@@ -1140,8 +1105,6 @@ export function deleteAttachment(userId: string, attachmentId: string) {
     DELETE FROM attachments WHERE id = ${sql(attachmentId)};
     UPDATE pages SET body = ${sql(nextBody)}, updated_at = datetime('now') WHERE id = ${sql(attachment.pageId)};
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(attachment.pageId)});
-    INSERT INTO page_versions (id, page_id, summary, created_by)
-    VALUES (${sql(randomUUID())}, ${sql(attachment.pageId)}, ${sql(`Deleted ${attachment.originalName}`)}, ${sql(userId)});
   `);
   recordPageAuditEvent(userId, attachment.pageId, "attachment.deleted", `deleted attachment ${quoteAuditValue(attachment.originalName)}`, {
     attachmentId,
@@ -1209,8 +1172,6 @@ export function importNotebook(input: {
       INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
       VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title || "Untitled Evernote page")}, ${sql(note.body)}, '', ${sql(input.userId)});
       ${note.tags.map((tag) => `INSERT OR IGNORE INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
-      INSERT INTO page_versions (id, page_id, summary, created_by)
-      VALUES (${sql(randomUUID())}, ${sql(pageId)}, 'Imported from ENEX', ${sql(input.userId)});
     `);
   }
   finishImportedNotebook(notebookId);

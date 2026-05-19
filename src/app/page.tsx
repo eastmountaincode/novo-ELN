@@ -632,7 +632,7 @@ export default function Home() {
       body: JSON.stringify(patch),
     });
     const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
-    setSaveStatus(response.ok ? "Saved" : "Save failed", response.ok ? { clearAfterMs: 1600 } : {});
+    setSaveStatus(response.ok ? "Saved" : "Save failed", response.ok ? { clearAfterMs: 2400 } : {});
     if (response.ok && result?.changed) patchSelectedPage({ updatedAt: "Just now" });
   }
 
@@ -648,7 +648,7 @@ export default function Home() {
       body: JSON.stringify({ tags: normalizedTags }),
     });
     const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
-    setSaveStatus(response.ok ? "Saved" : "Tag save failed", response.ok ? { clearAfterMs: 1600 } : {});
+    setSaveStatus(response.ok ? "Saved" : "Tag save failed", response.ok ? { clearAfterMs: 2400 } : {});
     if (response.ok && result?.changed) patchSelectedPage({ updatedAt: "Just now" });
     if (!response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
@@ -930,7 +930,7 @@ export default function Home() {
     form.set("file", file);
     setSaveStatus("Uploading");
     const response = await fetch(`/api/pages/${selectedPage.id}/attachments`, { method: "POST", body: form });
-    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: 1600 } : {});
+    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: 2400 } : {});
     if (response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
 
@@ -941,7 +941,7 @@ export default function Home() {
       setSaveStatus("Delete failed");
       return;
     }
-    setSaveStatus("Deleted", { clearAfterMs: 1600 });
+    setSaveStatus("Deleted", { clearAfterMs: 2400 });
     await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
 
@@ -953,7 +953,7 @@ export default function Home() {
     form.set("blockType", blockType);
     setSaveStatus("Uploading");
     const response = await fetch(`/api/pages/${pageId}/attachments`, { method: "POST", body: form });
-    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: 1600 } : {});
+    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: 2400 } : {});
     if (!response.ok) return null;
     const body = (await response.json()) as { attachment: Attachment };
     return body.attachment;

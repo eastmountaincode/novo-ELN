@@ -595,7 +595,7 @@ export default function Home() {
         ...project,
         notebooks: project.notebooks.map((notebook) => ({
           ...notebook,
-          pages: notebook.pages.map((page) => (page.id === pageId ? { ...page, ...patch, updatedAt: "Just now" } : page)),
+          pages: notebook.pages.map((page) => (page.id === pageId ? { ...page, ...patch } : page)),
         })),
       })),
     } : current);
@@ -618,6 +618,7 @@ export default function Home() {
   async function setSelectedPageTags(tags: string[]) {
     if (!selectedPage || !selectedPageCanEdit) return;
     const normalizedTags = normalizeTagList(tags);
+    if (tagListsEqual(normalizedTags, normalizeTagList(selectedPage.tags))) return;
     patchSelectedPage({ tags: normalizedTags });
     setSaving("Saving tags");
     const response = await fetch(`/api/pages/${selectedPage.id}/tags`, {
@@ -625,7 +626,9 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tags: normalizedTags }),
     });
+    const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
     setSaving(response.ok ? "Saved" : "Tag save failed");
+    if (response.ok && result?.changed) patchSelectedPage({ updatedAt: "Just now" });
     if (!response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
 
@@ -3460,6 +3463,10 @@ function normalizeTagList(tags: string[]) {
     normalized.push(value);
   }
   return normalized;
+}
+
+function tagListsEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((tag, index) => tag === right[index]);
 }
 
 function normalizeColor(value: string | undefined) {

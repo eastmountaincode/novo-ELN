@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
 import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
-import { removeAttachmentCardsFromBody } from "./editor";
+import { bodyToEditorDocument, editorDocumentToBody, removeAttachmentCardsFromBody } from "./editor";
 import { uploadDir } from "./paths";
 import { rebuildSearchIndex } from "./search";
 import { execSql, queryOne, querySql, sql } from "./sqlite";
@@ -801,7 +801,7 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
   const assignments: string[] = [];
   const normalizedStatus = patch.status !== undefined ? normalizePageStatus(patch.status) : undefined;
   if (patch.title !== undefined && patch.title !== row.title) assignments.push(`title = ${sql(patch.title)}`);
-  if (patch.body !== undefined && patch.body !== row.body) assignments.push(`body = ${sql(patch.body)}`);
+  if (patch.body !== undefined && normalizePageBody(patch.body) !== normalizePageBody(String(row.body ?? ""))) assignments.push(`body = ${sql(patch.body)}`);
   if (normalizedStatus !== undefined && normalizedStatus !== normalizePageStatus(row.status)) assignments.push(`status = ${sql(normalizedStatus)}`);
   if (!assignments.length) return false;
   assignments.push("updated_at = datetime('now')");
@@ -842,6 +842,8 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
   ensureDatabase();
   assertPageEditAccess(userId, pageId);
   const normalizedTags = normalizePageTags(tags);
+  const currentTags = pageTagRowsToList(querySql(`SELECT tag FROM page_tags WHERE page_id = ${sql(pageId)} ORDER BY rowid ASC`));
+  if (tagListsEqual(normalizedTags, currentTags)) return false;
   execSql(`
     DELETE FROM page_tags WHERE page_id = ${sql(pageId)};
     ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
@@ -851,6 +853,7 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
   `);
   rebuildSearchIndex();
+  return true;
 }
 
 export function deletePage(userId: string, pageId: string) {
@@ -1089,6 +1092,10 @@ function normalizePageStatus(value: unknown): PageStatus {
   return "";
 }
 
+function normalizePageBody(body: string) {
+  return editorDocumentToBody(bodyToEditorDocument(body));
+}
+
 function getNotebookRole(userId: string, notebookId: string): AccessRole | null {
   const row = queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(userId)} LIMIT 1`);
   return row ? normalizeAccessRole(row.role) : null;
@@ -1243,6 +1250,10 @@ function groupBy<T extends Record<string, unknown>>(rows: T[], key: string) {
 
 function pageTagRowsToList(rows: Record<string, string>[]) {
   return normalizePageTags(rows.map((row) => row.tag));
+}
+
+function tagListsEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((tag, index) => tag === right[index]);
 }
 
 function normalizePageTags(tags: string[]) {

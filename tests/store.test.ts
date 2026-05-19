@@ -101,6 +101,28 @@ describe("store", () => {
     expect(page?.versions[0]).toBe("Status changed to Completed");
   });
 
+  it("does not version or timestamp no-op page saves", async () => {
+    const { queryOne } = await import("../src/lib/sqlite");
+    const { bodyToEditorDocument, editorDocumentToBody } = await import("../src/lib/editor");
+    const { verifyCredentials, getWorkspace, createPage, updatePage, setPageTags } = await import("../src/lib/store");
+    const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const notebookId = getWorkspace(user.id).notebooks[0].id;
+    const pageId = createPage(user.id, notebookId);
+
+    expect(updatePage(user.id, pageId, { title: "Note 1", body: "hello" })).toBe(true);
+    const before = queryOne(`SELECT updated_at FROM pages WHERE id = '${pageId}'`);
+    const versionCountBefore = queryOne(`SELECT COUNT(*) AS count FROM page_versions WHERE page_id = '${pageId}'`)?.count;
+
+    expect(updatePage(user.id, pageId, { title: "Note 1" })).toBe(false);
+    expect(updatePage(user.id, pageId, { body: editorDocumentToBody(bodyToEditorDocument("hello")) })).toBe(false);
+    expect(setPageTags(user.id, pageId, [])).toBe(false);
+
+    const after = queryOne(`SELECT updated_at FROM pages WHERE id = '${pageId}'`);
+    const versionCountAfter = queryOne(`SELECT COUNT(*) AS count FROM page_versions WHERE page_id = '${pageId}'`)?.count;
+    expect(after?.updated_at).toBe(before?.updated_at);
+    expect(versionCountAfter).toBe(versionCountBefore);
+  });
+
   it("registers a member with a private starter workspace", async () => {
     const { createUser, verifyCredentials, getWorkspace } = await import("../src/lib/store");
     const user = createUser({ email: "new.user@example.local", firstName: "New", lastName: "User", password: "Strong-password-2026!" });

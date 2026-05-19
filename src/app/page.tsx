@@ -3250,7 +3250,6 @@ function PageActivityDrawer({ events, loading, error, onRefresh, onClose }: { ev
                 <p className="text-sm leading-5 text-slate-700">
                   <span className="font-semibold text-slate-950">{auditActorName(event)}</span>{" "}
                   {event.summary}
-                  {event.eventCount > 1 ? <span className="ml-1 text-xs text-slate-500">({event.eventCount} saves)</span> : null}
                 </p>
                 <p className="mt-1 text-xs font-medium text-blue-700">{formatDateTime(event.updatedAt)}</p>
               </div>

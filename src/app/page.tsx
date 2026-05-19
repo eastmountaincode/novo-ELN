@@ -3343,7 +3343,10 @@ function PageActivityDrawer({ events, loading, loadingMore, hasMore, error, onRe
 }
 
 function auditActorName(event: AuditEvent) {
-  return [event.actorFirstName, event.actorLastName].filter(Boolean).join(" ") || event.actorEmail || "Unknown user";
+  const firstName = event.actorFirstName.trim();
+  const lastInitial = event.actorLastName.trim()[0];
+  if (firstName && lastInitial) return `${firstName} ${lastInitial.toUpperCase()}.`;
+  return firstName || event.actorLastName.trim() || event.actorEmail || "Unknown user";
 }
 
 function auditInitials(event: AuditEvent) {

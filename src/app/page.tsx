@@ -176,6 +176,7 @@ export default function Home() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [saving, setSaving] = useState("");
+  const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [creatingPage, setCreatingPage] = useState(false);
   const [deletingPage, setDeletingPage] = useState(false);
   const [deletingNotebook, setDeletingNotebook] = useState(false);
@@ -601,17 +602,37 @@ export default function Home() {
     } : current);
   }
 
+  function setSaveStatus(status: string, options: { clearAfterMs?: number } = {}) {
+    if (saveStatusTimer.current) {
+      clearTimeout(saveStatusTimer.current);
+      saveStatusTimer.current = null;
+    }
+    setSaving(status);
+    if (options.clearAfterMs && status) {
+      saveStatusTimer.current = setTimeout(() => {
+        setSaving("");
+        saveStatusTimer.current = null;
+      }, options.clearAfterMs);
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
+    };
+  }, []);
+
   async function savePage(patch: { title?: string; body?: string; status?: PageStatus }) {
     if (!selectedPage || !selectedPageCanEdit) return;
     const pageId = selectedPage.id;
-    setSaving("Saving");
+    setSaveStatus("Saving");
     const response = await fetch(`/api/pages/${pageId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
     const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
-    setSaving(response.ok ? "Saved" : "Save failed");
+    setSaveStatus(response.ok ? "Saved" : "Save failed", response.ok ? { clearAfterMs: 1600 } : {});
     if (response.ok && result?.changed) patchSelectedPage({ updatedAt: "Just now" });
   }
 
@@ -620,14 +641,14 @@ export default function Home() {
     const normalizedTags = normalizeTagList(tags);
     if (tagListsEqual(normalizedTags, normalizeTagList(selectedPage.tags))) return;
     patchSelectedPage({ tags: normalizedTags });
-    setSaving("Saving tags");
+    setSaveStatus("Saving");
     const response = await fetch(`/api/pages/${selectedPage.id}/tags`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tags: normalizedTags }),
     });
     const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
-    setSaving(response.ok ? "Saved" : "Tag save failed");
+    setSaveStatus(response.ok ? "Saved" : "Tag save failed", response.ok ? { clearAfterMs: 1600 } : {});
     if (response.ok && result?.changed) patchSelectedPage({ updatedAt: "Just now" });
     if (!response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
@@ -907,9 +928,9 @@ export default function Home() {
     if (!file || !selectedPage || !selectedPageCanEdit) return;
     const form = new FormData();
     form.set("file", file);
-    setSaving("Uploading");
+    setSaveStatus("Uploading");
     const response = await fetch(`/api/pages/${selectedPage.id}/attachments`, { method: "POST", body: form });
-    setSaving(response.ok ? "Uploaded" : "Upload failed");
+    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: 1600 } : {});
     if (response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
 
@@ -917,10 +938,10 @@ export default function Home() {
     if (!selectedPage || !selectedPageCanEdit) return;
     const response = await fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" });
     if (!response.ok) {
-      setSaving("Delete failed");
+      setSaveStatus("Delete failed");
       return;
     }
-    setSaving("Deleted");
+    setSaveStatus("Deleted", { clearAfterMs: 1600 });
     await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
 
@@ -930,9 +951,9 @@ export default function Home() {
     const form = new FormData();
     form.set("file", file);
     form.set("blockType", blockType);
-    setSaving("Uploading");
+    setSaveStatus("Uploading");
     const response = await fetch(`/api/pages/${pageId}/attachments`, { method: "POST", body: form });
-    setSaving(response.ok ? "Uploaded" : "Upload failed");
+    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: 1600 } : {});
     if (!response.ok) return null;
     const body = (await response.json()) as { attachment: Attachment };
     return body.attachment;
@@ -1147,6 +1168,7 @@ export default function Home() {
                 deleteAttachment={deletePageAttachment}
                 patchSelectedPage={patchSelectedPage}
                 savePage={savePage}
+                markUnsaved={() => setSaveStatus("Unsaved")}
                 setPageTags={setSelectedPageTags}
                 setPageLocked={setSelectedPageLocked}
                 openFilePicker={() => fileInputRef.current?.click()}
@@ -3082,7 +3104,7 @@ function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCa
   );
 }
 
-function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, setPageTags, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; setPageTags: (tags: string[]) => Promise<void>; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
+function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: () => void; setPageTags: (tags: string[]) => Promise<void>; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const attachmentCount = page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
@@ -3115,7 +3137,10 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
           key={`${page.id}-${canEdit ? "edit" : "read"}`}
           pageId={page.id}
           value={page.body}
-          onChange={(body) => patchSelectedPage({ body })}
+          onChange={(body) => {
+            patchSelectedPage({ body });
+            if (canEdit) markUnsaved();
+          }}
           onBlur={(body) => void savePage({ body })}
           uploadInlineFile={uploadInlineFile}
           onInlineAttachmentInserted={onInlineAttachmentInserted}

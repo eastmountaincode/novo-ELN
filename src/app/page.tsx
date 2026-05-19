@@ -2045,7 +2045,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
               </button>
             ))}
             {selectedStatuses.map((status) => (
-              <button key={status || "no-status"} type="button" onClick={() => toggleStatusFilter(status)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:border-slate-500">
+              <button key={status || "no-status"} type="button" onClick={() => toggleStatusFilter(status)} className="inline-flex h-7 items-center gap-1 rounded-full border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:border-slate-500">
                 {getPageStatusLabel(status)}
                 <X size={12} />
               </button>
@@ -2182,7 +2182,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
         {(page.lockedAt || page.status || visibleTags.length > 0) ? (
           <div className="mt-3 flex flex-wrap gap-1.5">
             {page.lockedAt ? <span className="inline-flex h-6 items-center gap-1 border border-slate-300 bg-slate-100 px-2 text-[11px] font-medium text-slate-600"><Lock size={11} />Locked</span> : null}
-            {page.status ? <span className="inline-flex h-6 items-center border px-2 text-[11px] font-medium" style={pageStatusStyle(page.status)}>{getPageStatusLabel(page.status)}</span> : null}
+            {page.status ? <span className="inline-flex h-6 items-center rounded-full border border-slate-300 bg-white px-2.5 text-[11px] font-medium text-slate-700">{getPageStatusLabel(page.status)}</span> : null}
             {visibleTags.map((tag) => <span key={tag} className="inline-flex h-6 max-w-full items-center truncate border border-slate-200 bg-slate-100 px-2 text-[11px] font-medium text-slate-600">{tag}</span>)}
             {page.tags.length > visibleTags.length ? <span className="inline-flex h-6 items-center px-1 text-[11px] font-medium text-slate-400">+{page.tags.length - visibleTags.length}</span> : null}
           </div>
@@ -3237,7 +3237,7 @@ function PageStatusRow({ status, canEdit, setStatus }: { status: PageStatus; can
         value={status}
         onChange={(event) => setStatus(event.target.value as PageStatus)}
         disabled={!canEdit}
-        className="h-8 w-40 cursor-pointer border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
+        className="h-8 w-40 cursor-pointer rounded-full border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
         aria-label="Page status"
       >
         {PAGE_STATUS_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
@@ -3407,14 +3407,6 @@ function filterNotebookPages(pages: PageEntry[], selectedTags: string[], selecte
 
 function getPageStatusLabel(status: PageStatus) {
   return PAGE_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? "No status";
-}
-
-function pageStatusStyle(status: PageStatus) {
-  if (status === "Failed") return { borderColor: "#fecdd3", backgroundColor: "#fff1f2", color: "#be123c" };
-  if (status === "Needs review") return { borderColor: "#fde68a", backgroundColor: "#fffbeb", color: "#a16207" };
-  if (status === "Completed") return { borderColor: "#bbf7d0", backgroundColor: "#f0fdf4", color: "#15803d" };
-  if (status === "Working") return { borderColor: "#bfdbfe", backgroundColor: "#eff6ff", color: "#1d4ed8" };
-  return { borderColor: "#e2e8f0", backgroundColor: "#f8fafc", color: "#64748b" };
 }
 
 function sortNotebookPages(pages: PageEntry[], sortKey: PageSortKey) {

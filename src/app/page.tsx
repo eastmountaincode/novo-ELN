@@ -2213,7 +2213,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
             {page.lockedAt ? <span className="inline-flex h-6 items-center gap-1 border border-slate-300 bg-slate-100 px-2 text-[11px] font-medium text-slate-600"><Lock size={11} />Locked</span> : null}
             {page.status ? <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-2.5 text-[11px] font-medium text-slate-700"><StatusDot status={page.status} />{getPageStatusLabel(page.status)}</span> : null}
             {visibleTags.map((tag) => <span key={tag} className="inline-flex h-6 max-w-full items-center truncate border border-slate-200 bg-slate-100 px-2 text-[11px] font-medium text-slate-600">{tag}</span>)}
-            {page.tags.length > visibleTags.length ? <span className="inline-flex h-6 items-center px-1 text-[11px] font-medium text-slate-400">+{page.tags.length - visibleTags.length}</span> : null}
+            {page.tags.length > visibleTags.length ? <span className="inline-flex h-6 items-center px-1 text-[11px] font-medium text-slate-400">+{page.tags.length - visibleTags.length} more</span> : null}
           </div>
         ) : null}
         <div className="mt-3 space-y-1 text-[11px] leading-4 text-slate-500">

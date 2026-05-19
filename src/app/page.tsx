@@ -3236,16 +3236,18 @@ function PageStatusRow({ status, canEdit, setStatus }: { status: PageStatus; can
   return (
     <div className="mt-1 flex min-h-8 flex-wrap items-center gap-1.5 text-sm">
       <Flag size={15} className="mr-1 shrink-0 text-slate-400" />
-      <StatusDot status={status} />
-      <select
-        value={status}
-        onChange={(event) => setStatus(event.target.value as PageStatus)}
-        disabled={!canEdit}
-        className="h-8 w-40 cursor-pointer rounded-full border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 outline-none hover:border-slate-400 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
-        aria-label="Page status"
-      >
-        {PAGE_STATUS_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
-      </select>
+      <div className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-300 bg-white pl-3 pr-1 hover:border-slate-400 focus-within:border-cyan-500">
+        <StatusDot status={status} />
+        <select
+          value={status}
+          onChange={(event) => setStatus(event.target.value as PageStatus)}
+          disabled={!canEdit}
+          className="h-7 w-36 cursor-pointer border-0 bg-transparent px-0 text-sm font-medium text-slate-700 outline-none disabled:cursor-not-allowed disabled:text-slate-500"
+          aria-label="Page status"
+        >
+          {PAGE_STATUS_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}
+        </select>
+      </div>
     </div>
   );
 }

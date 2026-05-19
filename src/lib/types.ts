@@ -36,7 +36,6 @@ export type AdminDataOverview = {
     pages: number;
     attachments: number;
     pageVersions: number;
-    importJobs: number;
   };
   storage: {
     attachmentBytes: number;

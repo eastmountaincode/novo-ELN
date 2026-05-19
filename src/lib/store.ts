@@ -128,33 +128,12 @@ export function ensureDatabase() {
     CREATE INDEX IF NOT EXISTS audit_events_notebook_idx ON audit_events(notebook_id, updated_at);
     CREATE INDEX IF NOT EXISTS audit_events_actor_idx ON audit_events(actor_user_id, updated_at);
 
-    CREATE TABLE IF NOT EXISTS import_jobs (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      notebook_name TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'queued',
-      started_at TEXT NOT NULL DEFAULT (datetime('now')),
-      finished_at TEXT,
-      error TEXT,
-      notebook_id TEXT,
-      total_notes INTEGER,
-      total_resources INTEGER,
-      imported_notes INTEGER NOT NULL DEFAULT 0,
-      imported_resources INTEGER NOT NULL DEFAULT 0,
-      processed_bytes INTEGER NOT NULL DEFAULT 0,
-      total_bytes INTEGER NOT NULL DEFAULT 0,
-      worker_count INTEGER NOT NULL DEFAULT 4,
-      worker_pid INTEGER,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+    DROP TABLE IF EXISTS import_jobs;
   `);
   migrateUserNameColumns();
   migrateProjectsToTopLevelNotebooks();
   ensureNotebookColumns();
   ensurePageLockColumns();
-  ensureImportJobsColumns();
   execSql(`
     DROP TABLE IF EXISTS search_pages_fts;
     CREATE VIRTUAL TABLE search_pages_fts USING fts5(
@@ -226,50 +205,7 @@ function migrateProjectsToTopLevelNotebooks() {
     `);
   }
 
-  const importColumns = querySql("PRAGMA table_info(import_jobs);");
-  if (importColumns.some((column) => column.name === "project_id")) {
-    execSql(`
-      PRAGMA foreign_keys=OFF;
-
-      CREATE TABLE IF NOT EXISTS import_jobs_new (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        notebook_name TEXT NOT NULL,
-        file_path TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'queued',
-        started_at TEXT NOT NULL DEFAULT (datetime('now')),
-        finished_at TEXT,
-        error TEXT,
-        notebook_id TEXT,
-        total_notes INTEGER,
-        total_resources INTEGER,
-        imported_notes INTEGER NOT NULL DEFAULT 0,
-        imported_resources INTEGER NOT NULL DEFAULT 0,
-        processed_bytes INTEGER NOT NULL DEFAULT 0,
-        total_bytes INTEGER NOT NULL DEFAULT 0,
-        worker_count INTEGER NOT NULL DEFAULT 4,
-        worker_pid INTEGER,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      INSERT OR IGNORE INTO import_jobs_new (
-        id, user_id, notebook_name, file_path, state, started_at, finished_at, error, notebook_id,
-        total_notes, total_resources, imported_notes, imported_resources, processed_bytes, total_bytes,
-        worker_count, worker_pid, created_at, updated_at
-      )
-      SELECT
-        id, user_id, notebook_name, file_path, state, started_at, finished_at, error, notebook_id,
-        total_notes, total_resources, imported_notes, imported_resources, processed_bytes, total_bytes,
-        COALESCE(worker_count, 4), worker_pid, created_at, updated_at
-      FROM import_jobs;
-
-      DROP TABLE import_jobs;
-      ALTER TABLE import_jobs_new RENAME TO import_jobs;
-
-      PRAGMA foreign_keys=ON;
-    `);
-  }
+  execSql("DROP TABLE IF EXISTS import_jobs;");
 }
 
 function migrateUserNameColumns() {
@@ -316,13 +252,6 @@ function ensurePageLockColumns() {
   const names = new Set(columns.map((column) => column.name));
   if (!names.has("locked_at")) execSql("ALTER TABLE pages ADD COLUMN locked_at TEXT;");
   if (!names.has("locked_by")) execSql("ALTER TABLE pages ADD COLUMN locked_by TEXT REFERENCES users(id);");
-}
-
-function ensureImportJobsColumns() {
-  const columns = querySql("PRAGMA table_info(import_jobs);");
-  const names = new Set(columns.map((column) => column.name));
-  if (!names.has("total_resources")) execSql("ALTER TABLE import_jobs ADD COLUMN total_resources INTEGER;");
-  if (!names.has("worker_count")) execSql("ALTER TABLE import_jobs ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 4;");
 }
 
 function migratePageStatusValues() {
@@ -557,7 +486,6 @@ export function getAdminDataOverview(adminUserId: string, options: { fileLimit?:
     pages: countRows("pages"),
     attachments: countRows("attachments"),
     pageVersions: countRows("page_versions"),
-    importJobs: countRows("import_jobs"),
   };
   const files = querySql(`
     SELECT
@@ -1192,6 +1120,12 @@ export function createImportedAttachment(input: {
 export function finishImportedNotebook(notebookId: string) {
   ensureDatabase();
   execSql(`UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};`);
+  rebuildSearchIndex();
+}
+
+export function removeImportedNotebook(notebookId: string) {
+  ensureDatabase();
+  execSql(`DELETE FROM notebooks WHERE id = ${sql(notebookId)};`);
   rebuildSearchIndex();
 }
 

@@ -6,15 +6,15 @@ import { execFileSync } from "node:child_process";
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { XMLParser } from "fast-xml-parser";
 
-const jobId = isMainThread ? process.argv[2] : "";
-if (isMainThread && !jobId) failStartup("Missing import job id.");
-
 const cwd = process.cwd();
 const databasePath = process.env.ELN_DATABASE_PATH || path.join(cwd, "data", "eln.sqlite3");
 const uploadDir = process.env.ELN_UPLOAD_DIR || path.join(cwd, "storage", "uploads");
 const parser = new XMLParser({ ignoreAttributes: false, trimValues: false, cdataPropName: "__cdata", textNodeName: "#text" });
 const enmlParser = new XMLParser({ ignoreAttributes: false, preserveOrder: true, trimValues: false, cdataPropName: "__cdata", textNodeName: "#text" });
 const createdStorageKeys = new Set();
+const cliOptions = isMainThread ? parseCliArgs(process.argv.slice(2)) : null;
+let currentNotebookId = "";
+let cancelRequested = false;
 let lastCancelCheckAt = 0;
 
 class ImportCanceledError extends Error {
@@ -27,6 +27,15 @@ class ImportCanceledError extends Error {
 if (!isMainThread) {
   startNoteParserWorker();
 } else {
+  if (!cliOptions.path) failStartup("Missing --path /absolute/path/to/export.enex.");
+  if (!cliOptions.userEmail && !cliOptions.userId) failStartup("Provide --user-email or --user-id for the notebook owner.");
+  process.on("SIGINT", () => {
+    cancelRequested = true;
+    process.stdout.write("\nCancel requested. Rolling back partial import...\n");
+  });
+  process.on("SIGTERM", () => {
+    cancelRequested = true;
+  });
   try {
     await run();
   } catch (error) {
@@ -35,23 +44,26 @@ if (!isMainThread) {
 }
 
 async function run() {
-  const job = getJob();
-  if (!job) throw new Error(`Import job ${jobId} not found.`);
+  const user = findImportUser(cliOptions);
+  if (!user) throw new Error("Import owner user was not found.");
   ensureNotCanceled({ force: true });
-  const absolutePath = normalizeServerPath(job.file_path);
+  const absolutePath = normalizeServerPath(cliOptions.path);
   const stats = await fsp.stat(absolutePath);
   if (!stats.isFile()) throw new Error("ENEX path must point to a file.");
 
   await fsp.mkdir(uploadDir, { recursive: true });
-  updateJob(`state = 'running', total_bytes = ${stats.size}, started_at = datetime('now'), updated_at = datetime('now')`);
+  const job = {
+    user_id: user.id,
+    notebook_name: cliOptions.notebookName || notebookNameFromPath(absolutePath),
+  };
 
   const notebookId = crypto.randomUUID();
+  currentNotebookId = notebookId;
   execSql(`
     INSERT INTO notebooks (id, name, owner_id)
     VALUES (${sql(notebookId)}, ${sql(job.notebook_name || notebookNameFromPath(absolutePath))}, ${sql(job.user_id)});
     INSERT INTO notebook_members (notebook_id, user_id, role)
     VALUES (${sql(notebookId)}, ${sql(job.user_id)}, 'owner');
-    UPDATE import_jobs SET notebook_id = ${sql(notebookId)}, updated_at = datetime('now') WHERE id = ${sql(jobId)};
   `);
 
   let importedNotes = 0;
@@ -80,7 +92,7 @@ async function run() {
         importedResources += 1;
         if (Date.now() - lastProgressAt > 750) {
           ensureNotCanceled();
-          updateProgress({ processedBytes: progressBytes, importedNotes, importedResources });
+          renderProgress({ processedBytes: progressBytes, totalBytes: stats.size, importedNotes, importedResources, workerCount: noteWorkerCount });
           lastProgressAt = Date.now();
         }
       }
@@ -91,7 +103,7 @@ async function run() {
 
       importedNotes += 1;
       ensureNotCanceled();
-      updateProgress({ processedBytes: progressBytes, importedNotes, importedResources });
+      renderProgress({ processedBytes: progressBytes, totalBytes: stats.size, importedNotes, importedResources, workerCount: noteWorkerCount });
     }, { concurrency: noteWorkerCount });
   } finally {
     await noteParserPool.close();
@@ -100,40 +112,27 @@ async function run() {
   ensureNotCanceled({ force: true });
   execSql(`
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
-    UPDATE import_jobs
-    SET state = 'succeeded', imported_notes = ${importedNotes}, imported_resources = ${importedResources}, processed_bytes = ${stats.size}, total_bytes = ${stats.size}, finished_at = datetime('now'), updated_at = datetime('now')
-    WHERE id = ${sql(jobId)};
   `);
+  renderProgress({ processedBytes: stats.size, totalBytes: stats.size, importedNotes, importedResources, workerCount: noteWorkerCount });
+  process.stdout.write(`\nImport complete.\nNotebook: ${job.notebook_name}\nNotebook ID: ${notebookId}\nPages: ${importedNotes}\nENEX resources: ${importedResources}\n`);
 }
 
 async function rollbackImport(error) {
   const canceled = error instanceof ImportCanceledError;
   const message = error instanceof Error ? error.message : "Import failed.";
-  let notebookId = "";
   let storageKeys = [];
   try {
-    const job = getJob();
-    notebookId = job?.notebook_id || "";
-    storageKeys = [...new Set([...(notebookId ? getNotebookStorageKeys(notebookId) : []), ...createdStorageKeys])];
+    storageKeys = [...new Set([...(currentNotebookId ? getNotebookStorageKeys(currentNotebookId) : []), ...createdStorageKeys])];
     execSql(`
-      ${notebookId ? `DELETE FROM notebooks WHERE id = ${sql(notebookId)};` : ""}
-      UPDATE import_jobs
-      SET state = ${sql(canceled ? "canceled" : "failed")},
-          error = ${sql(canceled ? "Import canceled. Partial import was rolled back." : `${message} Partial import was rolled back.`)},
-          notebook_id = NULL,
-          finished_at = datetime('now'),
-          updated_at = datetime('now')
-      WHERE id = ${sql(jobId)};
+      ${currentNotebookId ? `DELETE FROM notebooks WHERE id = ${sql(currentNotebookId)};` : ""}
     `);
     await removeStorageFiles(storageKeys);
+    process.stdout.write(`\n${canceled ? "Import canceled" : "Import failed"}: ${message}\nPartial notebook and files were rolled back.\n`);
+    process.exit(canceled ? 130 : 1);
   } catch (cleanupError) {
     const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : "Rollback cleanup failed.";
-    updateJob(`
-      state = ${sql(canceled ? "canceled" : "failed")},
-      error = ${sql(`${message} Rollback cleanup failed: ${cleanupMessage}`)},
-      finished_at = datetime('now'),
-      updated_at = datetime('now')
-    `);
+    process.stderr.write(`\n${message}\nRollback cleanup failed: ${cleanupMessage}\n`);
+    process.exit(1);
   }
 }
 
@@ -141,8 +140,65 @@ function ensureNotCanceled(options = {}) {
   const now = Date.now();
   if (!options.force && now - lastCancelCheckAt < 500) return;
   lastCancelCheckAt = now;
-  const row = querySql(`SELECT state FROM import_jobs WHERE id = ${sql(jobId)} LIMIT 1;`)[0];
-  if (row?.state === "canceling" || row?.state === "canceled") throw new ImportCanceledError();
+  if (cancelRequested) throw new ImportCanceledError();
+}
+
+function findImportUser(options) {
+  const where = options.userId ? `id = ${sql(options.userId)}` : `lower(email) = lower(${sql(options.userEmail)})`;
+  return querySql(`SELECT id, email FROM users WHERE ${where} LIMIT 1;`)[0] || null;
+}
+
+function renderProgress({ processedBytes, totalBytes, importedNotes, importedResources, workerCount }) {
+  const percent = totalBytes > 0 ? Math.min(100, Math.floor((processedBytes / totalBytes) * 100)) : 0;
+  const line = [
+    `${percent.toString().padStart(3, " ")}%`,
+    `${formatBytes(processedBytes)} / ${formatBytes(totalBytes)}`,
+    `${importedNotes} pages`,
+    `${importedResources} ENEX resources`,
+    `${workerCount} workers`,
+  ].join(" | ");
+  process.stdout.write(`\r${line}`);
+}
+
+function parseCliArgs(args) {
+  const options = { path: "", notebookName: "", userEmail: "", userId: "", workers: 4 };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const readValue = () => {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) failStartup(`Missing value for ${arg}.`);
+      index += 1;
+      return value;
+    };
+    if (arg === "--path") options.path = readValue();
+    else if (arg === "--notebook-name") options.notebookName = readValue();
+    else if (arg === "--user-email") options.userEmail = readValue();
+    else if (arg === "--user-id") options.userId = readValue();
+    else if (arg === "--workers") options.workers = normalizeWorkerCount(readValue());
+    else if (arg === "--help" || arg === "-h") printUsageAndExit();
+    else failStartup(`Unknown argument: ${arg}`);
+  }
+  return options;
+}
+
+function normalizeWorkerCount(value) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 4;
+  return Math.min(parsed, 80);
+}
+
+function printUsageAndExit() {
+  process.stdout.write(`Usage:
+  node scripts/import-enex.mjs --path /absolute/export.enex --user-email user@example.org --notebook-name "Notebook name" --workers 16
+
+Options:
+  --path            Absolute server path to the .enex file.
+  --user-email      Email of the Novo user who will own the imported notebook.
+  --user-id         User ID alternative to --user-email.
+  --notebook-name   Optional notebook name. Defaults to the ENEX filename.
+  --workers         Parser workers for note conversion. Defaults to 4, max 80.
+`);
+  process.exit(0);
 }
 
 function getNotebookStorageKeys(notebookId) {
@@ -179,19 +235,6 @@ async function removeEmptyParentDirs(directory, stopDirectory) {
   }
 }
 
-function getJob() {
-  const rows = querySql(`SELECT * FROM import_jobs WHERE id = ${sql(jobId)} LIMIT 1;`);
-  return rows[0] || null;
-}
-
-function updateProgress({ processedBytes, importedNotes, importedResources }) {
-  updateJob(`processed_bytes = ${processedBytes}, imported_notes = ${importedNotes}, imported_resources = ${importedResources}, updated_at = datetime('now')`);
-}
-
-function updateJob(assignments) {
-  execSql(`UPDATE import_jobs SET ${assignments} WHERE id = ${sql(jobId)};`);
-}
-
 function startNoteParserWorker() {
   parentPort?.on("message", (message) => {
     try {
@@ -204,9 +247,9 @@ function startNoteParserWorker() {
 }
 
 function getNoteWorkerCount() {
-  const raw = Number.parseInt(process.env.ENEX_IMPORT_WORKERS || "4", 10);
+  const raw = Number.parseInt(String(cliOptions?.workers || process.env.ENEX_IMPORT_WORKERS || "4"), 10);
   if (!Number.isFinite(raw) || raw < 1) return 4;
-  return Math.min(raw, 16);
+  return Math.min(raw, 80);
 }
 
 function createNoteParserPool(size) {
@@ -702,6 +745,17 @@ function sql(value) {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
   return `'${String(value).replace(/'/g, "''")}'`;
+}
+function formatBytes(value) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`;
 }
 function textValue(value) { if (value === null || value === undefined) return ""; if (typeof value === "string" || typeof value === "number") return String(value); if (typeof value === "object") { if ("__cdata" in value) return textValue(value.__cdata); if ("#text" in value) return textValue(value["#text"]); } return ""; }
 function toArray(value) { if (!value) return []; return Array.isArray(value) ? value : [value]; }

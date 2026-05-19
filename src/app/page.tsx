@@ -138,13 +138,11 @@ type EnexInspection = {
   elapsedMs: number;
 };
 
-type EnexImportJob = {
-  id: string;
-  state: "queued" | "running" | "canceling" | "canceled" | "succeeded" | "failed";
+type EnexImportRun = {
+  state: "running" | "canceling" | "canceled" | "succeeded" | "failed";
   error?: string;
   notebookId?: string;
   importedResources: number;
-  workerCount: number;
   startedAt: string;
   finishedAt?: string;
   progress: {
@@ -156,6 +154,13 @@ type EnexImportJob = {
     totalResources: number | null;
   };
 };
+
+type EnexImportStreamEvent =
+  | { type: "started"; startedAt: string; progress: EnexImportRun["progress"] }
+  | { type: "progress"; progress: EnexImportRun["progress"] }
+  | { type: "complete"; finishedAt: string; result: { notebookId: string; importedNotes: number; importedResources: number; progress: EnexImportRun["progress"] } }
+  | { type: "error"; finishedAt: string; error?: string }
+  | { type: "canceled"; finishedAt: string; error?: string };
 
 export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -1264,20 +1269,21 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const [submitting, setSubmitting] = useState(false);
   const [mode] = useState<"blank" | "import">(dialog.kind === "createNotebook" ? dialog.initialMode ?? "blank" : "blank");
   const [serverPath, setServerPath] = useState("");
-  const [workerCount, setWorkerCount] = useState(4);
   const [inspection, setInspection] = useState<EnexInspection | null>(null);
   const [inspectionError, setInspectionError] = useState("");
   const [inspecting, setInspecting] = useState(false);
-  const [job, setJob] = useState<EnexImportJob | null>(null);
+  const [job, setJob] = useState<EnexImportRun | null>(null);
+  const [importNow, setImportNow] = useState(Date.now());
   const [importError, setImportError] = useState("");
   const [openingImportedNotebook, setOpeningImportedNotebook] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const importAbortRef = useRef<AbortController | null>(null);
   const title = getNameModalTitle(dialog);
   const description = getNameModalDescription(dialog);
   const submitLabel = dialog.kind.startsWith("rename") ? "Rename" : "Create";
   const pendingSubmitLabel = dialog.kind.startsWith("rename") ? "Renaming..." : "Creating...";
   const isNotebookCreate = dialog.kind === "createNotebook";
-  const importing = job?.state === "queued" || job?.state === "running" || job?.state === "canceling";
+  const importing = job?.state === "running" || job?.state === "canceling";
   const cancelingImport = job?.state === "canceling";
   const disabled = !name.trim() || submitting || importing;
   const importDisabled = !isNotebookCreate || !serverPath.trim() || !name.trim() || inspecting || importing;
@@ -1285,7 +1291,7 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   const resourceProgressTotal = job?.progress.totalResources ?? inspection?.resourceCount ?? null;
   const byteProgressPercent = job?.progress.totalBytes ? Math.min(100, Math.round((job.progress.processedBytes / job.progress.totalBytes) * 100)) : 0;
   const progressPercent = byteProgressPercent || (progressTotal && job ? Math.min(100, Math.round((job.progress.importedNotes / progressTotal) * 100)) : 0);
-  const elapsedSeconds = job ? secondsBetween(job.startedAt, job.finishedAt) : 0;
+  const elapsedSeconds = job ? secondsBetween(job.startedAt, job.finishedAt, importNow) : 0;
   const predictedRemainingSeconds = job ? estimateRemainingSeconds(elapsedSeconds, progressPercent) : 0;
   const importFinished = job?.state === "succeeded";
   const importCanceled = job?.state === "canceled";
@@ -1297,20 +1303,12 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   }, []);
 
   useEffect(() => {
-    if (!job || (job.state !== "queued" && job.state !== "running" && job.state !== "canceling")) return;
-    let active = true;
-    const timer = window.setInterval(async () => {
-      const response = await fetch(`/api/import/enex/jobs/${job.id}`);
-      if (!active || !response.ok) return;
-      const nextJob = (await response.json()) as EnexImportJob;
-      setJob(nextJob);
-      if (nextJob.state === "succeeded" || nextJob.state === "failed" || nextJob.state === "canceled") window.clearInterval(timer);
-    }, 1000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [dialog, job, onImportComplete]);
+    if (!importing) return;
+    const timer = window.setInterval(() => setImportNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [importing]);
+
+  useEffect(() => () => importAbortRef.current?.abort(), []);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1349,23 +1347,79 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   async function startImport() {
     if (dialog.kind !== "createNotebook" || importDisabled) return;
     setImportError("");
-    const response = await fetch("/api/import/enex", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        notebookName: name.trim(),
-        path: serverPath.trim(),
-        totalNotes: inspection?.noteCount,
-        totalResources: inspection?.resourceCount,
-        workerCount,
-      }),
+    const startedAt = new Date().toISOString();
+    const controller = new AbortController();
+    importAbortRef.current = controller;
+    setImportNow(Date.now());
+    setJob({
+      state: "running",
+      importedResources: 0,
+      startedAt,
+      progress: {
+        processedBytes: 0,
+        totalBytes: inspection?.sizeBytes ?? 0,
+        importedNotes: 0,
+        totalNotes: inspection?.noteCount ?? null,
+        importedResources: 0,
+        totalResources: inspection?.resourceCount ?? null,
+      },
     });
-    const body = await response.json().catch(() => null) as { job?: EnexImportJob; error?: string } | null;
-    if (!response.ok || !body?.job) {
-      setImportError(body?.error || "Unable to start ENEX import.");
-      return;
+
+    try {
+      const response = await fetch("/api/import/enex", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          notebookName: name.trim(),
+          path: serverPath.trim(),
+          totalNotes: inspection?.noteCount,
+          totalResources: inspection?.resourceCount,
+        }),
+      });
+      if (!response.ok || !response.body) {
+        const body = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error || "Unable to import ENEX file.");
+      }
+
+      await readEnexImportStream(response, {
+        onEvent: (event) => {
+          if (event.type === "started") {
+            setJob((current) => current ? { ...current, startedAt: event.startedAt, progress: { ...current.progress, ...event.progress } } : current);
+            return;
+          }
+          if (event.type === "progress") {
+            setJob((current) => current ? { ...current, progress: event.progress, importedResources: event.progress.importedResources } : current);
+            return;
+          }
+          if (event.type === "complete") {
+            setJob((current) => current ? {
+              ...current,
+              state: "succeeded",
+              notebookId: event.result.notebookId,
+              importedResources: event.result.importedResources,
+              finishedAt: event.finishedAt,
+              progress: event.result.progress,
+            } : current);
+            return;
+          }
+          setJob((current) => current ? {
+            ...current,
+            state: event.type === "canceled" ? "canceled" : "failed",
+            error: event.error,
+            finishedAt: event.finishedAt,
+          } : current);
+        },
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        setJob((current) => current ? { ...current, state: "canceled", error: "Import canceled. Partial import was rolled back.", finishedAt: new Date().toISOString() } : current);
+      } else {
+        setJob((current) => current ? { ...current, state: "failed", error: error instanceof Error ? error.message : "Unable to import ENEX file.", finishedAt: new Date().toISOString() } : current);
+      }
+    } finally {
+      if (importAbortRef.current === controller) importAbortRef.current = null;
     }
-    setJob(body.job);
   }
 
   async function openImportedNotebook() {
@@ -1376,15 +1430,10 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   }
 
   async function handleCancel() {
-    if (job && (job.state === "queued" || job.state === "running")) {
+    if (job && job.state === "running") {
       setImportError("");
-      const response = await fetch(`/api/import/enex/jobs/${job.id}`, { method: "DELETE" });
-      const body = await response.json().catch(() => null) as EnexImportJob | { error?: string } | null;
-      if (!response.ok || !body || "error" in body) {
-        setImportError((body as { error?: string } | null)?.error || "Unable to cancel import.");
-        return;
-      }
-      setJob(body as EnexImportJob);
+      setJob({ ...job, state: "canceling", error: "Cancel requested. Rolling back partial import." });
+      importAbortRef.current?.abort();
       return;
     }
     onCancel();
@@ -1432,18 +1481,6 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
             <button type="button" onClick={() => void inspectEnex()} disabled={!serverPath.trim() || inspecting || importing} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500">
               {inspecting ? "Inspecting" : "Inspect file"}
             </button>
-            <label className="flex items-center gap-4 text-sm font-medium text-slate-200">
-              <span>Cores to use</span>
-              <input
-                type="number"
-                min={1}
-                max={16}
-                value={workerCount}
-                onChange={(event) => setWorkerCount(clampImportWorkerCount(event.target.value))}
-                disabled={importing}
-                className="h-10 w-28 border border-white/10 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400 disabled:cursor-not-allowed disabled:text-slate-500"
-              />
-            </label>
             {inspectionError ? <p className="text-sm text-rose-300">{inspectionError}</p> : null}
             {inspection ? (
               <div className="border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
@@ -1468,7 +1505,6 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
                 <div className="grid gap-1 text-xs text-slate-400">
                   <ImportProgressRow label="Elapsed time" value={formatDuration(elapsedSeconds)} />
                   <ImportProgressRow label="Predicted remaining time" value={predictedRemainingSeconds ? formatDuration(predictedRemainingSeconds) : "Calculating"} />
-                  <ImportProgressRow label="Cores" value={(job.workerCount || workerCount).toLocaleString()} />
                   <ImportProgressRow label="ENEX resources" value={`${job.progress.importedResources.toLocaleString()}${resourceProgressTotal ? ` / ${resourceProgressTotal.toLocaleString()}` : ""}`} />
                   <ImportProgressRow label="Data" value={`${formatBytes(job.progress.processedBytes)} / ${formatBytes(job.progress.totalBytes)}`} />
                 </div>
@@ -1502,6 +1538,28 @@ function NameModal({ dialog, onCancel, onSubmit, onImportComplete }: { dialog: N
   );
 }
 
+async function readEnexImportStream(response: Response, input: { onEvent: (event: EnexImportStreamEvent) => void }) {
+  if (!response.body) throw new Error("Import response did not include a progress stream.");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      input.onEvent(JSON.parse(line) as EnexImportStreamEvent);
+    }
+  }
+
+  const finalLine = `${buffer}${decoder.decode()}`.trim();
+  if (finalLine) input.onEvent(JSON.parse(finalLine) as EnexImportStreamEvent);
+}
+
 function ImportMetric({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -1520,7 +1578,7 @@ function ImportProgressRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ImportFinishedSummary({ notebookName, serverPath, inspection, job, elapsedSeconds }: { notebookName: string; serverPath: string; inspection: EnexInspection | null; job: EnexImportJob; elapsedSeconds: number }) {
+function ImportFinishedSummary({ notebookName, serverPath, inspection, job, elapsedSeconds }: { notebookName: string; serverPath: string; inspection: EnexInspection | null; job: EnexImportRun; elapsedSeconds: number }) {
   const resourceTotal = job.progress.totalResources ?? inspection?.resourceCount ?? null;
   const noteTotal = job.progress.totalNotes ?? inspection?.noteCount ?? null;
   return (
@@ -1535,7 +1593,7 @@ function ImportFinishedSummary({ notebookName, serverPath, inspection, job, elap
         {inspection ? <ImportProgressRow label="Inline media refs" value={inspection.inlineMediaCount.toLocaleString()} /> : null}
         <ImportProgressRow label="Elapsed time" value={formatDuration(elapsedSeconds)} />
         <ImportProgressRow label="Data" value={formatBytes(job.progress.processedBytes || job.progress.totalBytes)} />
-        <ImportProgressRow label="Source file" value={serverPath || job.id} />
+        <ImportProgressRow label="Source file" value={serverPath || "ENEX import"} />
       </div>
       {inspection?.tags.length ? (
         <p className="text-xs leading-5 text-slate-400">Top tags: {inspection.tags.slice(0, 6).map((tag) => `${tag.tag} (${tag.count})`).join(", ")}</p>
@@ -2897,7 +2955,6 @@ function DataAdminPanel() {
             { label: "Notebooks", value: overview.counts.notebooks.toLocaleString() },
             { label: "Pages", value: overview.counts.pages.toLocaleString() },
             { label: "Page versions", value: overview.counts.pageVersions.toLocaleString() },
-            { label: "Import jobs", value: overview.counts.importJobs.toLocaleString() },
           ],
         },
         {
@@ -3454,9 +3511,9 @@ function formatBytes(value: number) {
   return `${size >= 10 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`;
 }
 
-function secondsBetween(startedAt: string, finishedAt?: string) {
+function secondsBetween(startedAt: string, finishedAt?: string, now = Date.now()) {
   const start = parseServerTimestamp(startedAt);
-  const end = finishedAt ? parseServerTimestamp(finishedAt) : Date.now();
+  const end = finishedAt ? parseServerTimestamp(finishedAt) : now;
   if (Number.isNaN(start) || Number.isNaN(end)) return 0;
   return Math.max(0, Math.floor((end - start) / 1000));
 }
@@ -3465,12 +3522,6 @@ function estimateRemainingSeconds(elapsedSeconds: number, progressPercent: numbe
   if (!elapsedSeconds || progressPercent <= 0 || progressPercent >= 100) return 0;
   const estimatedTotalSeconds = Math.round(elapsedSeconds / (progressPercent / 100));
   return Math.max(0, estimatedTotalSeconds - elapsedSeconds);
-}
-
-function clampImportWorkerCount(value: string | number) {
-  const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(parsed)) return 4;
-  return Math.min(16, Math.max(1, parsed));
 }
 
 function formatDuration(totalSeconds: number) {

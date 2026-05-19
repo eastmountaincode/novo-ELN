@@ -7,7 +7,7 @@ import type { JSONContent } from "@tiptap/react";
 import { attachmentPreviewText, inferAttachmentBlockType } from "./attachmentTypes";
 import { editorDocumentToBody } from "./editor";
 import { uploadDir } from "./paths";
-import { createImportedAttachment, createImportedNotebook, createImportedPage, finishImportedNotebook } from "./store";
+import { createImportedAttachment, createImportedNotebook, createImportedPage, finishImportedNotebook, removeImportedNotebook } from "./store";
 import type { Attachment } from "./types";
 
 export type ParsedEnexResource = {
@@ -56,7 +56,15 @@ export type EnexImportResult = {
   notebookId: string;
   importedNotes: number;
   importedResources: number;
+  progress: EnexImportProgress;
 };
+
+export class EnexImportCanceledError extends Error {
+  constructor() {
+    super("Import canceled. Partial import was rolled back.");
+    this.name = "EnexImportCanceledError";
+  }
+}
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -108,84 +116,110 @@ export async function importEnexFile(input: {
   notebookName: string;
   filePath: string;
   totalNotes?: number | null;
+  totalResources?: number | null;
   onProgress?: (progress: EnexImportProgress) => void;
+  shouldCancel?: () => boolean;
 }): Promise<EnexImportResult> {
   const absolutePath = normalizeServerPath(input.filePath);
   const stats = await fsp.stat(absolutePath);
   if (!stats.isFile()) throw new Error("ENEX path must point to a file.");
 
-  const notebookId = createImportedNotebook({
-    userId: input.userId,
-    name: input.notebookName.trim() || notebookNameFromPath(absolutePath),
-  });
+  let notebookId = "";
+  const createdStorageKeys: string[] = [];
 
   let importedNotes = 0;
   let importedResources = 0;
+  let processedBytes = 0;
 
-  await streamEnexNotes(absolutePath, async (noteXml, processedBytes) => {
-    const note = parseNoteXml(noteXml);
-    const pageId = createImportedPage({
+  const emitProgress = () => input.onProgress?.({
+    processedBytes,
+    totalBytes: stats.size,
+    importedNotes,
+    totalNotes: input.totalNotes ?? null,
+    importedResources,
+    totalResources: input.totalResources ?? null,
+  });
+  const throwIfCanceled = () => {
+    if (input.shouldCancel?.()) throw new EnexImportCanceledError();
+  };
+
+  try {
+    notebookId = createImportedNotebook({
       userId: input.userId,
-      notebookId,
-      title: note.title,
-      body: "",
-      tags: [],
-      createdAt: note.createdAt,
-      updatedAt: note.updatedAt,
+      name: input.notebookName.trim() || notebookNameFromPath(absolutePath),
     });
 
-    const attachmentsByHash = new Map<string, Attachment>();
-    for (const resource of note.resources) {
-      const storageKey = await writeImportedResource(pageId, resource);
-      const blockType = inferAttachmentBlockType(resource.fileName, resource.mimeType);
-      const attachment = createImportedAttachment({
-        pageId,
-        originalName: resource.fileName,
-        mimeType: resource.mimeType,
-        size: resource.data.length,
-        storageKey,
-        blockType,
-        previewText: attachmentPreviewText(blockType, "evernote"),
+    await streamEnexNotes(absolutePath, async (noteXml, nextProcessedBytes) => {
+      throwIfCanceled();
+      processedBytes = nextProcessedBytes;
+      const note = parseNoteXml(noteXml);
+      const pageId = createImportedPage({
+        userId: input.userId,
+        notebookId,
+        title: note.title,
+        body: "",
+        tags: [],
         createdAt: note.createdAt,
+        updatedAt: note.updatedAt,
       });
-      attachmentsByHash.set(resource.hash, attachment);
-      importedResources += 1;
-      input.onProgress?.({
-        processedBytes,
-        totalBytes: stats.size,
-        importedNotes,
-        totalNotes: input.totalNotes ?? null,
-        importedResources,
-        totalResources: null,
-      });
-    }
 
-    const body = enmlToEditorBody(note.body, attachmentsByHash);
-    createImportedPage({
-      userId: input.userId,
-      notebookId,
-      pageId,
-      title: note.title,
-      body,
-      tags: note.tags,
-      createdAt: note.createdAt,
-      updatedAt: note.updatedAt,
-      replaceExisting: true,
+      const attachmentsByHash = new Map<string, Attachment>();
+      for (const resource of note.resources) {
+        throwIfCanceled();
+        const storageKey = await writeImportedResource(pageId, resource);
+        createdStorageKeys.push(storageKey);
+        const blockType = inferAttachmentBlockType(resource.fileName, resource.mimeType);
+        const attachment = createImportedAttachment({
+          pageId,
+          originalName: resource.fileName,
+          mimeType: resource.mimeType,
+          size: resource.data.length,
+          storageKey,
+          blockType,
+          previewText: attachmentPreviewText(blockType, "evernote"),
+          createdAt: note.createdAt,
+        });
+        attachmentsByHash.set(resource.hash, attachment);
+        importedResources += 1;
+        emitProgress();
+      }
+
+      throwIfCanceled();
+      const body = enmlToEditorBody(note.body, attachmentsByHash);
+      createImportedPage({
+        userId: input.userId,
+        notebookId,
+        pageId,
+        title: note.title,
+        body,
+        tags: note.tags,
+        createdAt: note.createdAt,
+        updatedAt: note.updatedAt,
+        replaceExisting: true,
+      });
+
+      importedNotes += 1;
+      emitProgress();
     });
 
-    importedNotes += 1;
-    input.onProgress?.({
+    throwIfCanceled();
+    processedBytes = stats.size;
+    finishImportedNotebook(notebookId);
+    const progress = {
       processedBytes,
       totalBytes: stats.size,
       importedNotes,
       totalNotes: input.totalNotes ?? null,
       importedResources,
-      totalResources: null,
-    });
-  });
-
-  finishImportedNotebook(notebookId);
-  return { notebookId, importedNotes, importedResources };
+      totalResources: input.totalResources ?? null,
+    };
+    input.onProgress?.(progress);
+    return { notebookId, importedNotes, importedResources, progress };
+  } catch (error) {
+    if (notebookId) removeImportedNotebook(notebookId);
+    await removeStorageFiles(createdStorageKeys);
+    throw error;
+  }
 }
 
 function parseNoteXml(noteXml: string): ParsedEnexNote {
@@ -619,6 +653,28 @@ async function writeImportedResource(pageId: string, resource: ParsedEnexResourc
   await fsp.mkdir(path.dirname(absolutePath), { recursive: true });
   await fsp.writeFile(absolutePath, resource.data);
   return storageKey;
+}
+
+async function removeStorageFiles(storageKeys: string[]) {
+  const absoluteUploadDir = path.resolve(uploadDir);
+  for (const storageKey of storageKeys) {
+    const absolutePath = path.resolve(uploadDir, storageKey);
+    if (!absolutePath.startsWith(`${absoluteUploadDir}${path.sep}`)) continue;
+    await fsp.rm(absolutePath, { force: true });
+    await removeEmptyParentDirs(path.dirname(absolutePath), absoluteUploadDir);
+  }
+}
+
+async function removeEmptyParentDirs(directory: string, stopDirectory: string) {
+  let current = directory;
+  while (current.startsWith(`${stopDirectory}${path.sep}`)) {
+    try {
+      await fsp.rmdir(current);
+    } catch {
+      return;
+    }
+    current = path.dirname(current);
+  }
 }
 
 function notebookNameFromPath(filePath: string) {

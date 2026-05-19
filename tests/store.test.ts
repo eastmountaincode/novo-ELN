@@ -121,7 +121,7 @@ describe("store", () => {
     const versionCountAfter = queryOne(`SELECT COUNT(*) AS count FROM page_versions WHERE page_id = '${pageId}'`)?.count;
     expect(after?.updated_at).toBe(before?.updated_at);
     expect(versionCountAfter).toBe(versionCountBefore);
-    expect(getPageActivityEvents(user.id, pageId).filter((event) => event.action !== "page.created")).toHaveLength(2);
+    expect(getPageActivityEvents(user.id, pageId).events.filter((event) => event.action !== "page.created")).toHaveLength(2);
   });
 
   it("records page activity and coalesces body edits within five minutes", async () => {
@@ -149,7 +149,7 @@ describe("store", () => {
       previewText: "",
     });
 
-    let events = getPageActivityEvents(user.id, pageId);
+    let events = getPageActivityEvents(user.id, pageId).events;
     expect(events.some((event) => event.action === "page.title.updated" && event.summary.includes("Audit note"))).toBe(true);
     expect(events.some((event) => event.action === "page.tags.updated" && event.summary.includes("Megan"))).toBe(true);
     expect(events.some((event) => event.action === "page.status.updated" && event.summary.includes("Needs review"))).toBe(true);
@@ -164,9 +164,16 @@ describe("store", () => {
     execSql(`UPDATE audit_events SET updated_at = datetime('now', '-6 minutes') WHERE id = '${bodyEvents[0].id}';`);
     updatePage(user.id, pageId, { body: "third body edit after the audit window" });
 
-    events = getPageActivityEvents(user.id, pageId);
+    events = getPageActivityEvents(user.id, pageId).events;
     bodyEvents = events.filter((event) => event.action === "page.body.updated");
     expect(bodyEvents).toHaveLength(2);
+
+    const firstPage = getPageActivityEvents(user.id, pageId, { limit: 3, offset: 0 });
+    const secondPage = getPageActivityEvents(user.id, pageId, { limit: 3, offset: 3 });
+    expect(firstPage.events).toHaveLength(3);
+    expect(firstPage.hasMore).toBe(true);
+    expect(secondPage.events.length).toBeGreaterThan(0);
+    expect(new Set([...firstPage.events, ...secondPage.events].map((event) => event.id)).size).toBe(firstPage.events.length + secondPage.events.length);
   });
 
   it("registers a member with a private starter workspace", async () => {

@@ -85,6 +85,7 @@ const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
   { key: "title", label: "Title" },
 ];
 
+const PAGE_ACTIVITY_PAGE_SIZE = 25;
 
 const PAGE_STATUS_OPTIONS: Array<{ value: PageStatus; label: string }> = [
   { value: "", label: "No status" },
@@ -3110,24 +3111,34 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityEvents, setActivityEvents] = useState<AuditEvent[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
+  const [activityLoadingMore, setActivityLoadingMore] = useState(false);
+  const [activityHasMore, setActivityHasMore] = useState(false);
   const [activityError, setActivityError] = useState("");
   const attachmentCount = page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
   const color = projectColor(selectedNotebook ?? selectedProject);
   const locked = Boolean(page.lockedAt);
 
-  async function openActivity() {
-    setActivityOpen(true);
-    setActivityLoading(true);
+  async function loadActivity(offset: number) {
+    const append = offset > 0;
+    if (append) setActivityLoadingMore(true);
+    else setActivityLoading(true);
     setActivityError("");
-    const response = await fetch(`/api/pages/${page.id}/activity`);
-    const body = (await response.json().catch(() => null)) as { events?: AuditEvent[]; error?: string } | null;
-    setActivityLoading(false);
+    const response = await fetch(`/api/pages/${page.id}/activity?limit=${PAGE_ACTIVITY_PAGE_SIZE}&offset=${offset}`);
+    const body = (await response.json().catch(() => null)) as { events?: AuditEvent[]; hasMore?: boolean; error?: string } | null;
+    if (append) setActivityLoadingMore(false);
+    else setActivityLoading(false);
     if (!response.ok) {
       setActivityError(body?.error ?? "Could not load activity.");
       return;
     }
-    setActivityEvents(body?.events ?? []);
+    setActivityEvents((current) => append ? [...current, ...(body?.events ?? [])] : body?.events ?? []);
+    setActivityHasMore(Boolean(body?.hasMore));
+  }
+
+  async function openActivity() {
+    setActivityOpen(true);
+    await loadActivity(0);
   }
 
   return (
@@ -3208,8 +3219,11 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
         <PageActivityDrawer
           events={activityEvents}
           loading={activityLoading}
+          loadingMore={activityLoadingMore}
+          hasMore={activityHasMore}
           error={activityError}
           onRefresh={openActivity}
+          onLoadMore={() => loadActivity(activityEvents.length)}
           onClose={() => setActivityOpen(false)}
         />
       ) : null}
@@ -3217,7 +3231,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
   );
 }
 
-function PageActivityDrawer({ events, loading, error, onRefresh, onClose }: { events: AuditEvent[]; loading: boolean; error: string; onRefresh: () => Promise<void>; onClose: () => void }) {
+function PageActivityDrawer({ events, loading, loadingMore, hasMore, error, onRefresh, onLoadMore, onClose }: { events: AuditEvent[]; loading: boolean; loadingMore: boolean; hasMore: boolean; error: string; onRefresh: () => Promise<void>; onLoadMore: () => Promise<void>; onClose: () => void }) {
   return (
     <aside className="fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[calc(100vw-32px)] flex-col border-l border-slate-200 bg-white shadow-2xl">
       <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
@@ -3256,6 +3270,17 @@ function PageActivityDrawer({ events, loading, error, onRefresh, onClose }: { ev
             </div>
           ))}
         </div>
+        {hasMore ? (
+          <button
+            type="button"
+            onClick={() => void onLoadMore()}
+            disabled={loading || loadingMore}
+            className="mt-5 inline-flex h-9 w-full items-center justify-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:text-slate-400"
+          >
+            {loadingMore ? <Loader2 size={14} className="animate-spin" /> : null}
+            {loadingMore ? "Loading..." : "Load more activity"}
+          </button>
+        ) : null}
       </div>
     </aside>
   );

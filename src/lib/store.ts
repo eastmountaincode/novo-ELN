@@ -757,10 +757,13 @@ export function getWorkspace(userId: string): Workspace {
   };
 }
 
-export function getPageActivityEvents(userId: string, pageId: string): AuditEvent[] {
+export function getPageActivityEvents(userId: string, pageId: string, options: { limit?: number; offset?: number } = {}) {
   ensureDatabase();
   assertPageReadAccess(userId, pageId);
-  return querySql(`
+  const limit = clampInteger(options.limit, 1, 100, 25);
+  const offset = clampInteger(options.offset, 0, 1_000_000_000, 0);
+  const total = Number(queryOne(`SELECT COUNT(*) AS count FROM audit_events WHERE page_id = ${sql(pageId)}`)?.count ?? 0);
+  const events = querySql(`
     SELECT
       ae.id,
       ae.entity_type,
@@ -781,8 +784,15 @@ export function getPageActivityEvents(userId: string, pageId: string): AuditEven
     LEFT JOIN users u ON u.id = ae.actor_user_id
     WHERE ae.page_id = ${sql(pageId)}
     ORDER BY datetime(ae.updated_at) DESC, datetime(ae.created_at) DESC, ae.rowid DESC
-    LIMIT 200
+    LIMIT ${limit} OFFSET ${offset}
   `).map(toAuditEvent);
+  return {
+    events,
+    total,
+    limit,
+    offset,
+    hasMore: offset + events.length < total,
+  };
 }
 
 export function createNotebook(userId: string, name = "New Notebook") {

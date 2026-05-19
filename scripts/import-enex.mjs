@@ -150,7 +150,11 @@ function findImportUser(options) {
 
 function renderProgress({ processedBytes, totalBytes, importedNotes, importedResources, workerCount }) {
   const percent = totalBytes > 0 ? Math.min(100, Math.floor((processedBytes / totalBytes) * 100)) : 0;
+  const barWidth = 28;
+  const filledWidth = Math.round((percent / 100) * barWidth);
+  const bar = `[${"#".repeat(filledWidth)}${"-".repeat(barWidth - filledWidth)}]`;
   const line = [
+    bar,
     `${percent.toString().padStart(3, " ")}%`,
     `${formatBytes(processedBytes)} / ${formatBytes(totalBytes)}`,
     `${importedNotes} pages`,

@@ -626,7 +626,7 @@ export default function Home() {
   async function savePage(patch: { title?: string; body?: string; status?: PageStatus }) {
     if (!selectedPage || !selectedPageCanEdit) return;
     const pageId = selectedPage.id;
-    setSaveStatus("Saving");
+    setSaveStatus("Saving...");
     const response = await fetch(`/api/pages/${pageId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -642,7 +642,7 @@ export default function Home() {
     const normalizedTags = normalizeTagList(tags);
     if (tagListsEqual(normalizedTags, normalizeTagList(selectedPage.tags))) return;
     patchSelectedPage({ tags: normalizedTags });
-    setSaveStatus("Saving");
+    setSaveStatus("Saving...");
     const response = await fetch(`/api/pages/${selectedPage.id}/tags`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

@@ -3203,6 +3203,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
         <header className="border-b border-slate-200 px-6 py-4">
           <div className="flex items-center gap-3">
             <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
+            {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
             <button
               type="button"
               onClick={() => void openActivity()}
@@ -3212,7 +3213,6 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
             >
               <History size={16} />
             </button>
-            {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
           </div>
           <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} />
           <div className="flex items-end justify-between gap-3">

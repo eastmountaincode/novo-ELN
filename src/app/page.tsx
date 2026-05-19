@@ -630,14 +630,13 @@ export default function Home() {
 
   async function setSelectedPageLocked(locked: boolean) {
     if (!selectedPage || !selectedPageCanManageLock) return;
-    setSaving(locked ? "Locking" : "Unlocking");
     const response = await fetch(`/api/pages/${selectedPage.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ locked }),
     });
-    setSaving(response.ok ? (locked ? "Locked" : "Unlocked") : "Lock update failed");
-    if (response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
+    if (!response.ok) throw new Error("Could not update page lock.");
+    await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
 
   function openHome() {
@@ -3149,18 +3148,33 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
 }
 
 function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; canManage: boolean; setLocked: (locked: boolean) => Promise<void> }) {
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
   const Icon = locked ? Lock : Unlock;
   if (!canManage) return null;
+  async function toggleLocked() {
+    if (pending) return;
+    setPending(true);
+    setFailed(false);
+    try {
+      await setLocked(!locked);
+    } catch {
+      setFailed(true);
+    } finally {
+      setPending(false);
+    }
+  }
   return (
     <button
       type="button"
-      onClick={() => void setLocked(!locked)}
-      className="inline-flex h-7 shrink-0 items-center gap-1.5 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
+      onClick={() => void toggleLocked()}
+      disabled={pending}
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 border bg-white px-2 text-xs font-medium hover:bg-slate-100 disabled:cursor-wait ${failed ? "border-rose-300 text-rose-700" : "border-slate-300 text-slate-700"}`}
       title={locked ? "Unlock page" : "Lock page"}
       aria-label={locked ? "Unlock page" : "Lock page"}
     >
-      <Icon size={12} />
-      <span>{locked ? "Locked page" : "Lock page"}</span>
+      {pending ? <Loader2 size={12} className="animate-spin" /> : <Icon size={12} />}
+      <span>{pending ? (locked ? "Unlocking" : "Locking") : failed ? "Lock failed" : locked ? "Locked page" : "Lock page"}</span>
     </button>
   );
 }

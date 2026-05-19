@@ -2701,6 +2701,14 @@ function AccountProfile({ user }: { user: AppUser }) {
       </div>
       <dl className="grid gap-3 text-sm">
         <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
+          <dt className="text-slate-500">First name</dt>
+          <dd className="text-slate-950">{user.firstName || "Not set"}</dd>
+        </div>
+        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
+          <dt className="text-slate-500">Last name</dt>
+          <dd className="text-slate-950">{user.lastName || "Not set"}</dd>
+        </div>
+        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
           <dt className="text-slate-500">Role</dt>
           <dd className="capitalize text-slate-950">{user.role}</dd>
         </div>

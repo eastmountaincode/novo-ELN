@@ -2022,6 +2022,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
                                 className={`flex h-9 w-full items-center gap-2 px-2 text-left text-sm ${selected ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}
                               >
                                 <span className={`grid size-5 shrink-0 place-items-center border ${selected ? "border-cyan-500 bg-cyan-500 text-white" : "border-slate-300"}`}>{selected ? <Check size={13} /> : null}</span>
+                                <StatusDot status={option.value} />
                                 <span>{option.label}</span>
                               </button>
                             );
@@ -2047,6 +2048,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
             ))}
             {selectedStatuses.map((status) => (
               <button key={status || "no-status"} type="button" onClick={() => toggleStatusFilter(status)} className="inline-flex h-7 items-center gap-1 rounded-full border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:border-slate-500">
+                <StatusDot status={status} />
                 {getPageStatusLabel(status)}
                 <X size={12} />
               </button>
@@ -2183,7 +2185,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
         {(page.lockedAt || page.status || visibleTags.length > 0) ? (
           <div className="mt-3 flex flex-wrap gap-1.5">
             {page.lockedAt ? <span className="inline-flex h-6 items-center gap-1 border border-slate-300 bg-slate-100 px-2 text-[11px] font-medium text-slate-600"><Lock size={11} />Locked</span> : null}
-            {page.status ? <span className="inline-flex h-6 items-center rounded-full border border-slate-300 bg-white px-2.5 text-[11px] font-medium text-slate-700">{getPageStatusLabel(page.status)}</span> : null}
+            {page.status ? <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-2.5 text-[11px] font-medium text-slate-700"><StatusDot status={page.status} />{getPageStatusLabel(page.status)}</span> : null}
             {visibleTags.map((tag) => <span key={tag} className="inline-flex h-6 max-w-full items-center truncate border border-slate-200 bg-slate-100 px-2 text-[11px] font-medium text-slate-600">{tag}</span>)}
             {page.tags.length > visibleTags.length ? <span className="inline-flex h-6 items-center px-1 text-[11px] font-medium text-slate-400">+{page.tags.length - visibleTags.length}</span> : null}
           </div>
@@ -3234,6 +3236,7 @@ function PageStatusRow({ status, canEdit, setStatus }: { status: PageStatus; can
   return (
     <div className="mt-1 flex min-h-8 flex-wrap items-center gap-1.5 text-sm">
       <Flag size={15} className="mr-1 shrink-0 text-slate-400" />
+      <StatusDot status={status} />
       <select
         value={status}
         onChange={(event) => setStatus(event.target.value as PageStatus)}
@@ -3408,6 +3411,18 @@ function filterNotebookPages(pages: PageEntry[], selectedTags: string[], selecte
 
 function getPageStatusLabel(status: PageStatus) {
   return PAGE_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? "No status";
+}
+
+function StatusDot({ status }: { status: PageStatus }) {
+  return <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: pageStatusColor(status) }} aria-hidden="true" />;
+}
+
+function pageStatusColor(status: PageStatus) {
+  if (status === "Failed") return "#dc2626";
+  if (status === "Needs review") return "#d97706";
+  if (status === "Completed") return "#16a34a";
+  if (status === "Working") return "#2563eb";
+  return "#94a3b8";
 }
 
 function sortNotebookPages(pages: PageEntry[], sortKey: PageSortKey) {

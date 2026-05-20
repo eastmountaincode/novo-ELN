@@ -135,7 +135,10 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     extensions: [
       StarterKit.configure({
         link: false,
-        dropcursor: false,
+        dropcursor: {
+          color: "#0891b2",
+          width: 2,
+        },
       }),
       EditorTabBehavior,
       Underline,
@@ -259,6 +262,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     event.stopPropagation();
     const dropPosition = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? editor.state.doc.content.size;
     insertAttachmentCard(attrs, dropPosition);
+    clearEditorDropCursor(editor.view.dom);
   }
 
   return (
@@ -700,6 +704,11 @@ function clearInlineAttachmentDragState() {
 
 function clearInlineAttachmentDragStateIfHidden() {
   if (document.hidden) clearInlineAttachmentDragState();
+}
+
+function clearEditorDropCursor(editorDom: HTMLElement) {
+  const dragEndEvent = typeof DragEvent === "function" ? new DragEvent("dragend") : new Event("dragend");
+  editorDom.dispatchEvent(dragEndEvent);
 }
 
 function ToolbarButton({ active = false, label, onClick, children }: { active?: boolean; label: string; onClick: () => void; children: ReactNode }) {

@@ -32,6 +32,7 @@ import {
   Paperclip,
   Plus,
   Pencil,
+  RefreshCw,
   Search,
   Settings,
   Shield,
@@ -3355,8 +3356,9 @@ function PageActivityDrawer({ events, loading, loadingMore, hasMore, error, onRe
       <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
         <h2 className="text-lg font-semibold text-slate-950">Activity</h2>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => void onRefresh()} disabled={loading} className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-950 disabled:cursor-wait disabled:text-slate-400" aria-label="Refresh activity" title="Refresh activity">
-            {loading ? <Loader2 size={15} className="animate-spin" /> : <History size={15} />}
+          <button type="button" onClick={() => void onRefresh()} disabled={loading} className="inline-flex h-8 items-center gap-2 border border-slate-300 bg-white px-3 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-950 disabled:cursor-wait disabled:text-slate-400" aria-label="Refresh activity">
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+            <span>Refresh</span>
           </button>
           <button type="button" onClick={onClose} className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-950" aria-label="Close activity">
             <X size={16} />

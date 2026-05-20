@@ -70,7 +70,6 @@ const SIDEBAR_MAX_WIDTH = 460;
 const SIDEBAR_COLLAPSED_WIDTH = 64;
 const PAGES_MIN_WIDTH = 320;
 const PAGES_MAX_WIDTH = 520;
-const PAGES_COLLAPSED_WIDTH = 52;
 
 type DragState = {
   pane: "sidebar" | "pages";
@@ -1083,7 +1082,7 @@ export default function Home() {
     );
   }
 
-  const effectivePagesWidth = pagesCollapsed ? PAGES_COLLAPSED_WIDTH : pagesWidth;
+  const effectivePagesWidth = pagesCollapsed ? SIDEBAR_COLLAPSED_WIDTH : pagesWidth;
   const expandedLayoutWidth = activeView === "project" ? sidebarWidth + 1 + effectivePagesWidth + 1 + 560 : sidebarWidth + 1 + 560;
   const sidebarAutoCollapsed = viewportWidth > 0 && viewportWidth < expandedLayoutWidth;
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed;
@@ -1966,22 +1965,16 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
 
   if (collapsed) {
     return (
-      <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
-        <div className="border-b border-slate-200 px-2 py-4">
-          <button
-            type="button"
-            onClick={toggleCollapsed}
-            className="grid h-8 w-8 place-items-center border border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-950"
-            aria-label="Expand page manager"
-            title={`Expand pages for ${selectedNotebook?.name ?? "notebook"}`}
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-        <div className="flex flex-col items-center gap-2 py-4">
-          <NotebookIcon size={17} style={{ color }} />
-          <span className="text-xs font-medium tabular-nums text-slate-500" title={pageCountLabel}>{pages.length}</span>
-        </div>
+      <aside className="flex min-h-screen justify-center overflow-hidden bg-slate-50 px-0 py-4 text-slate-900">
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          className="grid h-8 w-8 place-items-center border border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-950"
+          aria-label="Expand page manager"
+          title={`Expand pages for ${selectedNotebook?.name ?? "notebook"}`}
+        >
+          <ChevronRight size={16} />
+        </button>
       </aside>
     );
   }

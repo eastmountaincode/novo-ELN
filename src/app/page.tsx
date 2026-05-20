@@ -3301,20 +3301,15 @@ function PageActivityDrawer({ events, loading, loadingMore, hasMore, error, onRe
   return (
     <aside className="fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[calc(100vw-32px)] flex-col border-l border-slate-200 bg-white shadow-2xl">
       <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-950">Activity</h2>
-          <p className="mt-0.5 text-sm text-slate-500">Page history and audit events.</p>
+        <h2 className="text-lg font-semibold text-slate-950">Activity</h2>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => void onRefresh()} disabled={loading} className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-950 disabled:cursor-wait disabled:text-slate-400" aria-label="Refresh activity" title="Refresh activity">
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <History size={15} />}
+          </button>
+          <button type="button" onClick={onClose} className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-950" aria-label="Close activity">
+            <X size={16} />
+          </button>
         </div>
-        <button type="button" onClick={onClose} className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-950" aria-label="Close activity">
-          <X size={16} />
-        </button>
-      </div>
-      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-2">
-        <span className="text-sm font-medium text-slate-700">All events</span>
-        <button type="button" onClick={() => void onRefresh()} disabled={loading} className="inline-flex h-8 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:text-slate-400">
-          {loading ? <Loader2 size={14} className="animate-spin" /> : <History size={14} />}
-          Refresh
-        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
         {error ? <p className="mb-4 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}

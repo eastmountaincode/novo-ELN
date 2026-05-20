@@ -70,6 +70,7 @@ const SIDEBAR_MAX_WIDTH = 460;
 const SIDEBAR_COLLAPSED_WIDTH = 64;
 const PAGES_MIN_WIDTH = 320;
 const PAGES_MAX_WIDTH = 520;
+const PAGES_COLLAPSED_WIDTH = 52;
 
 type DragState = {
   pane: "sidebar" | "pages";
@@ -192,6 +193,7 @@ export default function Home() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [pagesWidth, setPagesWidth] = useState(340);
+  const [pagesCollapsed, setPagesCollapsed] = useState(false);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(new Set());
   const [accountOpen, setAccountOpen] = useState(false);
@@ -1081,7 +1083,8 @@ export default function Home() {
     );
   }
 
-  const expandedLayoutWidth = activeView === "project" ? sidebarWidth + 1 + pagesWidth + 1 + 560 : sidebarWidth + 1 + 560;
+  const effectivePagesWidth = pagesCollapsed ? PAGES_COLLAPSED_WIDTH : pagesWidth;
+  const expandedLayoutWidth = activeView === "project" ? sidebarWidth + 1 + effectivePagesWidth + 1 + 560 : sidebarWidth + 1 + 560;
   const sidebarAutoCollapsed = viewportWidth > 0 && viewportWidth < expandedLayoutWidth;
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed;
   const effectiveSidebarWidth = effectiveSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
@@ -1090,7 +1093,7 @@ export default function Home() {
     <main className="app-scroll-root overflow-x-auto bg-white text-slate-950">
       <input ref={fileInputRef} type="file" className="hidden" onChange={(event) => void uploadAttachment(event.target.files?.[0])} />
 
-      <div className="grid h-dvh min-w-[980px]" style={{ gridTemplateColumns: activeView === "project" ? `${effectiveSidebarWidth}px 1px ${pagesWidth}px 1px minmax(560px, 1fr)` : `${effectiveSidebarWidth}px 1px minmax(560px, 1fr)` } as React.CSSProperties}>
+      <div className="grid h-dvh min-w-[980px]" style={{ gridTemplateColumns: activeView === "project" ? `${effectiveSidebarWidth}px 1px ${effectivePagesWidth}px 1px minmax(560px, 1fr)` : `${effectiveSidebarWidth}px 1px minmax(560px, 1fr)` } as React.CSSProperties}>
         <UnifiedSidebar
           workspace={workspace}
           activeView={activeView}
@@ -1155,9 +1158,11 @@ export default function Home() {
               creatingPage={creatingPage}
               canEdit={selectedNotebookCanEdit}
               deletePage={requestPageDelete}
+              collapsed={pagesCollapsed}
+              toggleCollapsed={() => setPagesCollapsed((current) => !current)}
             />
 
-            <ResizeHandle onPointerDown={(event) => setDragState({ pane: "pages", startX: event.clientX, startWidth: pagesWidth })} />
+            <ResizeHandle disabled={pagesCollapsed} onPointerDown={(event) => setDragState({ pane: "pages", startX: event.clientX, startWidth: pagesWidth })} />
 
             {selectedPage ? (
               <EditorPane
@@ -1853,7 +1858,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
   );
 }
 
-function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, creatingPage, canEdit, deletePage }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; creatingPage: boolean; canEdit: boolean; deletePage: (page: PageEntry) => void }) {
+function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, creatingPage, canEdit, deletePage, collapsed, toggleCollapsed }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; creatingPage: boolean; canEdit: boolean; deletePage: (page: PageEntry) => void; collapsed: boolean; toggleCollapsed: () => void }) {
   const pages = useMemo(() => selectedNotebook?.pages ?? [], [selectedNotebook]);
   const [sortKey, setSortKey] = useState<PageSortKey>("updated");
   const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
@@ -1959,11 +1964,44 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
     setTagQuery("");
   }
 
+  if (collapsed) {
+    return (
+      <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
+        <div className="border-b border-slate-200 px-2 py-4">
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            className="grid h-8 w-8 place-items-center border border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-950"
+            aria-label="Expand page manager"
+            title={`Expand pages for ${selectedNotebook?.name ?? "notebook"}`}
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+        <div className="flex flex-col items-center gap-2 py-4">
+          <NotebookIcon size={17} style={{ color }} />
+          <span className="text-xs font-medium tabular-nums text-slate-500" title={pageCountLabel}>{pages.length}</span>
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
-          <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <h2 className="min-w-0 truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              className="grid h-7 w-7 shrink-0 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950"
+              aria-label="Collapse page manager"
+              title="Collapse page manager"
+            >
+              <ChevronLeft size={16} />
+            </button>
+          </div>
           <p className="mt-1 text-sm text-slate-500">{pageCountLabel}</p>
         </div>
         <div className="flex items-center justify-between gap-2">

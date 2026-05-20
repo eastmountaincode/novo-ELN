@@ -32,9 +32,3 @@ export function resolveAttachmentBlockType(input: { name: string; mimeType: stri
   if (inferred !== "file") return inferred;
   return normalizeAttachmentBlockType(input.requestedBlockType) ?? "file";
 }
-
-export function attachmentPreviewText(blockType: BlockType, source: "upload" | "evernote") {
-  void blockType;
-  void source;
-  return "";
-}

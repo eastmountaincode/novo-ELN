@@ -97,7 +97,6 @@ export function ensureDatabase() {
       size INTEGER NOT NULL,
       storage_key TEXT NOT NULL,
       block_type TEXT NOT NULL DEFAULT 'file',
-      preview_text TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -127,6 +126,7 @@ export function ensureDatabase() {
   migrateProjectsToTopLevelNotebooks();
   ensureNotebookColumns();
   ensurePageLockColumns();
+  migrateAttachmentPreviewTextColumn();
   execSql(`
     DROP TABLE IF EXISTS search_pages_fts;
     CREATE VIRTUAL TABLE search_pages_fts USING fts5(
@@ -248,6 +248,36 @@ function ensurePageLockColumns() {
   const names = new Set(columns.map((column) => column.name));
   if (!names.has("locked_at")) execSql("ALTER TABLE pages ADD COLUMN locked_at TEXT;");
   if (!names.has("locked_by")) execSql("ALTER TABLE pages ADD COLUMN locked_by TEXT REFERENCES users(id);");
+}
+
+function migrateAttachmentPreviewTextColumn() {
+  const columns = querySql("PRAGMA table_info(attachments);");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("preview_text")) return;
+
+  execSql(`
+    PRAGMA foreign_keys=OFF;
+
+    CREATE TABLE attachments_new (
+      id TEXT PRIMARY KEY,
+      page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      original_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      storage_key TEXT NOT NULL,
+      block_type TEXT NOT NULL DEFAULT 'file',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    INSERT INTO attachments_new (id, page_id, original_name, mime_type, size, storage_key, block_type, created_at)
+    SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, created_at
+    FROM attachments;
+
+    DROP TABLE attachments;
+    ALTER TABLE attachments_new RENAME TO attachments;
+
+    PRAGMA foreign_keys=ON;
+  `);
 }
 
 function migratePageStatusValues() {
@@ -598,7 +628,7 @@ export function getWorkspace(userId: string): Workspace {
   const pageIds = pageRows.map((page) => page.id);
   const tagRows = pageIds.length ? querySql(`SELECT page_id, tag FROM page_tags WHERE page_id IN (${inList(pageIds)}) ORDER BY rowid ASC`) : [];
   const attachmentRows = pageIds.length
-    ? querySql(`SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, preview_text, created_at FROM attachments WHERE page_id IN (${inList(pageIds)}) ORDER BY created_at DESC`)
+    ? querySql(`SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, created_at FROM attachments WHERE page_id IN (${inList(pageIds)}) ORDER BY created_at DESC`)
     : [];
   const notebookMemberRows = notebookIds.length
     ? querySql(`
@@ -936,14 +966,13 @@ export function createAttachment(input: {
   size: number;
   storageKey: string;
   blockType: BlockType;
-  previewText: string;
 }) {
   ensureDatabase();
   assertPageEditAccess(input.userId, input.pageId);
   const id = randomUUID();
   execSql(`
-    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, preview_text)
-    VALUES (${sql(id)}, ${sql(input.pageId)}, ${sql(input.originalName)}, ${sql(input.mimeType)}, ${input.size}, ${sql(input.storageKey)}, ${sql(input.blockType)}, ${sql(input.previewText)});
+    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type)
+    VALUES (${sql(id)}, ${sql(input.pageId)}, ${sql(input.originalName)}, ${sql(input.mimeType)}, ${input.size}, ${sql(input.storageKey)}, ${sql(input.blockType)});
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(input.pageId)};
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(input.pageId)});
   `);
@@ -961,7 +990,7 @@ export function createAttachment(input: {
 export function getAttachmentForUser(userId: string, attachmentId: string): Attachment | null {
   ensureDatabase();
   const row = queryOne(`
-    SELECT a.id, a.page_id, a.original_name, a.mime_type, a.size, a.storage_key, a.block_type, a.preview_text, a.created_at
+    SELECT a.id, a.page_id, a.original_name, a.mime_type, a.size, a.storage_key, a.block_type, a.created_at
     FROM attachments a
     JOIN pages p ON p.id = a.page_id
     JOIN notebooks n ON n.id = p.notebook_id
@@ -1058,15 +1087,14 @@ export function createImportedAttachment(input: {
   size: number;
   storageKey: string;
   blockType: BlockType;
-  previewText: string;
   createdAt?: string;
 }): Attachment {
   ensureDatabase();
   const id = randomUUID();
   const createdAt = input.createdAt ?? new Date().toISOString();
   execSql(`
-    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, preview_text, created_at)
-    VALUES (${sql(id)}, ${sql(input.pageId)}, ${sql(input.originalName)}, ${sql(input.mimeType)}, ${input.size}, ${sql(input.storageKey)}, ${sql(input.blockType)}, ${sql(input.previewText)}, ${sql(createdAt)});
+    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, created_at)
+    VALUES (${sql(id)}, ${sql(input.pageId)}, ${sql(input.originalName)}, ${sql(input.mimeType)}, ${input.size}, ${sql(input.storageKey)}, ${sql(input.blockType)}, ${sql(createdAt)});
   `);
   return {
     id,
@@ -1076,7 +1104,6 @@ export function createImportedAttachment(input: {
     size: input.size,
     storageKey: input.storageKey,
     blockType: input.blockType,
-    previewText: input.previewText,
     createdAt,
     updatedAt: createdAt,
   };
@@ -1560,7 +1587,6 @@ function toAttachment(row: Record<string, string>): Attachment {
     size: Number(row.size),
     storageKey: row.storage_key,
     blockType: row.block_type as BlockType,
-    previewText: row.preview_text,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
   };

@@ -394,13 +394,13 @@ async function writeImportedResource(pageId, resource) {
 function buildAttachment({ pageId, resource, storageKey, createdAt }) {
   const id = crypto.randomUUID();
   const blockType = inferBlockType(resource.fileName, resource.mimeType);
-  return { id, pageId, originalName: resource.fileName, mimeType: resource.mimeType, size: resource.data.length, storageKey, blockType, previewText: previewFor(resource.fileName, resource.mimeType), createdAt, updatedAt: createdAt };
+  return { id, pageId, originalName: resource.fileName, mimeType: resource.mimeType, size: resource.data.length, storageKey, blockType, createdAt, updatedAt: createdAt };
 }
 
 function insertImportedNote({ job, notebookId, pageId, note, body, plainText, attachments, createdAt, updatedAt }) {
   const attachmentSql = attachments.map((attachment) => `
-    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, preview_text, created_at)
-    VALUES (${sql(attachment.id)}, ${sql(pageId)}, ${sql(attachment.originalName)}, ${sql(attachment.mimeType)}, ${attachment.size}, ${sql(attachment.storageKey)}, ${sql(attachment.blockType)}, ${sql(attachment.previewText)}, ${sql(createdAt)});
+    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, created_at)
+    VALUES (${sql(attachment.id)}, ${sql(pageId)}, ${sql(attachment.originalName)}, ${sql(attachment.mimeType)}, ${attachment.size}, ${sql(attachment.storageKey)}, ${sql(attachment.blockType)}, ${sql(createdAt)});
   `).join("\n");
   const tagSql = note.tags.map((tag) => `INSERT OR IGNORE INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n");
   execSql(`
@@ -770,7 +770,6 @@ function unwrapCdata(value) { return value.replace(/<!\[CDATA\[/g, "").replace(/
 function stripTags(value) { return value.replace(/<[^>]+>/g, ""); }
 function decodeXmlEntities(value) { return value.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'"); }
 function inferBlockType(name, mimeType) { const lower = name.toLowerCase(); const lowerMime = mimeType.toLowerCase(); if (lowerMime.startsWith("image/") || /\.(png|jpe?g|gif|tiff?|webp|svg)$/.test(lower)) return "image"; if (lowerMime === "application/pdf" || /\.pdf$/.test(lower)) return "pdf"; if (lowerMime.includes("spreadsheet") || lowerMime.includes("excel") || lowerMime === "text/csv" || /\.(xlsx?|xlsb|csv|tsv|ods)$/.test(lower)) return "sheet"; if (lowerMime.includes("presentation") || lowerMime.includes("powerpoint") || /\.(pptx?|ppsx?|odp|key)$/.test(lower)) return "slides"; if (/\.(gb|gbk|fasta|fa|fna|fastq|fq|dna|seq|ab1)$/.test(lower)) return "sequence"; return "file"; }
-function previewFor(_name, _mimeType) { return ""; }
 function extensionForMime(mimeType) { if (mimeType === "application/pdf") return ".pdf"; if (mimeType === "image/png") return ".png"; if (mimeType === "image/jpeg") return ".jpg"; if (mimeType === "image/tiff") return ".tif"; if (mimeType.includes("spreadsheet")) return ".xlsx"; if (mimeType.includes("presentation")) return ".pptx"; if (mimeType === "text/plain") return ".txt"; return ".bin"; }
 function sanitizeFileName(name) { return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "attachment.bin"; }
 function failStartup(message) { console.error(message); process.exit(1); }

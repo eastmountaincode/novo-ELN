@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
-import { attachmentPreviewText, resolveAttachmentBlockType } from "@/lib/attachmentTypes";
+import { resolveAttachmentBlockType } from "@/lib/attachmentTypes";
 import { uploadDir } from "@/lib/paths";
 import { assertPageEditAccess, createAttachment } from "@/lib/store";
 import type { Attachment } from "@/lib/types";
@@ -47,7 +47,6 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
       size: bytes.length,
       storageKey,
       blockType,
-      previewText: attachmentPreviewText(blockType, "upload"),
     });
   } catch (error) {
     await fs.rm(absolutePath, { force: true });
@@ -64,7 +63,6 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
     size: bytes.length,
     storageKey,
     blockType,
-    previewText: attachmentPreviewText(blockType, "upload"),
     createdAt,
     updatedAt: createdAt,
   };

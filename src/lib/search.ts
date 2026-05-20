@@ -167,8 +167,7 @@ function getAllSearchablePages(): SearchablePage[] {
       p.updated_at,
       n.name AS notebook_name,
       COALESCE(group_concat(DISTINCT pt.tag), '') AS tags,
-      COALESCE(group_concat(DISTINCT a.original_name), '') AS attachments,
-      COALESCE(group_concat(DISTINCT a.preview_text), '') AS attachment_previews
+      COALESCE(group_concat(DISTINCT a.original_name), '') AS attachments
     FROM pages p
     JOIN notebooks n ON n.id = p.notebook_id
     LEFT JOIN page_tags pt ON pt.page_id = p.id
@@ -188,8 +187,7 @@ function getUserSearchablePages(userId: string): SearchablePage[] {
       p.updated_at,
       n.name AS notebook_name,
       COALESCE(group_concat(DISTINCT pt.tag), '') AS tags,
-      COALESCE(group_concat(DISTINCT a.original_name), '') AS attachments,
-      COALESCE(group_concat(DISTINCT a.preview_text), '') AS attachment_previews
+      COALESCE(group_concat(DISTINCT a.original_name), '') AS attachments
     FROM pages p
     JOIN notebooks n ON n.id = p.notebook_id
     LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
@@ -205,7 +203,7 @@ function mapSearchRows(rows: Record<string, string>[]): SearchablePage[] {
     pageId: row.page_id,
     notebookId: row.notebook_id,
     title: row.title,
-    body: `${bodyToEditorText(row.body)} ${row.attachment_previews}`.trim(),
+    body: bodyToEditorText(row.body),
     tags: row.tags,
     attachments: row.attachments,
     notebookName: row.notebook_name,

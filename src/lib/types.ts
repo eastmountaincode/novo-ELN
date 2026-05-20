@@ -68,7 +68,6 @@ export type Attachment = {
   size: number;
   storageKey: string;
   blockType: BlockType;
-  previewText: string;
   createdAt: string;
   updatedAt: string;
 };

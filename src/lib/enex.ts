@@ -4,7 +4,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { XMLParser } from "fast-xml-parser";
 import type { JSONContent } from "@tiptap/react";
-import { attachmentPreviewText, inferAttachmentBlockType } from "./attachmentTypes";
+import { inferAttachmentBlockType } from "./attachmentTypes";
 import { editorDocumentToBody } from "./editor";
 import { uploadDir } from "./paths";
 import { createImportedAttachment, createImportedNotebook, createImportedPage, finishImportedNotebook, removeImportedNotebook } from "./store";
@@ -176,7 +176,6 @@ export async function importEnexFile(input: {
           size: resource.data.length,
           storageKey,
           blockType,
-          previewText: attachmentPreviewText(blockType, "evernote"),
           createdAt: note.createdAt,
         });
         attachmentsByHash.set(resource.hash, attachment);

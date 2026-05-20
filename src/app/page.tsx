@@ -1869,6 +1869,10 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   const sortedPages = useMemo(() => sortNotebookPages(filteredPages, sortKey), [filteredPages, sortKey]);
   const filterActive = selectedTags.length > 0 || selectedStatuses.length > 0;
   const filterCount = selectedTags.length + selectedStatuses.length;
+  const pageWord = pages.length === 1 ? "page" : "pages";
+  const pageCountLabel = filterActive
+    ? `${sortedPages.length} of ${pages.length} ${pageWord}`
+    : `${pages.length} ${pageWord}`;
   const visibleTags = useMemo(() => {
     const query = tagQuery.trim().toLowerCase();
     return query ? availableTags.filter((tag) => tag.toLowerCase().includes(query)) : availableTags;
@@ -1959,10 +1963,8 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
     <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
-          <div className="flex min-w-0 items-center justify-between gap-3">
-            <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
-            <span className="shrink-0 text-sm font-medium text-slate-500">{filterActive ? `${sortedPages.length} / ${pages.length}` : sortedPages.length}</span>
-          </div>
+          <h2 className="truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
+          <p className="mt-1 text-sm text-slate-500">{pageCountLabel}</p>
         </div>
         <div className="flex items-center justify-between gap-2">
           <button onClick={createNewPage} disabled={creatingPage || !selectedNotebook || !canEdit} className="inline-flex h-8 items-center gap-1.5 border bg-white px-2.5 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60" style={{ borderColor: color, color }} title={canEdit ? "Create page" : "Viewer access cannot create pages"}>

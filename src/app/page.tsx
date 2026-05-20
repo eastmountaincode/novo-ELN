@@ -2440,13 +2440,31 @@ function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteN
         </div>
 
         <section className="border border-slate-200 bg-white p-4">
-          <h2 className="text-base font-semibold text-slate-950">Summary</h2>
-          <dl className="mt-3 max-w-md divide-y divide-slate-100 text-sm">
-            <SummaryRow label="Pages" value={notebook.pages.length.toLocaleString()} />
-            <SummaryRow label="Attachments" value={attachmentCount.toLocaleString()} />
-            <SummaryRow label="Storage" value={formatBytes(attachmentBytes)} />
-            <SummaryRow label="Members" value={memberCount.toLocaleString()} />
-          </dl>
+          <h2 className="text-base font-semibold text-slate-950">Notebook overview</h2>
+          <div className="mt-3 grid gap-5 lg:grid-cols-3">
+            <NotebookOverviewGroup
+              title="Contents"
+              rows={[
+                { label: "Pages", value: notebook.pages.length.toLocaleString() },
+                { label: "Attachments", value: attachmentCount.toLocaleString() },
+                { label: "Storage", value: formatBytes(attachmentBytes) },
+              ]}
+            />
+            <NotebookOverviewGroup
+              title="Access"
+              rows={[
+                { label: "Members", value: memberCount.toLocaleString() },
+                { label: "Your role", value: capitalizeLabel(notebook.accessRole) },
+              ]}
+            />
+            <NotebookOverviewGroup
+              title="Dates"
+              rows={[
+                { label: "Created", value: formatDateTime(notebook.createdAt) },
+                { label: "Updated", value: formatDateTime(notebook.updatedAt) },
+              ]}
+            />
+          </div>
         </section>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -2467,14 +2485,6 @@ function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteN
               </div>
             </section>
 
-            <section className="border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500">
-              <h2 className="text-base font-semibold text-slate-950">Details</h2>
-              <dl className="mt-3 space-y-2">
-                <div className="flex justify-between gap-3"><dt>Created</dt><dd className="text-right text-slate-700">{formatDateTime(notebook.createdAt)}</dd></div>
-                <div className="flex justify-between gap-3"><dt>Updated</dt><dd className="text-right text-slate-700">{formatDateTime(notebook.updatedAt)}</dd></div>
-                <div className="flex justify-between gap-3"><dt>Your role</dt><dd className="text-right capitalize text-slate-700">{notebook.accessRole}</dd></div>
-              </dl>
-            </section>
           </aside>
         </div>
       </div>
@@ -2482,11 +2492,22 @@ function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteN
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function NotebookOverviewGroup({ title, rows }: { title: string; rows: Array<{ label: string; value: string }> }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_minmax(120px,auto)] gap-6 py-2">
+    <section>
+      <h3 className="text-sm font-semibold text-slate-950">{title}</h3>
+      <dl className="mt-2 divide-y divide-slate-100 border-y border-slate-100 text-sm">
+        {rows.map((row) => <NotebookOverviewRow key={row.label} label={row.label} value={row.value} />)}
+      </dl>
+    </section>
+  );
+}
+
+function NotebookOverviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_minmax(96px,auto)] gap-4 py-2">
       <dt className="text-slate-500">{label}</dt>
-      <dd className="text-left font-medium text-slate-950">{value}</dd>
+      <dd className="text-left font-medium tabular-nums text-slate-950">{value}</dd>
     </div>
   );
 }
@@ -3813,4 +3834,8 @@ function formatDateTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(parsed);
+}
+
+function capitalizeLabel(value: string) {
+  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 }

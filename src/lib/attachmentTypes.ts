@@ -34,25 +34,7 @@ export function resolveAttachmentBlockType(input: { name: string; mimeType: stri
 }
 
 export function attachmentPreviewText(blockType: BlockType, source: "upload" | "evernote") {
-  if (source === "evernote") {
-    const labels: Record<BlockType, string> = {
-      image: "Image imported inline from Evernote.",
-      sheet: "Spreadsheet imported from Evernote.",
-      pdf: "PDF imported from Evernote.",
-      slides: "Slide deck imported from Evernote.",
-      sequence: "Sequence file imported from Evernote.",
-      file: "File imported from Evernote.",
-    };
-    return labels[blockType];
-  }
-
-  const labels: Record<BlockType, string> = {
-    image: "Image stored inline with this page.",
-    sheet: "Spreadsheet uploaded; table preview/parser is the next integration step.",
-    pdf: "PDF uploaded; text extraction is the next integration step.",
-    slides: "Slide deck uploaded with slide preview rendering.",
-    sequence: "Sequence file uploaded; sequence viewer is the next integration step.",
-    file: "File uploaded and attached to this page.",
-  };
-  return labels[blockType];
+  void blockType;
+  void source;
+  return "";
 }

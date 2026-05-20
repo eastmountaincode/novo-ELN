@@ -135,6 +135,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     extensions: [
       StarterKit.configure({
         link: false,
+        dropcursor: false,
       }),
       EditorTabBehavior,
       Underline,

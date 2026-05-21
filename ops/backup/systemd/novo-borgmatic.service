@@ -1,0 +1,10 @@
+[Unit]
+Description=Novo borgmatic backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/speedy/aboylan/new_ELN_2026_05_13
+EnvironmentFile=-/etc/novo/backup.env
+ExecStart=/usr/bin/borgmatic --config /etc/borgmatic/novo.yaml

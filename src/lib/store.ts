@@ -311,40 +311,9 @@ function seedIfEmpty() {
   if (count > 0) return;
 
   const userId = randomUUID();
-  const constructNotebookId = randomUUID();
-  const meetingNotebookId = randomUUID();
-  const pageOneId = randomUUID();
-  const pageTwoId = randomUUID();
-  const pageThreeId = randomUUID();
-
   execSql(`
     INSERT INTO users (id, email, first_name, last_name, password_hash, role)
     VALUES (${sql(userId)}, ${sql(bootstrapEmail)}, 'Andrew', '', ${sql(bcrypt.hashSync(bootstrapPassword, 10))}, 'admin');
-
-    INSERT INTO notebooks (id, name, owner_id, color)
-    VALUES (${sql(constructNotebookId)}, 'Construct Design', ${sql(userId)}, ${sql(defaultNotebookColor(constructNotebookId))}),
-           (${sql(meetingNotebookId)}, 'Meetings', ${sql(userId)}, ${sql(defaultNotebookColor(meetingNotebookId))});
-
-    INSERT INTO notebook_members (notebook_id, user_id, role)
-    VALUES (${sql(constructNotebookId)}, ${sql(userId)}, 'owner'),
-           (${sql(meetingNotebookId)}, ${sql(userId)}, 'owner');
-
-    INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-    VALUES
-      (${sql(pageOneId)}, ${sql(constructNotebookId)}, 'SortSeq plasmid assembly', ${sql("Summary of the SortSeq construct changes. The key need is keeping protocol text, source files, and analysis artifacts together without turning this into a full LIMS.")}, '', ${sql(userId)}),
-      (${sql(pageTwoId)}, ${sql(constructNotebookId)}, 'Competent cell prep', ${sql("Prep pages should behave like normal pages, not special experiments. A lightweight checklist is enough for repeatable work; scheduling and bookable resources are intentionally out of scope.")}, '', ${sql(userId)}),
-      (${sql(pageThreeId)}, ${sql(meetingNotebookId)}, 'ELN requirements from Slim', ${sql("The replacement should preserve Evernote-like workflows: notebooks, pages, inline images, attachments, search, and history.")}, '', ${sql(userId)});
-
-    INSERT INTO page_tags (page_id, tag)
-    VALUES
-      (${sql(pageOneId)}, 'plasmid'),
-      (${sql(pageOneId)}, 'sortseq'),
-      (${sql(pageOneId)}, 'Running'),
-      (${sql(pageOneId)}, 'Cloning'),
-      (${sql(pageTwoId)}, 'prep'),
-      (${sql(pageTwoId)}, 'Running'),
-      (${sql(pageThreeId)}, 'requirements'),
-      (${sql(pageThreeId)}, 'Meeting');
   `);
 }
 

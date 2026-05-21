@@ -1,32 +1,70 @@
 # MGH ELN Workspace
 
-A focused Evernote replacement prototype for lab notebooks. The app intentionally uses a simple hierarchy:
-
-1. Project or binder
-2. Notebook
-3. Page
-
-Pages contain editable notes, inline file/data blocks, attachments, basic metadata, and version history. The MVP is scoped around replacing Evernote workflows, not cloning eLabFTW features such as schedulers, bookable resources, procurement, inventory, or blockchain timestamping.
+A focused Evernote replacement prototype for lab notebooks. The app uses notebooks and pages, with editable notes, inline file/data blocks, attachments, metadata, sharing, page locking, and activity history.
 
 ## Current Foundation
 
 - Next.js App Router + Tailwind UI
 - Cookie-based credential auth
-- SQLite relational database for users, projects, notebooks, pages, permissions, attachments, tags, and versions
+- SQLite relational database for users, notebooks, pages, permissions, attachments, tags, and audit events
 - Local filesystem attachment storage under `storage/uploads`
 - ENEX import endpoint that creates a notebook from Evernote notes
 - Vitest tests for ENEX parsing and database repository behavior
+
+## Docker Development
+
+The easiest way to run a clean clone is Docker Compose. This avoids installing Node, LibreOffice, Poppler, or SQLite on the host.
+
+```bash
+git clone https://github.com/eastmountaincode/novo-ELN.git
+cd novo-ELN
+docker compose -f docker-compose.dev.yml up --build
+```
+
+Then open:
+
+```text
+http://localhost:3155
+```
+
+The dev compose file runs Next.js in development mode and bind-mounts the source tree, so code edits are picked up without rebuilding the image. Local Docker runtime state is stored in `runtime-dev/`, which is git-ignored.
+
+Stop the container:
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+Reset local Docker data:
+
+```bash
+docker compose -f docker-compose.dev.yml down -v
+rm -rf runtime-dev
+```
 
 Default local bootstrap login:
 
 ```text
 andrew@example.local
-development-only-password
+Development-only-password-2026!
 ```
 
 Override these before any shared deployment with `ELN_BOOTSTRAP_EMAIL`, `ELN_BOOTSTRAP_PASSWORD`, and `ELN_SESSION_SECRET`.
 
-## Development
+## Production Docker
+
+The production compose file builds the app and runs `next start`:
+
+```bash
+cp .env.example .env.production
+# Edit .env.production before using this on a shared server.
+# ELN_SESSION_SECRET must be at least 32 random characters.
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Production runtime state is stored in `runtime/`, which is git-ignored.
+
+## Local NPM Development
 
 ```bash
 npm run dev -- --hostname 127.0.0.1 --port 3155
@@ -59,4 +97,4 @@ npm test
 npm run build
 ```
 
-Next implementation steps: project/notebook creation screens, user administration, attachment download/preview routes, richer ENEX resource import, and real spreadsheet/PDF/sequence previewers.
+Next implementation steps: export workflows, production backup automation, import validation for large ENEX files, and continued audit-log hardening.

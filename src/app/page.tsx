@@ -2819,7 +2819,6 @@ function PasswordPanel() {
         </div>
         <div>
           <h2 className="text-lg font-semibold text-slate-950">Change password</h2>
-          <p className="mt-1 text-sm text-slate-500">Use this when you already know your current password.</p>
         </div>
       </div>
       <form onSubmit={(event) => void submitPassword(event)} className="grid gap-4">

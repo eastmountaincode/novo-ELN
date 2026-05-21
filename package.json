@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "erd": "node scripts/erd-viewer.mjs",
     "import:enex": "node scripts/import-enex.mjs",
     "lint": "eslint",
     "test": "vitest run",

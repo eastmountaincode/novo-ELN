@@ -1,0 +1,49 @@
+# Novo borgmatic configuration example.
+#
+# Install this as something like:
+#   /etc/borgmatic/novo.yaml
+#
+# Then edit paths/repository/passphrase for the production server.
+
+source_directories:
+  # Created by scripts/backup-sqlite.sh before each borgmatic backup.
+  - /mnt/speedy/aboylan/new_ELN_2026_05_13/data/backup-staging
+
+  # Actual attachment objects. These are not inside SQLite.
+  - /mnt/speedy/aboylan/new_ELN_2026_05_13/storage/uploads
+
+  # Derived previews are optional because they can usually be regenerated, but
+  # backing them up makes restore faster and keeps the restored app visually ready.
+  - /mnt/speedy/aboylan/new_ELN_2026_05_13/data/previews
+
+  # Keep environment/config with the backup. For production, prefer a root-owned
+  # copy containing only required app config rather than broad shell history.
+  - /mnt/speedy/aboylan/new_ELN_2026_05_13/.env.local
+
+repositories:
+  - path: /mnt/backup/novo-borg
+    label: novo-local
+
+archive_name_format: "novo-{now:%Y-%m-%dT%H:%M:%S}"
+compression: auto,zstd
+one_file_system: true
+
+# If the repository is off-machine or on shared storage, use encryption and keep
+# the passphrase outside git, for example in /etc/novo/backup.env.
+# encryption_passcommand: "cat /etc/novo/borg-passphrase"
+
+before_backup:
+  - /mnt/speedy/aboylan/new_ELN_2026_05_13/scripts/backup-sqlite.sh
+
+checks:
+  - name: repository
+    frequency: 2 weeks
+  - name: archives
+    frequency: 4 weeks
+
+keep_daily: 30
+keep_weekly: 12
+keep_monthly: 6
+
+# Keep logs verbose enough to diagnose failed backups without dumping secrets.
+verbosity: 1

@@ -419,6 +419,17 @@ function renderPage() {
       font-size: 11px;
     }
 
+    .relationship-line {
+      stroke: #475569;
+      stroke-width: 1.8;
+    }
+
+    .relationship-port {
+      fill: #ffffff;
+      stroke: #475569;
+      stroke-width: 1.8;
+    }
+
     .error {
       border: 1px solid #fecdd3;
       background: #fff1f2;
@@ -582,14 +593,15 @@ function renderPage() {
         const y1 = fromPoint.y;
         const x2 = toPoint.x;
         const y2 = toPoint.y;
-        const fromRight = x1 <= x2;
         const curve = Math.max(44, Math.abs(x2 - x1) * 0.45);
-        const c1 = fromRight ? x1 + curve : x1 - curve;
-        const c2 = fromRight ? x2 - curve : x2 + curve;
+        const c1 = fromPoint.side === "right" ? x1 + curve : x1 - curve;
+        const c2 = toPoint.side === "left" ? x2 - curve : x2 + curve;
         const labelX = (x1 + x2) / 2;
         const labelY = (y1 + y2) / 2 - 10 + (index % 4) * 16;
         const label = relationship.fromTable + "." + relationship.fromColumn + " → " + relationship.toTable + "." + relationship.toColumn;
-        return '<path d="M ' + x1 + ' ' + y1 + ' C ' + c1 + ' ' + y1 + ', ' + c2 + ' ' + y2 + ', ' + x2 + ' ' + y2 + '" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)" />' +
+        return '<path class="relationship-line" d="M ' + x1 + ' ' + y1 + ' C ' + c1 + ' ' + y1 + ', ' + c2 + ' ' + y2 + ', ' + x2 + ' ' + y2 + '" fill="none" marker-end="url(#arrow)" />' +
+          '<circle class="relationship-port" cx="' + x1 + '" cy="' + y1 + '" r="4" />' +
+          '<circle class="relationship-port" cx="' + x2 + '" cy="' + y2 + '" r="4" />' +
           '<text class="fk-label" x="' + labelX + '" y="' + labelY + '" text-anchor="middle">' + escapeHtml(label) + '</text>';
       }).join("");
 
@@ -605,9 +617,13 @@ function renderPage() {
       const y = box.y + headerHeight + columnIndex * rowHeight + rowHeight / 2;
       const sourceBox = currentLayout[fromTable];
       const targetBox = currentLayout[toTable];
-      const useRight = sourceBox && targetBox ? sourceBox.x < targetBox.x : isSource;
+      const sourceCenter = sourceBox ? sourceBox.x + sourceBox.width / 2 : 0;
+      const targetCenter = targetBox ? targetBox.x + targetBox.width / 2 : 0;
+      const sourceIsLeft = sourceCenter <= targetCenter;
+      const side = isSource ? (sourceIsLeft ? "right" : "left") : (sourceIsLeft ? "left" : "right");
       return {
-        x: useRight ? box.x + box.width : box.x,
+        side,
+        x: side === "right" ? box.x + box.width : box.x,
         y: Math.min(box.y + box.height - 12, Math.max(box.y + headerHeight + 12, y)),
       };
     }
@@ -691,7 +707,7 @@ function renderPage() {
     }
 
     function layoutStorageKey() {
-      return "novo-erd-layout:" + (schema?.databasePath || "default");
+      return "novo-erd-layout-v2:" + (schema?.databasePath || "default");
     }
 
     function cssEscape(value) {

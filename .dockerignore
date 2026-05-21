@@ -21,3 +21,4 @@ dev.pid
 *.tar
 *.tar.gz
 *.tgz
+DEPLOYED_COMMIT

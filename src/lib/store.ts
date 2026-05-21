@@ -10,8 +10,6 @@ import { execSql, queryOne, querySql, sql } from "./sqlite";
 
 let initialized = false;
 
-const bootstrapEmail = process.env.ELN_BOOTSTRAP_EMAIL ?? "andrew@example.local";
-const bootstrapPassword = process.env.ELN_BOOTSTRAP_PASSWORD ?? "Development-only-password-2026!";
 const passwordRequirementMessage = "Password must be at least 12 characters and include uppercase, lowercase, number, and symbol characters.";
 const loginRateLimitWindowMs = 15 * 60 * 1000;
 const loginRateLimitMaxFailures = 10;
@@ -143,7 +141,6 @@ export function ensureDatabase() {
   `);
   migratePageStatusValues();
   migrateGroupedTagsToPageTags();
-  seedIfEmpty();
   rebuildSearchIndex();
   initialized = true;
 }
@@ -306,16 +303,6 @@ function migrateGroupedTagsToPageTags() {
   `);
 }
 
-function seedIfEmpty() {
-  const count = Number(queryOne("SELECT COUNT(*) AS count FROM users")?.count ?? 0);
-  if (count > 0) return;
-
-  const userId = randomUUID();
-  execSql(`
-    INSERT INTO users (id, email, first_name, last_name, password_hash, role)
-    VALUES (${sql(userId)}, ${sql(bootstrapEmail)}, 'Andrew', '', ${sql(bcrypt.hashSync(bootstrapPassword, 10))}, 'admin');
-  `);
-}
 
 export function findUserByEmail(email: string) {
   ensureDatabase();

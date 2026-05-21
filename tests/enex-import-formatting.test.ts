@@ -10,8 +10,7 @@ describe("ENEX import formatting", () => {
     process.env.ELN_DATA_DIR = path.join(tempDir, "data");
     process.env.ELN_UPLOAD_DIR = path.join(tempDir, "uploads");
     process.env.ELN_DATABASE_PATH = path.join(tempDir, "data", "test.sqlite3");
-    process.env.ELN_BOOTSTRAP_EMAIL = "test@example.local";
-    process.env.ELN_BOOTSTRAP_PASSWORD = "secret-password";
+    process.env.ELN_SESSION_SECRET = "test-session-secret-for-enex-formatting-2026";
   });
 
   it("preserves common Evernote text formatting as editor JSON", async () => {
@@ -32,9 +31,9 @@ describe("ENEX import formatting", () => {
         </note>
       </en-export>`);
 
-    const { verifyCredentials, getWorkspace } = await import("../src/lib/store");
+    const { createUser, getWorkspace } = await import("../src/lib/store");
     const { importEnexFile } = await import("../src/lib/enex");
-    const user = verifyCredentials("test@example.local", "secret-password")!;
+    const user = createUser({ email: "test@example.local", firstName: "Test", lastName: "User", password: "Strong-password-2026!" });
     await importEnexFile({ userId: user.id, notebookName: "Formatting", filePath: enexPath });
 
     const importedPage = getWorkspace(user.id).notebooks.find((notebook) => notebook.name === "Formatting")?.pages[0];

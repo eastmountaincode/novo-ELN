@@ -27,7 +27,7 @@ Then open:
 http://localhost:3155
 ```
 
-The dev compose file runs Next.js in development mode and bind-mounts the source tree, so code edits are picked up without rebuilding the image. Local Docker runtime state is stored in `runtime-dev/`, which is git-ignored.
+The dev compose file runs Next.js in development mode and bind-mounts the source tree, so code edits are picked up without rebuilding the image. Local Docker runtime state is stored in `runtime-dev/`, which is git-ignored. It sets an explicit development-only `ELN_SESSION_SECRET`; use your own secret before any shared deployment.
 
 Stop the container:
 
@@ -42,14 +42,12 @@ docker compose -f docker-compose.dev.yml down -v
 rm -rf runtime-dev
 ```
 
-Default local bootstrap login:
+Novo does not create a bootstrap admin account. Register a real user through the app, then explicitly promote that account when admin access is needed:
 
-```text
-andrew@example.local
-Development-only-password-2026!
+```bash
+docker compose -f docker-compose.dev.yml exec novo sqlite3 /app-data/data/eln.sqlite3 \
+  "UPDATE users SET role='admin' WHERE lower(email)=lower('you@example.com');"
 ```
-
-Override these before any shared deployment with `ELN_BOOTSTRAP_EMAIL`, `ELN_BOOTSTRAP_PASSWORD`, and `ELN_SESSION_SECRET`.
 
 ## Production Docker
 
@@ -60,14 +58,20 @@ cp .env.example .env.production
 # Edit .env.production before using this on a shared server.
 # ELN_SESSION_SECRET must be at least 32 random characters.
 docker compose -f docker-compose.prod.yml up -d --build
+
+# After registering the first real account, promote it if it should administer Novo.
+docker compose -f docker-compose.prod.yml exec novo sqlite3 /app-data/data/eln.sqlite3 \
+  "UPDATE users SET role='admin' WHERE lower(email)=lower('you@example.com');"
 ```
 
 Production runtime state is stored in `runtime/`, which is git-ignored.
 
 ## Local NPM Development
 
+Set `ELN_SESSION_SECRET` in `.env.local` or the shell before logging in or registering:
+
 ```bash
-npm run dev -- --hostname 127.0.0.1 --port 3155
+ELN_SESSION_SECRET=replace-this-with-at-least-32-random-characters npm run dev -- --hostname 127.0.0.1 --port 3155
 ```
 
 From your local machine, tunnel the remote dev server:

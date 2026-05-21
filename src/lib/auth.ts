@@ -5,11 +5,12 @@ import { createUser, findUserById, verifyCredentials } from "./store";
 const cookieName = "eln_session";
 const defaultMaxAgeSeconds = 60 * 60 * 12;
 const rememberedMaxAgeSeconds = 60 * 60 * 24 * 14;
-const developmentSecret = "local-development-session-secret-change-me";
-const secret = process.env.ELN_SESSION_SECRET ?? developmentSecret;
-
-if (process.env.NODE_ENV === "production" && (!process.env.ELN_SESSION_SECRET || process.env.ELN_SESSION_SECRET.length < 32)) {
-  throw new Error("ELN_SESSION_SECRET must be set to at least 32 characters in production.");
+function getSessionSecret() {
+  const secret = process.env.ELN_SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error("ELN_SESSION_SECRET must be set to at least 32 characters.");
+  }
+  return secret;
 }
 
 type SessionPayload = {
@@ -74,7 +75,7 @@ function verifySession(token: string): SessionPayload | null {
 }
 
 function signature(body: string) {
-  return createHmac("sha256", secret).update(body).digest("base64url");
+  return createHmac("sha256", getSessionSecret()).update(body).digest("base64url");
 }
 
 function safeEqual(a: string, b: string) {

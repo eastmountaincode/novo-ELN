@@ -3,6 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const testAdminEmail = "test@example.local";
+const testAdminPassword = "Secret-password-2026!";
+
+async function createTestAdmin() {
+  const { createUser } = await import("../src/lib/store");
+  return createUser({ email: testAdminEmail, firstName: "Test", lastName: "Admin", password: testAdminPassword, role: "admin" });
+}
+
 describe("store", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -10,16 +18,15 @@ describe("store", () => {
     process.env.ELN_DATA_DIR = path.join(tempDir, "data");
     process.env.ELN_UPLOAD_DIR = path.join(tempDir, "uploads");
     process.env.ELN_DATABASE_PATH = path.join(tempDir, "data", "test.sqlite3");
-    process.env.ELN_BOOTSTRAP_EMAIL = "test@example.local";
-    process.env.ELN_BOOTSTRAP_PASSWORD = "Secret-password-2026!";
+    process.env.ELN_SESSION_SECRET = "test-session-secret-for-store-tests-2026";
   });
 
-  it("seeds an admin user and a queryable workspace", async () => {
-    const { verifyCredentials, getWorkspace } = await import("../src/lib/store");
-    const user = verifyCredentials("test@example.local", "Secret-password-2026!");
+  it("creates an explicit admin user with a queryable workspace", async () => {
+    const { getWorkspace } = await import("../src/lib/store");
+    const user = await createTestAdmin();
 
-    expect(user?.role).toBe("admin");
-    const workspace = getWorkspace(user!.id);
+    expect(user.role).toBe("admin");
+    const workspace = getWorkspace(user.id);
     expect(workspace.notebooks.length).toBeGreaterThan(0);
     expect(workspace.notebooks[0].pages.length).toBeGreaterThan(0);
   });
@@ -87,8 +94,8 @@ describe("store", () => {
   });
 
   it("creates and updates pages through the repository API", async () => {
-    const { verifyCredentials, getWorkspace, createPage, updatePage } = await import("../src/lib/store");
-    const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const { getWorkspace, createPage, updatePage } = await import("../src/lib/store");
+    const user = await createTestAdmin();
     const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
 
@@ -103,8 +110,8 @@ describe("store", () => {
   it("does not timestamp or audit no-op page saves", async () => {
     const { queryOne } = await import("../src/lib/sqlite");
     const { bodyToEditorDocument, editorDocumentToBody } = await import("../src/lib/editor");
-    const { getPageActivityEvents, verifyCredentials, getWorkspace, createPage, updatePage, setPageTags } = await import("../src/lib/store");
-    const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const { getPageActivityEvents, getWorkspace, createPage, updatePage, setPageTags } = await import("../src/lib/store");
+    const user = await createTestAdmin();
     const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
 
@@ -122,8 +129,8 @@ describe("store", () => {
 
   it("records page activity and coalesces body edits within five minutes", async () => {
     const { execSql } = await import("../src/lib/sqlite");
-    const { createAttachment, createPage, getPageActivityEvents, getWorkspace, setPageLocked, setPageTags, updatePage, verifyCredentials } = await import("../src/lib/store");
-    const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const { createAttachment, createPage, getPageActivityEvents, getWorkspace, setPageLocked, setPageTags, updatePage } = await import("../src/lib/store");
+    const user = await createTestAdmin();
     const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
 
@@ -190,13 +197,13 @@ describe("store", () => {
   });
 
   it("rejects weak account passwords", async () => {
-    const { createUser, changeOwnPassword, verifyCredentials } = await import("../src/lib/store");
-    const admin = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const { createUser, changeOwnPassword } = await import("../src/lib/store");
+    const admin = await createTestAdmin();
 
     expect(() => createUser({ email: "weak@example.local", firstName: "Weak", lastName: "User", password: "simplepass" })).toThrow(
       "Password must be at least 12 characters and include uppercase, lowercase, number, and symbol characters.",
     );
-    expect(() => changeOwnPassword(admin.id, "Secret-password-2026!", "lowercase-password-2026")).toThrow(
+    expect(() => changeOwnPassword(admin.id, testAdminPassword, "lowercase-password-2026")).toThrow(
       "Password must be at least 12 characters and include uppercase, lowercase, number, and symbol characters.",
     );
   });
@@ -229,8 +236,8 @@ describe("store", () => {
   });
 
   it("deletes pages from a notebook", async () => {
-    const { verifyCredentials, getWorkspace, createPage, deletePage } = await import("../src/lib/store");
-    const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const { getWorkspace, createPage, deletePage } = await import("../src/lib/store");
+    const user = await createTestAdmin();
     const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
 
@@ -241,9 +248,9 @@ describe("store", () => {
   });
 
   it("searches pages with FTS ranking and fuzzy fallback", async () => {
-    const { verifyCredentials, getWorkspace, createNotebook, createPage, updatePage } = await import("../src/lib/store");
+    const { getWorkspace, createNotebook, createPage, updatePage } = await import("../src/lib/store");
     const { searchWorkspace } = await import("../src/lib/search");
-    const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const user = await createTestAdmin();
     const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
     const relatedPageId = createPage(user.id, notebookId);
@@ -276,8 +283,8 @@ describe("store", () => {
   });
 
   it("adds and removes simple page tags", async () => {
-    const { verifyCredentials, getWorkspace, setPageTags } = await import("../src/lib/store");
-    const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const { getWorkspace, setPageTags } = await import("../src/lib/store");
+    const user = await createTestAdmin();
     const workspace = getWorkspace(user.id);
     const pageId = workspace.notebooks[0].pages[0].id;
 
@@ -293,19 +300,19 @@ describe("store", () => {
 
   it("lets a user change their own password with the current password", async () => {
     const { verifyCredentials, changeOwnPassword } = await import("../src/lib/store");
-    const user = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const user = await createTestAdmin();
 
     expect(() => changeOwnPassword(user.id, "wrong-password", "New-secret-password-2026!")).toThrow("Current password is incorrect.");
 
-    changeOwnPassword(user.id, "Secret-password-2026!", "New-secret-password-2026!");
+    changeOwnPassword(user.id, testAdminPassword, "New-secret-password-2026!");
 
-    expect(verifyCredentials("test@example.local", "Secret-password-2026!")).toBeNull();
-    expect(verifyCredentials("test@example.local", "New-secret-password-2026!")?.id).toBe(user.id);
+    expect(verifyCredentials(testAdminEmail, testAdminPassword)).toBeNull();
+    expect(verifyCredentials(testAdminEmail, "New-secret-password-2026!")?.id).toBe(user.id);
   });
 
   it("lets admins list users and set another user's password", async () => {
     const { createUser, verifyCredentials, listUsersForAdmin, adminSetUserPassword } = await import("../src/lib/store");
-    const admin = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const admin = await createTestAdmin();
     const member = createUser({ email: "lab.member@example.local", firstName: "Lab", lastName: "Member", password: "Member-password-2026!" });
 
     const users = listUsersForAdmin(admin.id);
@@ -318,8 +325,8 @@ describe("store", () => {
   });
 
   it("summarizes database and upload storage for admins", async () => {
-    const { verifyCredentials, getWorkspace, createAttachment, getAdminDataOverview } = await import("../src/lib/store");
-    const admin = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const { getWorkspace, createAttachment, getAdminDataOverview } = await import("../src/lib/store");
+    const admin = await createTestAdmin();
     const pageId = getWorkspace(admin.id).notebooks[0].pages[0].id;
     const uploadDir = process.env.ELN_UPLOAD_DIR!;
     fs.mkdirSync(uploadDir, { recursive: true });
@@ -339,8 +346,8 @@ describe("store", () => {
 
     const overview = getAdminDataOverview(admin.id);
 
-    expect(overview.counts.notebooks).toBe(2);
-    expect(overview.counts.pages).toBe(3);
+    expect(overview.counts.notebooks).toBe(1);
+    expect(overview.counts.pages).toBe(1);
     expect(overview.counts.attachments).toBe(1);
     expect(overview.storage.attachmentBytes).toBe(5);
     expect(overview.storage.uploadFileCount).toBe(2);
@@ -365,8 +372,8 @@ describe("store", () => {
   });
 
   it("shares individual notebooks without exposing sibling notebooks", async () => {
-    const { createNotebook, createUser, getWorkspace, shareNotebook, verifyCredentials } = await import("../src/lib/store");
-    const owner = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const { createNotebook, createUser, getWorkspace, shareNotebook } = await import("../src/lib/store");
+    const owner = await createTestAdmin();
     const viewer = createUser({ email: "notebook.viewer@example.local", firstName: "Notebook", lastName: "Viewer", password: "Viewer-password-2026!" });
     const sharedNotebookId = createNotebook(owner.id, "Shared Notebook").notebookId;
     const privateNotebookId = createNotebook(owner.id, "Private Notebook").notebookId;
@@ -397,9 +404,8 @@ describe("store", () => {
       updateAttachmentFile,
       updateNotebookColor,
       updatePage,
-      verifyCredentials,
     } = await import("../src/lib/store");
-    const owner = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const owner = await createTestAdmin();
     const viewer = createUser({ email: "viewer.permissions@example.local", firstName: "Viewer", password: "Viewer-password-2026!" });
     const editor = createUser({ email: "editor.permissions@example.local", firstName: "Editor", password: "Editor-password-2026!" });
     const notebookId = createNotebook(owner.id, "Permission Notebook").notebookId;
@@ -486,8 +492,8 @@ describe("store", () => {
   });
 
   it("uses notebook membership roles for ownership instead of creator status", async () => {
-    const { createNotebook, createUser, getWorkspace, shareNotebook, unshareNotebook, verifyCredentials } = await import("../src/lib/store");
-    const creator = verifyCredentials("test@example.local", "Secret-password-2026!")!;
+    const { createNotebook, createUser, getWorkspace, shareNotebook, unshareNotebook } = await import("../src/lib/store");
+    const creator = await createTestAdmin();
     const secondOwner = createUser({ email: "second.owner@example.local", firstName: "Second", lastName: "Owner", password: "Owner-password-2026!" });
     const viewer = createUser({ email: "shared.viewer@example.local", firstName: "Shared", lastName: "Viewer", password: "Viewer-password-2026!" });
     const notebookId = createNotebook(creator.id, "Multiple Owner Notebook").notebookId;

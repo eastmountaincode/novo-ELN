@@ -159,7 +159,7 @@ async function callTool(name, toolArguments) {
 function parseToolJson(text) {
   try {
     return JSON.parse(text);
-  } catch (error) {
+  } catch {
     throw new Error(`ER Flow returned non-JSON tool output: ${text.slice(0, 200)}`);
   }
 }

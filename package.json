@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "erd": "node scripts/erd-viewer.mjs",
+    "sync:erflow": "node scripts/sync-erflow.mjs",
     "import:enex": "node scripts/import-enex.mjs",
     "lint": "eslint",
     "test": "vitest run",

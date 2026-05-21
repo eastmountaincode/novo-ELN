@@ -1,119 +1,126 @@
 # Novo Backups
 
-Novo backups run outside the Next.js app as a scheduled operating-system task. The app can keep running while backups happen.
+Novo backups run outside the Next.js app as a separate process. The app can keep running while backups happen.
 
-The backup must include both:
+The backup must include:
 
-- the SQLite database snapshot
-- uploaded attachment files in `storage/uploads`
+- a consistent SQLite database snapshot
+- uploaded attachment files in `runtime/uploads`
 
-Derived preview files in `data/previews` are included by default so restores are ready immediately, but they are less important than the DB and uploads.
+Derived preview files in `runtime/previews` are included when present so a restored app is ready to inspect immediately.
 
-## Recommended Tool
+## Current No-Sudo Workflow
 
-Use borgmatic, which wraps BorgBackup. Borg deduplicates data, so unchanged attachments are not stored again for every daily/weekly/monthly backup. This matters once ENEX imports create many large attachments.
+On `ccibweb2`, `aboylan` does not have sudo/root access but does have Docker access. The current practical backup path is therefore a one-shot Dockerized BorgBackup job:
 
-Recommended retention:
+```bash
+cd /export/home/aboylan/novo-eln-prod
+export NOVO_BORG_PASSPHRASE='use-a-long-random-passphrase'
+export NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo
+docker compose -f docker-compose.backup.yml run --rm novo-borg-backup
+```
+
+This starts a short-lived container, creates a SQLite `.backup` snapshot, stores uploads/previews plus a manifest in a Borg archive, applies retention, compacts the repository, and exits.
+
+Retention is:
 
 - 30 daily backups
 - 12 weekly backups
 - 6 monthly backups
 
-## Runtime Model
+`NOVO_BORG_REPOSITORY` should point to storage outside the app runtime directory when possible. The compose file defaults to `./runtime/borg-repo` only so the command can run anywhere; that default is not sufficient as the only long-term production backup because it is on the same host and likely the same disk.
 
-Backups should run as a separate process using cron or systemd timers. Do not run them from the web app request lifecycle.
+## Secret Handling
 
-The nightly job should:
+Do not commit the Borg passphrase.
 
-1. Run `scripts/backup-sqlite.sh`.
-2. Borgmatic backs up `data/backup-staging`, `storage/uploads`, `data/previews`, and required config.
-3. Borgmatic prunes old archives according to retention policy.
-4. A periodic restore test verifies the backup actually works.
-
-`scripts/backup-sqlite.sh` uses SQLite's `.backup` command, which creates a consistent SQLite snapshot while the app is online. The snapshot is written to:
-
-```text
-data/backup-staging/eln.sqlite3
-data/backup-staging/manifest.json
-```
-
-The manifest records counts, sizes, and the app git commit at backup time.
-
-## Consistency Notes
-
-SQLite `.backup` is safe while the app is running.
-
-Attachment files are stored separately on disk. Novo writes attachment files before inserting their database row, so normal upload activity is compatible with live backups. The most conservative production setup would still use either:
-
-- a filesystem snapshot of the database and upload directories, or
-- a brief write-maintenance window around the backup.
-
-For the current single-lab deployment, the practical borgmatic setup is:
-
-- live SQLite `.backup`
-- borgmatic backup of the SQLite snapshot and upload directory
-- regular restore tests
-
-Restore tests are mandatory. A backup strategy is not proven until a restored copy can open notebooks, pages, and attachments.
-
-## Install Sketch
-
-Install Borg and borgmatic on the server, then initialize a repository:
+For repeated manual runs or cron, create a user-owned env file:
 
 ```bash
-borg init --encryption=repokey /mnt/backup/novo-borg
+cat > ~/.novo-borg.env <<'EOF'
+NOVO_BORG_PASSPHRASE='replace-with-a-long-random-passphrase'
+NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo
+EOF
+chmod 600 ~/.novo-borg.env
 ```
 
-Copy and edit the example config:
+Then run:
 
 ```bash
-sudo mkdir -p /etc/borgmatic /etc/novo
-sudo cp ops/backup/borgmatic.yaml.example /etc/borgmatic/novo.yaml
-sudo editor /etc/borgmatic/novo.yaml
+cd /export/home/aboylan/novo-eln-prod
+set -a
+. ~/.novo-borg.env
+set +a
+docker compose -f docker-compose.backup.yml run --rm novo-borg-backup
 ```
 
-For systemd scheduling:
+## Scheduling Without Root
+
+If user crontab is allowed on the production host, schedule the same one-shot Docker command:
 
 ```bash
-sudo cp ops/backup/systemd/novo-borgmatic.service /etc/systemd/system/
-sudo cp ops/backup/systemd/novo-borgmatic.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now novo-borgmatic.timer
+crontab -e
 ```
 
-Manual run:
+Example nightly entry:
+
+```cron
+30 2 * * * cd /export/home/aboylan/novo-eln-prod && set -a && . ~/.novo-borg.env && set +a && docker compose -f docker-compose.backup.yml run --rm novo-borg-backup >> runtime/backups/borg.log 2>&1
+```
+
+This does not require root if the user can run Docker and cron.
+
+If cron is not allowed, run the command manually before imports and ask Marc/IT for either user cron support or a root-managed systemd timer.
+
+## Inspecting Backups
+
+List archives:
 
 ```bash
-sudo systemctl start novo-borgmatic.service
+cd /export/home/aboylan/novo-eln-prod
+set -a
+. ~/.novo-borg.env
+set +a
+docker compose -f docker-compose.backup.yml run --rm --entrypoint borg novo-borg-backup list /borg-repo
 ```
 
-Check schedule and logs:
+Check the repository:
 
 ```bash
-systemctl list-timers novo-borgmatic.timer
-journalctl -u novo-borgmatic.service
+docker compose -f docker-compose.backup.yml run --rm --entrypoint borg novo-borg-backup check /borg-repo
 ```
 
-Validate the borgmatic config before relying on it:
+## Restore Test
+
+A backup is not proven until restore has been tested. Restore into a separate directory first; do not overwrite production data directly.
 
 ```bash
-borgmatic --config /etc/borgmatic/novo.yaml config validate
+mkdir -p /tmp/novo-restore-test
+docker run --rm \
+  --entrypoint borg \
+  -e BORG_PASSPHRASE="$NOVO_BORG_PASSPHRASE" \
+  -v "$NOVO_BORG_REPOSITORY:/borg-repo:ro" \
+  -v /tmp/novo-restore-test:/restore \
+  novo-eln-borg-backup:latest \
+  extract --target /restore /borg-repo::ARCHIVE_NAME
 ```
 
-## Restore Sketch
+The restored archive contains:
 
-Restore into a separate test directory first:
+- `backup-staging/eln.sqlite3`
+- `backup-staging/manifest.txt`
+- `uploads/`
+- `previews/` when previews existed
 
-```bash
-borgmatic --config /etc/borgmatic/novo.yaml extract --archive latest --destination /tmp/novo-restore-test
-```
+Point a test Novo instance at the restored SQLite file and uploads directory before trusting the backup strategy.
 
-Then point Novo at the restored database and uploads using:
+## Later Admin-Managed Option
 
-```bash
-ELN_DATABASE_PATH=/tmp/novo-restore-test/.../data/backup-staging/eln.sqlite3
-ELN_UPLOAD_DIR=/tmp/novo-restore-test/.../storage/uploads
-ELN_PREVIEW_DIR=/tmp/novo-restore-test/.../data/previews
-```
+The cleaner long-term institutional setup is still:
 
-Do not overwrite production data until a restore has been verified in a separate location.
+- Borg or borgmatic installed on the production host by Marc/IT
+- a backup repository on institutional storage, NAS, or another server/volume
+- a root-managed systemd timer
+- documented restore tests
+
+That version needs root/IT involvement. The Dockerized Borg job is the no-sudo path we can run now.

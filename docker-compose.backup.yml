@@ -1,0 +1,24 @@
+name: novo-eln-backup
+
+services:
+  novo-borg-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    image: novo-eln-borg-backup:latest
+    container_name: novo-eln-borg-backup
+    environment:
+      BORG_REPO: /borg-repo
+      BORG_PASSPHRASE: ${NOVO_BORG_PASSPHRASE:?Set NOVO_BORG_PASSPHRASE before running backups}
+      BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK: "no"
+      BORG_RELOCATED_REPO_ACCESS_IS_OK: "no"
+      NOVO_RUNTIME_DIR: /app-runtime
+      NOVO_BACKUP_STAGING_DIR: /backup-staging
+      NOVO_BORG_ARCHIVE_PREFIX: ${NOVO_BORG_ARCHIVE_PREFIX:-novo}
+    volumes:
+      - ./runtime:/app-runtime:rw
+      - novo-borg-staging:/backup-staging
+      - ${NOVO_BORG_REPOSITORY:-./runtime/borg-repo}:/borg-repo
+
+volumes:
+  novo-borg-staging:

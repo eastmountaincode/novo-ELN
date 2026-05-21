@@ -1,0 +1,16 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    borgbackup \
+    ca-certificates \
+    coreutils \
+    findutils \
+    sqlite3 \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/novo-borg-backup.sh /usr/local/bin/novo-borg-backup
+RUN chmod +x /usr/local/bin/novo-borg-backup
+
+ENTRYPOINT ["/usr/local/bin/novo-borg-backup"]

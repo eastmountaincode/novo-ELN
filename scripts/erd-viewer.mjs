@@ -311,8 +311,8 @@ function renderPage() {
 
     .diagram {
       position: relative;
-      min-width: 1200px;
-      min-height: 720px;
+      min-width: 1800px;
+      min-height: 960px;
     }
 
     svg.relationships {
@@ -324,11 +324,18 @@ function renderPage() {
 
     .table-card {
       position: absolute;
-      width: 280px;
       overflow: hidden;
       border: 1px solid #94a3b8;
       background: var(--panel);
       box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+      user-select: none;
+      z-index: 2;
+    }
+
+    .table-card.dragging {
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+      outline: 2px solid var(--accent);
+      z-index: 3;
     }
 
     .table-card.internal {
@@ -342,7 +349,12 @@ function renderPage() {
       gap: 8px;
       border-bottom: 1px solid var(--line);
       background: var(--accent-soft);
+      cursor: grab;
       padding: 9px 11px;
+    }
+
+    .table-card.dragging .table-header {
+      cursor: grabbing;
     }
 
     .table-name {
@@ -402,9 +414,9 @@ function renderPage() {
     .fk-label {
       paint-order: stroke;
       stroke: #eef2f7;
-      stroke-width: 5px;
+      stroke-width: 6px;
       fill: #475569;
-      font-size: 12px;
+      font-size: 11px;
     }
 
     .error {
@@ -428,6 +440,7 @@ function renderPage() {
     </div>
     <div class="toolbar">
       <label class="toggle"><input id="show-internal" type="checkbox" /> Show search/index tables</label>
+      <button id="reset-layout" type="button">Reset layout</button>
       <button id="refresh" type="button">Refresh schema</button>
     </div>
   </header>
@@ -438,28 +451,36 @@ function renderPage() {
     </section>
   </main>
   <script>
-    const tableWidth = 280;
+    const tableWidth = 320;
     const headerHeight = 42;
     const rowHeight = 32;
-    const gapX = 92;
-    const gapY = 58;
-    const margin = 32;
-    const preferredColumns = {
-      users: 0,
-      login_attempts: 0,
-      notebooks: 1,
-      notebook_members: 1,
-      pages: 2,
-      page_tags: 2,
-      attachments: 3,
-      audit_events: 3,
-      search_pages_fts: 3,
+    const gapX = 180;
+    const gapY = 96;
+    const margin = 56;
+    const defaultPositions = {
+      users: { x: 70, y: 90 },
+      login_attempts: { x: 70, y: 560 },
+      notebooks: { x: 560, y: 90 },
+      notebook_members: { x: 560, y: 500 },
+      pages: { x: 1080, y: 90 },
+      page_tags: { x: 1080, y: 640 },
+      attachments: { x: 1600, y: 90 },
+      audit_events: { x: 1600, y: 560 },
+      search_pages_fts: { x: 1600, y: 1040 },
     };
 
     let schema = null;
+    let currentTables = [];
+    let currentRelationships = [];
+    let currentLayout = {};
+    let dragState = null;
 
     document.getElementById("refresh").addEventListener("click", loadSchema);
     document.getElementById("show-internal").addEventListener("change", render);
+    document.getElementById("reset-layout").addEventListener("click", resetLayout);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
 
     loadSchema();
 
@@ -486,10 +507,7 @@ function renderPage() {
       const tables = schema.tables.filter((table) => showInternal || !table.internal);
       const tableNames = new Set(tables.map((table) => table.name));
       const relationships = schema.relationships.filter((relationship) => tableNames.has(relationship.fromTable) && tableNames.has(relationship.toTable));
-      const layout = layoutTables(tables);
-      const diagram = document.getElementById("diagram");
-      const width = Math.max(1200, Math.max(...Object.values(layout).map((box) => box.x + box.width + margin), 0));
-      const height = Math.max(720, Math.max(...Object.values(layout).map((box) => box.y + box.height + margin), 0));
+      const layout = applySavedPositions(layoutTables(tables));
 
       document.getElementById("db-path").textContent = schema.databasePath + " • generated " + new Date(schema.generatedAt).toLocaleString();
       document.getElementById("summary").innerHTML = [
@@ -499,9 +517,20 @@ function renderPage() {
         ["Hidden internal tables", schema.tables.filter((table) => table.internal).length],
       ].map(([label, value]) => '<div class="summary-card"><span>' + label + '</span><strong>' + value + '</strong></div>').join("");
 
+      currentTables = tables;
+      currentRelationships = relationships;
+      currentLayout = layout;
+      renderDiagram();
+    }
+
+    function renderDiagram() {
+      const diagram = document.getElementById("diagram");
+      const width = Math.max(1800, Math.max(...Object.values(currentLayout).map((box) => box.x + box.width + margin), 0));
+      const height = Math.max(960, Math.max(...Object.values(currentLayout).map((box) => box.y + box.height + margin), 0));
       diagram.style.width = width + "px";
       diagram.style.height = height + "px";
-      diagram.innerHTML = renderSvg(width, height, relationships, layout) + tables.map((table) => renderTable(table, layout[table.name])).join("");
+      diagram.innerHTML = renderSvg(width, height, currentRelationships, currentLayout) + currentTables.map((table) => renderTable(table, currentLayout[table.name])).join("");
+      attachDragHandlers();
     }
 
     function layoutTables(tables) {
@@ -510,11 +539,16 @@ function renderPage() {
       let fallbackIndex = 0;
 
       for (const table of tables) {
-        const column = preferredColumns[table.name] ?? Math.min(3, fallbackIndex++ % 4);
+        const height = headerHeight + Math.max(1, table.columns.length) * rowHeight;
+        const defaultPosition = defaultPositions[table.name];
+        if (defaultPosition) {
+          layout[table.name] = { x: defaultPosition.x, y: defaultPosition.y, width: tableWidth, height };
+          continue;
+        }
+        const column = 4;
         const stack = columns.get(column) ?? [];
         const x = margin + column * (tableWidth + gapX);
         const y = margin + stack.reduce((sum, item) => sum + item.height + gapY, 0);
-        const height = headerHeight + Math.max(1, table.columns.length) * rowHeight;
         const box = { x, y, width: tableWidth, height };
         layout[table.name] = box;
         stack.push(box);
@@ -524,21 +558,36 @@ function renderPage() {
       return layout;
     }
 
+    function applySavedPositions(layout) {
+      const saved = readSavedLayout();
+      for (const [tableName, position] of Object.entries(saved)) {
+        if (!layout[tableName]) continue;
+        layout[tableName] = {
+          ...layout[tableName],
+          x: Number.isFinite(position.x) ? position.x : layout[tableName].x,
+          y: Number.isFinite(position.y) ? position.y : layout[tableName].y,
+        };
+      }
+      return layout;
+    }
+
     function renderSvg(width, height, relationships, layout) {
       const paths = relationships.map((relationship, index) => {
         const from = layout[relationship.fromTable];
         const to = layout[relationship.toTable];
         if (!from || !to) return "";
-        const fromRight = from.x < to.x;
-        const x1 = fromRight ? from.x + from.width : from.x;
-        const y1 = from.y + from.height / 2;
-        const x2 = fromRight ? to.x : to.x + to.width;
-        const y2 = to.y + to.height / 2;
+        const fromPoint = anchorPoint(from, relationship.fromColumn, relationship.fromTable, relationship.toTable, true);
+        const toPoint = anchorPoint(to, relationship.toColumn, relationship.fromTable, relationship.toTable, false);
+        const x1 = fromPoint.x;
+        const y1 = fromPoint.y;
+        const x2 = toPoint.x;
+        const y2 = toPoint.y;
+        const fromRight = x1 <= x2;
         const curve = Math.max(44, Math.abs(x2 - x1) * 0.45);
         const c1 = fromRight ? x1 + curve : x1 - curve;
         const c2 = fromRight ? x2 - curve : x2 + curve;
         const labelX = (x1 + x2) / 2;
-        const labelY = (y1 + y2) / 2 - 8 + (index % 3) * 14;
+        const labelY = (y1 + y2) / 2 - 10 + (index % 4) * 16;
         const label = relationship.fromTable + "." + relationship.fromColumn + " → " + relationship.toTable + "." + relationship.toColumn;
         return '<path d="M ' + x1 + ' ' + y1 + ' C ' + c1 + ' ' + y1 + ', ' + c2 + ' ' + y2 + ', ' + x2 + ' ' + y2 + '" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)" />' +
           '<text class="fk-label" x="' + labelX + '" y="' + labelY + '" text-anchor="middle">' + escapeHtml(label) + '</text>';
@@ -550,9 +599,22 @@ function renderPage() {
       '</svg>';
     }
 
+    function anchorPoint(box, columnName, fromTable, toTable, isSource) {
+      const table = currentTables.find((item) => item.name === (isSource ? fromTable : toTable));
+      const columnIndex = Math.max(0, table?.columns.findIndex((column) => column.name === columnName) ?? 0);
+      const y = box.y + headerHeight + columnIndex * rowHeight + rowHeight / 2;
+      const sourceBox = currentLayout[fromTable];
+      const targetBox = currentLayout[toTable];
+      const useRight = sourceBox && targetBox ? sourceBox.x < targetBox.x : isSource;
+      return {
+        x: useRight ? box.x + box.width : box.x,
+        y: Math.min(box.y + box.height - 12, Math.max(box.y + headerHeight + 12, y)),
+      };
+    }
+
     function renderTable(table, box) {
-      return '<article class="table-card ' + (table.internal ? "internal" : "") + '" style="left:' + box.x + 'px;top:' + box.y + 'px;height:' + box.height + 'px">' +
-        '<div class="table-header"><div class="table-name">' + escapeHtml(table.name) + '</div><div class="table-kind">' + escapeHtml(table.type) + '</div></div>' +
+      return '<article class="table-card ' + (table.internal ? "internal" : "") + '" data-table="' + escapeHtml(table.name) + '" style="left:' + box.x + 'px;top:' + box.y + 'px;width:' + box.width + 'px;height:' + box.height + 'px">' +
+        '<div class="table-header" data-drag-handle><div class="table-name">' + escapeHtml(table.name) + '</div><div class="table-kind">' + escapeHtml(table.type) + '</div></div>' +
         '<div class="columns">' +
         table.columns.map((column) => {
           const badges = (column.primaryKey ? '<span class="badge">PK</span>' : '') + (isForeignKey(table, column.name) ? '<span class="badge">FK</span>' : '');
@@ -563,6 +625,77 @@ function renderPage() {
 
     function isForeignKey(table, columnName) {
       return table.foreignKeys.some((relationship) => relationship.fromColumn === columnName);
+    }
+
+    function attachDragHandlers() {
+      for (const handle of document.querySelectorAll("[data-drag-handle]")) {
+        handle.addEventListener("pointerdown", startDrag);
+      }
+    }
+
+    function startDrag(event) {
+      const card = event.currentTarget.closest("[data-table]");
+      const tableName = card?.dataset.table;
+      if (!tableName || !currentLayout[tableName]) return;
+      event.preventDefault();
+      card.setPointerCapture?.(event.pointerId);
+      card.classList.add("dragging");
+      dragState = {
+        tableName,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startLeft: currentLayout[tableName].x,
+        startTop: currentLayout[tableName].y,
+      };
+    }
+
+    function onPointerMove(event) {
+      if (!dragState) return;
+      const nextX = Math.max(12, dragState.startLeft + event.clientX - dragState.startX);
+      const nextY = Math.max(12, dragState.startTop + event.clientY - dragState.startY);
+      currentLayout[dragState.tableName] = {
+        ...currentLayout[dragState.tableName],
+        x: nextX,
+        y: nextY,
+      };
+      renderDiagram();
+      const card = document.querySelector('[data-table="' + cssEscape(dragState.tableName) + '"]');
+      card?.classList.add("dragging");
+    }
+
+    function endDrag() {
+      if (!dragState) return;
+      saveLayout();
+      dragState = null;
+      for (const card of document.querySelectorAll(".table-card.dragging")) card.classList.remove("dragging");
+    }
+
+    function resetLayout() {
+      window.localStorage.removeItem(layoutStorageKey());
+      render();
+    }
+
+    function readSavedLayout() {
+      try {
+        return JSON.parse(window.localStorage.getItem(layoutStorageKey()) || "{}");
+      } catch {
+        return {};
+      }
+    }
+
+    function saveLayout() {
+      const saved = {};
+      for (const [name, box] of Object.entries(currentLayout)) saved[name] = { x: Math.round(box.x), y: Math.round(box.y) };
+      window.localStorage.setItem(layoutStorageKey(), JSON.stringify(saved));
+    }
+
+    function layoutStorageKey() {
+      return "novo-erd-layout:" + (schema?.databasePath || "default");
+    }
+
+    function cssEscape(value) {
+      return String(value).replace(/["\\\\]/g, "\\\\$&");
     }
 
     function escapeHtml(value) {

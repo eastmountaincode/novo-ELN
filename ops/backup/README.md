@@ -15,8 +15,8 @@ On `ccibweb2`, `aboylan` does not have sudo/root access but does have Docker acc
 
 ```bash
 cd /export/home/aboylan/novo-eln-prod
-export NOVO_BORG_PASSPHRASE='use-a-long-random-passphrase'
-export NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo
+NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo \
+NOVO_BORG_PASSPHRASE='use-a-long-random-passphrase' \
 docker compose -f docker-compose.backup.yml run --rm novo-borg-backup
 ```
 
@@ -28,29 +28,16 @@ Retention is:
 - 12 weekly backups
 - 6 monthly backups
 
-`NOVO_BORG_REPOSITORY` should point to storage outside the app runtime directory when possible. The compose file defaults to `./runtime/borg-repo` only so the command can run anywhere; that default is not sufficient as the only long-term production backup because it is on the same host and likely the same disk.
+`NOVO_BORG_REPOSITORY` is required. It should point to storage outside the app runtime directory when possible.
 
 ## Secret Handling
 
-Do not commit the Borg passphrase.
-
-For repeated manual runs or cron, create a user-owned env file:
-
-```bash
-cat > ~/.novo-borg.env <<'EOF'
-NOVO_BORG_PASSPHRASE='replace-with-a-long-random-passphrase'
-NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo
-EOF
-chmod 600 ~/.novo-borg.env
-```
-
-Then run:
+Do not commit the Borg passphrase. For manual runs, provide the required values inline:
 
 ```bash
 cd /export/home/aboylan/novo-eln-prod
-set -a
-. ~/.novo-borg.env
-set +a
+NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo \
+NOVO_BORG_PASSPHRASE='replace-with-a-long-random-passphrase' \
 docker compose -f docker-compose.backup.yml run --rm novo-borg-backup
 ```
 
@@ -65,7 +52,7 @@ crontab -e
 Example nightly entry:
 
 ```cron
-30 2 * * * cd /export/home/aboylan/novo-eln-prod && set -a && . ~/.novo-borg.env && set +a && docker compose -f docker-compose.backup.yml run --rm novo-borg-backup >> runtime/backups/borg.log 2>&1
+30 2 * * * cd /export/home/aboylan/novo-eln-prod && NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo NOVO_BORG_PASSPHRASE='replace-with-a-long-random-passphrase' docker compose -f docker-compose.backup.yml run --rm novo-borg-backup >> runtime/backups/borg.log 2>&1
 ```
 
 This does not require root if the user can run Docker and cron.
@@ -78,15 +65,17 @@ List archives:
 
 ```bash
 cd /export/home/aboylan/novo-eln-prod
-set -a
-. ~/.novo-borg.env
-set +a
+NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo \
+NOVO_BORG_PASSPHRASE='replace-with-a-long-random-passphrase' \
 docker compose -f docker-compose.backup.yml run --rm --entrypoint borg novo-borg-backup list /borg-repo
 ```
 
 Check the repository:
 
 ```bash
+cd /export/home/aboylan/novo-eln-prod
+NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo \
+NOVO_BORG_PASSPHRASE='replace-with-a-long-random-passphrase' \
 docker compose -f docker-compose.backup.yml run --rm --entrypoint borg novo-borg-backup check /borg-repo
 ```
 

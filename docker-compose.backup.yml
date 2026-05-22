@@ -18,7 +18,7 @@ services:
     volumes:
       - ./runtime:/app-runtime:rw
       - novo-borg-staging:/backup-staging
-      - ${NOVO_BORG_REPOSITORY:-./runtime/borg-repo}:/borg-repo
+      - ${NOVO_BORG_REPOSITORY:?Set NOVO_BORG_REPOSITORY before running backups}:/borg-repo
 
 volumes:
   novo-borg-staging:

@@ -9,7 +9,7 @@ services:
     container_name: novo-eln-borg-backup
     environment:
       BORG_REPO: /borg-repo
-      BORG_PASSPHRASE: ${NOVO_BORG_PASSPHRASE:?Set NOVO_BORG_PASSPHRASE before running backups}
+      BORG_PASSPHRASE: ${NOVO_BORG_PASSPHRASE:?NOVO_BORG_PASSPHRASE is required for backups}
       BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK: "no"
       BORG_RELOCATED_REPO_ACCESS_IS_OK: "no"
       NOVO_RUNTIME_DIR: /app-runtime
@@ -18,7 +18,7 @@ services:
     volumes:
       - ./runtime:/app-runtime:rw
       - novo-borg-staging:/backup-staging
-      - ${NOVO_BORG_REPOSITORY:?Set NOVO_BORG_REPOSITORY before running backups}:/borg-repo
+      - ${NOVO_BORG_REPOSITORY:?NOVO_BORG_REPOSITORY is required for backups}:/borg-repo
 
 volumes:
   novo-borg-staging:

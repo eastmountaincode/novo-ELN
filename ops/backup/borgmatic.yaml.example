@@ -7,14 +7,14 @@
 
 source_directories:
   # Created by scripts/backup-sqlite.sh before each borgmatic backup.
-  - /mnt/speedy/aboylan/new_ELN_2026_05_13/data/backup-staging
+  - /mnt/speedy/aboylan/new_ELN_2026_05_13/runtime/backup-staging
 
   # Actual attachment objects. These are not inside SQLite.
-  - /mnt/speedy/aboylan/new_ELN_2026_05_13/storage/uploads
+  - /mnt/speedy/aboylan/new_ELN_2026_05_13/runtime/uploads
 
   # Derived previews are optional because they can usually be regenerated, but
   # backing them up makes restore faster and keeps the restored app visually ready.
-  - /mnt/speedy/aboylan/new_ELN_2026_05_13/data/previews
+  - /mnt/speedy/aboylan/new_ELN_2026_05_13/runtime/previews
 
   # Keep environment/config with the backup. For production, prefer a root-owned
   # copy containing only required app config rather than broad shell history.

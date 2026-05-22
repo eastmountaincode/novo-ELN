@@ -48,5 +48,4 @@ dev.pid
 # Local runtime data
 /data/
 /runtime/
-/runtime-dev/
 /storage/

@@ -7,7 +7,7 @@ A focused Evernote replacement prototype for lab notebooks. The app uses noteboo
 - Next.js App Router + Tailwind UI
 - Cookie-based credential auth
 - SQLite relational database for users, notebooks, pages, permissions, attachments, tags, and audit events
-- Local filesystem attachment storage under `storage/uploads`
+- Local filesystem attachment storage under `runtime/uploads`
 - ENEX import endpoint that creates a notebook from Evernote notes
 - Vitest tests for ENEX parsing and database repository behavior
 

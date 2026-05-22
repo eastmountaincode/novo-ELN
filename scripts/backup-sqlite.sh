@@ -11,11 +11,11 @@ if [[ -f "$env_file" ]]; then
   set +a
 fi
 
-data_dir="${ELN_DATA_DIR:-$project_root/data}"
-upload_dir="${ELN_UPLOAD_DIR:-$project_root/storage/uploads}"
-preview_dir="${ELN_PREVIEW_DIR:-$data_dir/previews}"
+data_dir="${ELN_DATA_DIR:-$project_root/runtime/data}"
+upload_dir="${ELN_UPLOAD_DIR:-$project_root/runtime/uploads}"
+preview_dir="${ELN_PREVIEW_DIR:-$project_root/runtime/previews}"
 database_path="${ELN_DATABASE_PATH:-$data_dir/eln.sqlite3}"
-staging_dir="${ELN_BACKUP_STAGING_DIR:-$data_dir/backup-staging}"
+staging_dir="${ELN_BACKUP_STAGING_DIR:-$project_root/runtime/backup-staging}"
 snapshot_path="$staging_dir/eln.sqlite3"
 manifest_path="$staging_dir/manifest.json"
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-compose_file="${NOVO_COMPOSE_FILE:-$project_root/docker-compose.prod.yml}"
+compose_file="${NOVO_COMPOSE_FILE:-$project_root/docker-compose.yml}"
 timestamp="$(date +%Y%m%d-%H%M%S)"
 backup_root="${NOVO_BACKUP_ROOT:-$project_root/runtime/backups}"
 backup_dir="$backup_root/$timestamp"

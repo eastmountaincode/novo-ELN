@@ -11,7 +11,7 @@ services:
     ports:
       - "127.0.0.1:3155:3000"
     env_file:
-      - .env.production
+      - .env.local
     environment:
       NODE_ENV: production
       ELN_DATA_DIR: /app-data/data

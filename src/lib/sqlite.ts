@@ -1,6 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { ensureRuntimeDirs, databasePath } from "./paths";
 
+const defaultSqliteMaxBufferBytes = 256 * 1024 * 1024;
+
+function sqliteMaxBufferBytes() {
+  const configured = Number.parseInt(process.env.ELN_SQLITE_MAX_BUFFER_BYTES || "", 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : defaultSqliteMaxBufferBytes;
+}
+
 export type SqlRow = Record<string, string>;
 
 export function sql(value: string | number | null | undefined) {
@@ -18,6 +25,7 @@ export function execSql(statement: string) {
   execFileSync("sqlite3", [databasePath, "-batch"], {
     input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`,
     stdio: ["pipe", "pipe", "pipe"],
+    maxBuffer: sqliteMaxBufferBytes(),
   });
 }
 
@@ -27,6 +35,7 @@ export function querySql(statement: string): SqlRow[] {
     input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
+    maxBuffer: sqliteMaxBufferBytes(),
   });
   return parseCsv(output);
 }

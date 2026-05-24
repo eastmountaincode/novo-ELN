@@ -5,6 +5,11 @@ import { createUser, findUserById, verifyCredentials } from "./store";
 const cookieName = "eln_session";
 const defaultMaxAgeSeconds = 60 * 60 * 12;
 const rememberedMaxAgeSeconds = 60 * 60 * 24 * 14;
+
+function useSecureCookies() {
+  return process.env.NODE_ENV === "production" && process.env.ELN_ALLOW_INSECURE_COOKIES !== "true";
+}
+
 function getSessionSecret() {
   const secret = process.env.ELN_SESSION_SECRET;
   if (!secret || secret.length < 32) {
@@ -54,7 +59,7 @@ async function setSession(userId: string, maxAgeSeconds: number) {
   cookieStore.set(cookieName, signSession({ userId, expiresAt: Date.now() + maxAgeSeconds * 1000 }), {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: useSecureCookies(),
     path: "/",
     maxAge: maxAgeSeconds,
   });

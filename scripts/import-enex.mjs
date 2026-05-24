@@ -409,8 +409,6 @@ function insertImportedNote({ job, notebookId, pageId, note, body, plainText, at
     VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title)}, ${sql(body)}, '', ${sql(job.user_id)}, ${sql(createdAt)}, ${sql(updatedAt)});
     ${attachmentSql}
     ${tagSql}
-    INSERT INTO page_versions (id, page_id, summary, created_by, created_at)
-    VALUES (${sql(crypto.randomUUID())}, ${sql(pageId)}, 'Imported from ENEX', ${sql(job.user_id)}, ${sql(updatedAt)});
     INSERT INTO search_pages_fts (page_id, notebook_id, title, body, tags, attachments, notebook, updated_at)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title)}, ${sql(plainText)}, ${sql(note.tags.join(','))}, ${sql(attachments.map((attachment) => attachment.originalName).join(','))}, ${sql(job.notebook_name)}, ${sql(updatedAt)});
     COMMIT;

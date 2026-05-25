@@ -1960,6 +1960,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   const [selectedStatuses, setSelectedStatuses] = useState<PageStatus[]>([]);
   const sortOptionsRef = useRef<HTMLDivElement>(null);
   const filterOptionsRef = useRef<HTMLDivElement>(null);
+  const pageListRef = useRef<HTMLDivElement>(null);
   const availableTags = useMemo(() => normalizeTagList(pages.flatMap((page) => page.tags)).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })), [pages]);
   const filteredPages = useMemo(() => filterNotebookPages(pages, selectedTags, selectedStatuses), [pages, selectedTags, selectedStatuses]);
   const sortedPages = useMemo(() => sortNotebookPages(filteredPages, sortKey), [filteredPages, sortKey]);
@@ -2040,6 +2041,18 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [filterOptionsOpen]);
+
+  useEffect(() => {
+    if (collapsed || !selectedPage?.id) return;
+    const list = pageListRef.current;
+    if (!list) return;
+    const selectedCard = list.querySelector<HTMLElement>(`[data-page-card-id="${CSS.escape(selectedPage.id)}"]`);
+    if (!selectedCard) return;
+    const frame = window.requestAnimationFrame(() => {
+      selectedCard.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [collapsed, selectedNotebook?.id, selectedPage?.id]);
 
   function toggleTagFilter(tag: string) {
     setSelectedTags((current) => current.some((selected) => selected.toLowerCase() === tag.toLowerCase()) ? current.filter((selected) => selected.toLowerCase() !== tag.toLowerCase()) : [...current, tag]);
@@ -2267,7 +2280,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
         ) : null}
       </div>
 
-      <div className="overflow-y-auto scroll-contained py-3">
+      <div ref={pageListRef} className="overflow-y-auto scroll-contained py-3">
         <div className="space-y-2 px-4">
           {sortedPages.map((page) => (
             <PageCard
@@ -2395,7 +2408,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   const visibleTags = page.tags.slice(0, 3);
   const previewText = useMemo(() => bodyToEditorText(page.body) || "Empty page", [page.body]);
   return (
-    <div className="group relative min-w-0">
+    <div data-page-card-id={page.id} className="group relative min-w-0">
       <button
         onClick={onClick}
         className={`block min-w-0 w-full border p-3 pr-10 text-left ${active ? "" : "border-slate-200 bg-white hover:border-slate-400"}`}

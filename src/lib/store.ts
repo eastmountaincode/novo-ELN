@@ -126,8 +126,7 @@ export function ensureDatabase() {
   ensurePageLockColumns();
   migrateAttachmentPreviewTextColumn();
   execSql(`
-    DROP TABLE IF EXISTS search_pages_fts;
-    CREATE VIRTUAL TABLE search_pages_fts USING fts5(
+    CREATE VIRTUAL TABLE IF NOT EXISTS search_pages_fts USING fts5(
       page_id UNINDEXED,
       notebook_id UNINDEXED,
       title,
@@ -141,7 +140,8 @@ export function ensureDatabase() {
   `);
   migratePageStatusValues();
   migrateGroupedTagsToPageTags();
-  rebuildSearchIndex();
+  const searchIndexCount = Number(queryOne("SELECT COUNT(*) AS count FROM search_pages_fts")?.count ?? 0);
+  if (searchIndexCount === 0 && countRows("pages") > 0) rebuildSearchIndex();
   initialized = true;
 }
 

@@ -11,7 +11,9 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("q") ?? "";
   const limit = Number(searchParams.get("limit") ?? 30);
+  const modeParam = searchParams.get("mode");
+  const mode = modeParam === "fast" || modeParam === "approx" ? modeParam : "full";
   return NextResponse.json({
-    results: searchWorkspace(user.id, query, Number.isFinite(limit) ? limit : 30),
+    results: searchWorkspace(user.id, query, Number.isFinite(limit) ? limit : 30, mode),
   });
 }

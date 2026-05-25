@@ -13,7 +13,13 @@ type SearchablePage = {
   updatedAt: string;
 };
 
+type SearchMode = "full" | "fast" | "approx";
+type SearchFtsMode = "strict" | "relaxed" | "approx";
+type TokenExpansion = { token: string; terms: string[] };
+
 const searchIndexQueueBatchSize = 25;
+const approximateCandidateLimit = 800;
+const approximateAlternativesPerToken = 5;
 let searchIndexDrainScheduled = false;
 let searchIndexDrainRunning = false;
 
@@ -135,23 +141,47 @@ function insertSearchRows(rows: SearchablePage[]) {
   `).join("\n"));
 }
 
-export function searchWorkspace(userId: string, rawQuery: string, limit = 30): SearchResult[] {
+export function searchWorkspace(userId: string, rawQuery: string, limit = 30, mode: SearchMode = "full"): SearchResult[] {
   const query = rawQuery.trim();
   if (!query) return [];
 
-  const strictResults = searchFts(userId, query, limit, "strict");
-  const relaxedResults = searchFts(userId, query, limit, "relaxed");
-  const ftsResults = mergeSearchResults(strictResults, relaxedResults).sort((a, b) => b.score - a.score);
-  const fuzzyResults = searchFuzzy(userId, query, limit);
-  return mergeSearchResults(ftsResults, fuzzyResults).slice(0, limit);
+  if (mode === "fast") return searchFast(userId, query, limit);
+  if (mode === "approx") return searchApproximate(userId, query, limit);
+
+  return mergeSearchResults(searchFast(userId, query, limit), searchApproximate(userId, query, limit)).slice(0, limit);
 }
 
-function searchFts(userId: string, query: string, limit: number, mode: "strict" | "relaxed"): SearchResult[] {
+function searchFast(userId: string, query: string, limit: number) {
+  const strictResults = searchFts(userId, query, limit, "strict");
+  const relaxedResults = searchFts(userId, query, limit, "relaxed");
+  return mergeSearchResults(strictResults, relaxedResults).sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+function searchApproximate(userId: string, query: string, limit: number): SearchResult[] {
   const tokens = tokenize(query);
-  const match = buildFtsQuery(tokens, mode);
+  if (!tokens.length) return [];
+
+  const expansions = tokens.map(expandSearchToken);
+  const hasApproximateTerms = expansions.some((expansion) => expansion.terms.some((term) => term !== expansion.token));
+  if (!hasApproximateTerms) return [];
+
+  const match = buildExpandedFtsQuery(expansions);
+  if (!match) return [];
+
+  const matchTokens = uniqueIds(expansions.flatMap((expansion) => expansion.terms));
+  return searchFts(userId, query, limit, "approx", match, matchTokens).map((result) => ({
+    ...result,
+    matchType: "fuzzy",
+  }));
+}
+
+function searchFts(userId: string, query: string, limit: number, mode: SearchFtsMode, customMatch = "", matchTokens?: string[]): SearchResult[] {
+  const queryTokens = tokenize(query);
+  const tokens = matchTokens?.length ? matchTokens : queryTokens;
+  const match = customMatch || buildFtsQuery(queryTokens, mode === "strict" ? "strict" : "relaxed");
   if (!match) return [];
   const literal = `%${query.toLowerCase()}%`;
-  const queryLimit = mode === "strict" ? limit : Math.max(limit * 4, 60);
+  const queryLimit = mode === "strict" ? limit : mode === "approx" ? Math.max(limit * 6, 120) : Math.max(limit * 4, 60);
   const accessCondition = searchAccessCondition(userId, "n", "nm");
   const rows = querySql(`
     SELECT
@@ -178,15 +208,16 @@ function searchFts(userId: string, query: string, limit: number, mode: "strict" 
     ORDER BY
       bm25_score ASC,
       datetime(f.updated_at) DESC
-    LIMIT ${Math.max(1, Math.min(queryLimit, 200))}
+    LIMIT ${Math.max(1, Math.min(queryLimit, 300))}
   `);
 
+  const minimumMatchCount = relaxedMinimumMatchCount(queryTokens.length);
   return rows
     .map((row): SearchResult & { matchedTokenCount: number } => {
       const searchableText = [row.title, row.body, row.tags, row.attachments].join(" ");
       const matchedTokenCount = countMatchedTokens(tokens, searchableText);
       const titleMatchedTokenCount = countMatchedTokens(tokens, row.title);
-      const matchType = titleMatchedTokenCount >= relaxedMinimumMatchCount(tokens.length) ? "title" : row.match_type;
+      const matchType = mode === "approx" ? "fuzzy" : titleMatchedTokenCount >= relaxedMinimumMatchCount(queryTokens.length) ? "title" : row.match_type;
       return {
         pageId: row.page_id,
         projectId: "workspace",
@@ -199,7 +230,7 @@ function searchFts(userId: string, query: string, limit: number, mode: "strict" 
         matchType: matchType as SearchMatchType,
         score: scoreFtsResult({
           query,
-          tokens,
+          tokens: mode === "approx" ? tokens : queryTokens,
           title: row.title,
           searchableText,
           bm25Score: Number(row.bm25_score),
@@ -207,7 +238,7 @@ function searchFts(userId: string, query: string, limit: number, mode: "strict" 
         matchedTokenCount,
       };
     })
-    .filter((result) => mode === "strict" || result.matchedTokenCount >= relaxedMinimumMatchCount(tokens.length))
+    .filter((result) => mode === "strict" || result.matchedTokenCount >= minimumMatchCount)
     .sort((a, b) => b.score - a.score || Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     .slice(0, limit)
     .map((result) => ({
@@ -224,35 +255,38 @@ function searchFts(userId: string, query: string, limit: number, mode: "strict" 
     }));
 }
 
-function searchFuzzy(userId: string, query: string, limit: number): SearchResult[] {
-  const tokens = tokenize(query);
-  if (!tokens.length) return [];
+function expandSearchToken(token: string): TokenExpansion {
+  if (token.length < 3) return { token, terms: [token] };
+  const firstCharacter = token[0].replace(/[\[\]{}()*?+.,\\^$|#\s-]/g, "");
+  if (!firstCharacter) return { token, terms: [token] };
+  const minimumLength = Math.max(2, token.length - 1);
+  const maximumLength = token.length + 2;
+  const maximumDistance = token.length <= 4 ? 2 : token.length <= 8 ? 2 : 3;
 
-  return getUserSearchablePages(userId)
-    .map((page) => {
-      const titleScore = fuzzyFieldScore(tokens, page.title) * 1.2;
-      const attachmentScore = fuzzyFieldScore(tokens, page.attachments);
-      const bodyScore = fuzzyFieldScore(tokens, page.body) * 0.75;
-      const score = Math.max(titleScore, attachmentScore, bodyScore);
-      const exactTokenMatches = countMatchedTokens(tokens, [page.title, page.body, page.tags, page.attachments].join(" "));
-      const matchType: SearchMatchType = score === titleScore ? "title" : score === attachmentScore ? "attachment" : "fuzzy";
-      return { page, score, matchType, exactTokenMatches };
-    })
-    .filter((result) => result.score >= 0.62 && (tokens.length === 1 || result.exactTokenMatches > 0))
-    .sort((a, b) => b.score - a.score || Date.parse(b.page.updatedAt) - Date.parse(a.page.updatedAt))
-    .slice(0, limit)
-    .map(({ page, score, matchType }): SearchResult => ({
-      pageId: page.pageId,
-      projectId: "workspace",
-      notebookId: page.notebookId,
-      title: page.title,
-      projectName: "Notebooks",
-      notebookName: page.notebookName,
-      snippet: makeSnippet(page.body || page.attachments || page.tags, query),
-      updatedAt: page.updatedAt,
-      matchType,
-      score,
-    }));
+  try {
+    const candidates = querySql(`
+      SELECT term, doc
+      FROM search_pages_vocab
+      WHERE length(term) BETWEEN ${minimumLength} AND ${maximumLength}
+        AND term GLOB ${sql(`${firstCharacter}*`)}
+      ORDER BY doc DESC
+      LIMIT ${approximateCandidateLimit}
+    `);
+    const alternatives = candidates
+      .map((candidate) => ({
+        term: String(candidate.term),
+        distance: levenshteinDistance(token, String(candidate.term)),
+        documentCount: Number(candidate.doc ?? 0),
+      }))
+      .filter((candidate) => candidate.term !== token && candidate.distance > 0 && candidate.distance <= maximumDistance)
+      .sort((a, b) => a.distance - b.distance || b.documentCount - a.documentCount)
+      .slice(0, approximateAlternativesPerToken)
+      .map((candidate) => candidate.term);
+    return { token, terms: uniqueIds([token, ...alternatives]) };
+  } catch (error) {
+    console.error("Search vocabulary lookup failed", error);
+    return { token, terms: [token] };
+  }
 }
 
 function mergeSearchResults(primary: SearchResult[], fuzzy: SearchResult[]) {
@@ -289,28 +323,6 @@ function getSearchablePages(whereClause = ""): SearchablePage[] {
   `));
 }
 
-function getUserSearchablePages(userId: string): SearchablePage[] {
-  const accessCondition = searchAccessCondition(userId, "n", "nm");
-  return mapSearchRows(querySql(`
-    SELECT
-      p.id AS page_id,
-      p.notebook_id,
-      p.title,
-      p.body,
-      p.updated_at,
-      n.name AS notebook_name,
-      COALESCE(group_concat(DISTINCT pt.tag), '') AS tags,
-      COALESCE(group_concat(DISTINCT a.original_name), '') AS attachments
-    FROM pages p
-    JOIN notebooks n ON n.id = p.notebook_id
-    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
-    LEFT JOIN page_tags pt ON pt.page_id = p.id
-    LEFT JOIN attachments a ON a.page_id = p.id
-    WHERE ${accessCondition}
-    GROUP BY p.id
-  `));
-}
-
 function mapSearchRows(rows: Record<string, string>[]): SearchablePage[] {
   return rows.map((row) => ({
     pageId: row.page_id,
@@ -331,7 +343,22 @@ function searchAccessCondition(_userId: string, _notebookAlias: string, memberAl
 function buildFtsQuery(tokens: string[], mode: "strict" | "relaxed") {
   if (!tokens.length) return "";
   const operator = mode === "strict" ? " AND " : " OR ";
-  return tokens.map((token) => `${token.replace(/"/g, '""')}*`).join(operator);
+  return tokens.map((token) => `${escapeFtsToken(token)}*`).join(operator);
+}
+
+function buildExpandedFtsQuery(expansions: TokenExpansion[]) {
+  return expansions
+    .map((expansion) => {
+      const terms = uniqueIds(expansion.terms).map((term) => `${escapeFtsToken(term)}*`);
+      if (!terms.length) return "";
+      return terms.length === 1 ? terms[0] : `(${terms.join(" OR ")})`;
+    })
+    .filter(Boolean)
+    .join(" AND ");
+}
+
+function escapeFtsToken(token: string) {
+  return token.replace(/"/g, '""');
 }
 
 function tokenize(value: string) {
@@ -365,22 +392,6 @@ function scoreFtsResult(input: { query: string; tokens: string[]; title: string;
   return coverage * 2.4 + titleCoverage * 2.2 + exactPhraseBoost + bm25Component;
 }
 
-function fuzzyFieldScore(tokens: string[], field: string) {
-  const words = tokenize(field);
-  if (!tokens.length || !words.length) return 0;
-  const scores = tokens.map((token) => {
-    let best = 0;
-    for (const word of words) {
-      if (word === token) best = Math.max(best, 1);
-      else if (word.startsWith(token)) best = Math.max(best, 0.92);
-      else if (word.includes(token)) best = Math.max(best, 0.78);
-      else best = Math.max(best, 1 - levenshteinDistance(token, word.slice(0, Math.max(token.length, 1))) / Math.max(token.length, word.length));
-    }
-    return Math.max(0, Math.min(1, best));
-  });
-  return scores.reduce((sum, score) => sum + score, 0) / scores.length;
-}
-
 function levenshteinDistance(a: string, b: string) {
   const dp = Array.from({ length: a.length + 1 }, () => Array<number>(b.length + 1).fill(0));
   for (let i = 0; i <= a.length; i += 1) dp[i][0] = i;
@@ -398,13 +409,3 @@ function cleanSnippet(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function makeSnippet(value: string, query: string) {
-  const text = cleanSnippet(value);
-  if (!text) return "";
-  const lowerText = text.toLowerCase();
-  const index = lowerText.indexOf(query.toLowerCase());
-  if (index === -1) return text.slice(0, 180);
-  const start = Math.max(0, index - 70);
-  const end = Math.min(text.length, index + query.length + 110);
-  return `${start > 0 ? "..." : ""}${text.slice(start, end)}${end < text.length ? "..." : ""}`;
-}

@@ -183,6 +183,7 @@ export default function Home() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchApproxLoading, setSearchApproxLoading] = useState(false);
   const [saving, setSaving] = useState("");
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [creatingPage, setCreatingPage] = useState(false);
@@ -439,34 +440,59 @@ export default function Home() {
     setQuery("");
     setSearchResults([]);
     setSearchLoading(false);
+    setSearchApproxLoading(false);
   }, []);
 
   useEffect(() => {
     if (!searchOpen) return;
     const trimmed = query.trim();
     let active = true;
+    const fastController = new AbortController();
+    const approxController = new AbortController();
     const timeout = window.setTimeout(async () => {
       if (!trimmed) {
         setSearchResults([]);
         setSearchLoading(false);
+        setSearchApproxLoading(false);
         return;
       }
 
       setSearchLoading(true);
-      const response = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}&limit=30`);
-      if (!active) return;
-      if (!response.ok) {
-        setSearchResults([]);
-        setSearchLoading(false);
+      setSearchApproxLoading(false);
+      try {
+        const response = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}&limit=30&mode=fast`, { signal: fastController.signal });
+        if (!active) return;
+        if (!response.ok) {
+          setSearchResults([]);
+          return;
+        }
+        const body = (await response.json()) as { results: SearchResult[] };
+        setSearchResults(body.results);
+      } catch (error) {
+        if (!fastController.signal.aborted) setSearchResults([]);
         return;
+      } finally {
+        if (active) setSearchLoading(false);
       }
-      const body = (await response.json()) as { results: SearchResult[] };
-      setSearchResults(body.results);
-      setSearchLoading(false);
+
+      if (!active) return;
+      setSearchApproxLoading(true);
+      try {
+        const response = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}&limit=30&mode=approx`, { signal: approxController.signal });
+        if (!active || !response.ok) return;
+        const body = (await response.json()) as { results: SearchResult[] };
+        setSearchResults((current) => mergeSearchResultLists(current, body.results).slice(0, 30));
+      } catch {
+        // Approximate search is best-effort; keep the fast indexed results visible.
+      } finally {
+        if (active) setSearchApproxLoading(false);
+      }
     }, 180);
 
     return () => {
       active = false;
+      fastController.abort();
+      approxController.abort();
       window.clearTimeout(timeout);
     };
   }, [query, searchOpen]);
@@ -1267,6 +1293,7 @@ export default function Home() {
             query={query}
             setQuery={setQuery}
             loading={searchLoading}
+            approxLoading={searchApproxLoading}
             results={hydratedSearchResults}
             onClose={closeSearch}
             selectResult={selectSearchResult}
@@ -2205,7 +2232,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   );
 }
 
-function SearchOverlay({ query, setQuery, loading, results, onClose, selectResult }: { query: string; setQuery: (value: string) => void; loading: boolean; results: HydratedSearchResult[]; onClose: () => void; selectResult: (result: HydratedSearchResult) => void }) {
+function SearchOverlay({ query, setQuery, loading, approxLoading, results, onClose, selectResult }: { query: string; setQuery: (value: string) => void; loading: boolean; approxLoading: boolean; results: HydratedSearchResult[]; onClose: () => void; selectResult: (result: HydratedSearchResult) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const trimmedQuery = query.trim();
 
@@ -2241,7 +2268,7 @@ function SearchOverlay({ query, setQuery, loading, results, onClose, selectResul
         </div>
         <div className="overflow-y-auto scroll-contained p-5">
           {trimmedQuery ? (
-            <SearchResultList loading={loading} results={results} selectResult={selectResult} />
+            <SearchResultList loading={loading} approxLoading={approxLoading} results={results} selectResult={selectResult} />
           ) : (
             <div className="border border-white/10 bg-white/[0.03] p-5 text-sm text-slate-400">
               Start typing to search page titles, page text, and attachment names.
@@ -2253,26 +2280,38 @@ function SearchOverlay({ query, setQuery, loading, results, onClose, selectResul
   );
 }
 
-function SearchResultList({ loading, results, selectedPageId, selectResult, compact = false }: { loading: boolean; results: HydratedSearchResult[]; selectedPageId?: string; selectResult: (result: HydratedSearchResult) => void; compact?: boolean }) {
+function mergeSearchResultLists(primary: SearchResult[], secondary: SearchResult[]) {
+  const merged = new Map<string, SearchResult>();
+  for (const result of primary) merged.set(result.pageId, result);
+  for (const result of secondary) {
+    if (!merged.has(result.pageId)) merged.set(result.pageId, result);
+  }
+  return [...merged.values()];
+}
+
+function SearchResultList({ loading, approxLoading, results, selectedPageId, selectResult, compact = false }: { loading: boolean; approxLoading?: boolean; results: HydratedSearchResult[]; selectedPageId?: string; selectResult: (result: HydratedSearchResult) => void; compact?: boolean }) {
   if (loading) return <p className="p-3 text-sm text-slate-400">Searching...</p>;
-  if (!results.length) return <p className="p-3 text-sm text-slate-400">No matching pages.</p>;
+  if (!results.length) return <p className="p-3 text-sm text-slate-400">{approxLoading ? "Looking for approximate matches..." : "No matching pages."}</p>;
   return (
-    <div className={compact ? "space-y-2" : "divide-y divide-white/10 border border-white/10"}>
-      {results.map((result) => (
-        <SearchResultButton
-          key={result.pageId}
-          result={result}
-          active={selectedPageId === result.pageId}
-          compact={compact}
-          onClick={() => selectResult(result)}
-        />
-      ))}
-    </div>
+    <>
+      <div className={compact ? "space-y-2" : "divide-y divide-white/10 border border-white/10"}>
+        {results.map((result) => (
+          <SearchResultButton
+            key={result.pageId}
+            result={result}
+            active={selectedPageId === result.pageId}
+            compact={compact}
+            onClick={() => selectResult(result)}
+          />
+        ))}
+      </div>
+      {approxLoading ? <p className="p-3 text-sm text-slate-400">Looking for approximate matches...</p> : null}
+    </>
   );
 }
 
 function SearchResultButton({ result, active, compact, onClick }: { result: HydratedSearchResult; active: boolean; compact: boolean; onClick: () => void }) {
-  const label = result.matchType === "title" ? "Title" : result.matchType === "attachment" ? "Attachment" : result.matchType === "fuzzy" ? "Fuzzy" : "Text";
+  const label = result.matchType === "title" ? "Title" : result.matchType === "attachment" ? "Attachment" : result.matchType === "fuzzy" ? "Approximate" : "Text";
   const color = projectColor(result.project);
   return (
     <button

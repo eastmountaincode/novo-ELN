@@ -142,6 +142,8 @@ export function ensureDatabase() {
       updated_at UNINDEXED,
       tokenize='unicode61'
     );
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS search_pages_vocab USING fts5vocab(search_pages_fts, 'row');
   `);
   migratePageStatusValues();
   migrateGroupedTagsToPageTags();

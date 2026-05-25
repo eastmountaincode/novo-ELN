@@ -17,10 +17,29 @@ export function rebuildSearchIndex() {
   execSql(`
     DELETE FROM search_pages_fts;
   `);
+  insertSearchRows(getAllSearchablePages());
+}
 
-  const rows = getAllSearchablePages();
+export function updateSearchIndexForPage(pageId: string) {
+  execSql(`DELETE FROM search_pages_fts WHERE page_id = ${sql(pageId)};`);
+  insertSearchRows(getSearchablePages(`WHERE p.id = ${sql(pageId)}`));
+}
+
+export function updateSearchIndexForNotebook(notebookId: string) {
+  execSql(`DELETE FROM search_pages_fts WHERE notebook_id = ${sql(notebookId)};`);
+  insertSearchRows(getSearchablePages(`WHERE p.notebook_id = ${sql(notebookId)}`));
+}
+
+export function deleteSearchIndexForPage(pageId: string) {
+  execSql(`DELETE FROM search_pages_fts WHERE page_id = ${sql(pageId)};`);
+}
+
+export function deleteSearchIndexForNotebook(notebookId: string) {
+  execSql(`DELETE FROM search_pages_fts WHERE notebook_id = ${sql(notebookId)};`);
+}
+
+function insertSearchRows(rows: SearchablePage[]) {
   if (!rows.length) return;
-
   execSql(rows.map((row) => `
     INSERT INTO search_pages_fts (page_id, notebook_id, title, body, tags, attachments, notebook, updated_at)
     VALUES (${sql(row.pageId)}, ${sql(row.notebookId)}, ${sql(row.title)}, ${sql(row.body)}, ${sql(row.tags)}, ${sql(row.attachments)}, ${sql(row.notebookName)}, ${sql(row.updatedAt)});
@@ -158,6 +177,10 @@ function mergeSearchResults(primary: SearchResult[], fuzzy: SearchResult[]) {
 }
 
 function getAllSearchablePages(): SearchablePage[] {
+  return getSearchablePages();
+}
+
+function getSearchablePages(whereClause = ""): SearchablePage[] {
   return mapSearchRows(querySql(`
     SELECT
       p.id AS page_id,
@@ -172,6 +195,7 @@ function getAllSearchablePages(): SearchablePage[] {
     JOIN notebooks n ON n.id = p.notebook_id
     LEFT JOIN page_tags pt ON pt.page_id = p.id
     LEFT JOIN attachments a ON a.page_id = p.id
+    ${whereClause}
     GROUP BY p.id
   `));
 }

@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
 import { bodyToEditorDocument, editorDocumentToBody, removeAttachmentCardsFromBody } from "./editor";
 import { uploadDir } from "./paths";
-import { rebuildSearchIndex } from "./search";
+import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, rebuildSearchIndex, updateSearchIndexForNotebook, updateSearchIndexForPage } from "./search";
 import { execSql, queryOne, querySql, sql } from "./sqlite";
 
 let initialized = false;
@@ -417,7 +417,7 @@ export function createUser(input: { email: string; firstName: string; lastName?:
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
   `);
-  rebuildSearchIndex();
+  updateSearchIndexForPage(pageId);
   return { id: userId, email, firstName, lastName, role };
 }
 
@@ -705,7 +705,7 @@ export function createNotebook(userId: string, name = "New Notebook") {
   `);
   recordNotebookAuditEvent(userId, notebookId, "notebook.created", `created notebook ${quoteAuditValue(name)}`, { name });
   recordPageAuditEvent(userId, pageId, "page.created", "created page", { source: "notebook.create" });
-  rebuildSearchIndex();
+  updateSearchIndexForPage(pageId);
   return { notebookId, pageId };
 }
 
@@ -721,7 +721,7 @@ export function renameNotebook(userId: string, notebookId: string, name: string)
     oldName: current?.name ?? "",
     newName: nextName,
   });
-  rebuildSearchIndex();
+  updateSearchIndexForNotebook(notebookId);
 }
 
 export function updateNotebookColor(userId: string, notebookId: string, color: string) {
@@ -745,7 +745,7 @@ export function deleteNotebook(userId: string, notebookId: string) {
     name: notebook?.name ?? "",
   });
   execSql(`DELETE FROM notebooks WHERE id = ${sql(notebookId)};`);
-  rebuildSearchIndex();
+  deleteSearchIndexForNotebook(notebookId);
 }
 
 export function createPage(userId: string, notebookId: string) {
@@ -758,7 +758,7 @@ export function createPage(userId: string, notebookId: string) {
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
   `);
   recordPageAuditEvent(userId, pageId, "page.created", "created page");
-  rebuildSearchIndex();
+  updateSearchIndexForPage(pageId);
   return pageId;
 }
 
@@ -772,11 +772,13 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
   const previousTitle = String(row.title ?? "");
   const previousBody = String(row.body ?? "");
   const previousStatus = normalizePageStatus(row.status);
+  const previousNormalizedBody = patch.body !== undefined ? normalizePageBody(previousBody) : "";
+  const nextNormalizedBody = patch.body !== undefined ? normalizePageBody(patch.body) : "";
   const titleChanged = patch.title !== undefined && patch.title !== previousTitle;
-  const bodyChanged = patch.body !== undefined && normalizePageBody(patch.body) !== normalizePageBody(previousBody);
+  const bodyChanged = patch.body !== undefined && nextNormalizedBody !== previousNormalizedBody;
   const statusChanged = normalizedStatus !== undefined && normalizedStatus !== previousStatus;
   if (titleChanged) assignments.push(`title = ${sql(patch.title)}`);
-  if (bodyChanged) assignments.push(`body = ${sql(patch.body)}`);
+  if (bodyChanged) assignments.push(`body = ${sql(nextNormalizedBody)}`);
   if (statusChanged) assignments.push(`status = ${sql(normalizedStatus)}`);
   if (!assignments.length) return false;
   assignments.push("updated_at = datetime('now')");
@@ -819,15 +821,15 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
       action: "page.body.updated",
       summary: "edited page body",
       metadata: {
-        oldHash: hashAuditValue(normalizePageBody(previousBody)),
-        newHash: hashAuditValue(normalizePageBody(patch.body ?? "")),
-        oldLength: normalizePageBody(previousBody).length,
-        newLength: normalizePageBody(patch.body ?? "").length,
+        oldHash: hashAuditValue(previousNormalizedBody),
+        newHash: hashAuditValue(nextNormalizedBody),
+        oldLength: previousNormalizedBody.length,
+        newLength: nextNormalizedBody.length,
       },
       coalesce: true,
     });
   }
-  rebuildSearchIndex();
+  updateSearchIndexForPage(pageId);
   return true;
 }
 
@@ -857,7 +859,7 @@ export function setPageLocked(userId: string, pageId: string, locked: boolean) {
     summary: locked ? "locked page" : "unlocked page",
     metadata: { locked },
   });
-  rebuildSearchIndex();
+  updateSearchIndexForPage(pageId);
 }
 
 export function setPageTags(userId: string, pageId: string, tags: string[]) {
@@ -888,7 +890,7 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
       removedTags: currentTags.filter((tag) => !normalizedTags.includes(tag)),
     },
   });
-  rebuildSearchIndex();
+  updateSearchIndexForPage(pageId);
   return true;
 }
 
@@ -911,7 +913,7 @@ export function deletePage(userId: string, pageId: string) {
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(page.notebook_id)};
     DELETE FROM pages WHERE id = ${sql(pageId)};
   `);
-  rebuildSearchIndex();
+  deleteSearchIndexForPage(pageId);
 }
 
 export function createAttachment(input: {
@@ -939,7 +941,7 @@ export function createAttachment(input: {
     size: input.size,
     blockType: input.blockType,
   });
-  rebuildSearchIndex();
+  updateSearchIndexForPage(input.pageId);
   return id;
 }
 
@@ -982,7 +984,7 @@ export function updateAttachmentFile(input: {
     newSize: input.size,
     mimeType: input.mimeType,
   });
-  rebuildSearchIndex();
+  updateSearchIndexForPage(attachment.pageId);
   return getAttachmentForUser(input.userId, input.attachmentId);
 }
 
@@ -1068,13 +1070,13 @@ export function createImportedAttachment(input: {
 export function finishImportedNotebook(notebookId: string) {
   ensureDatabase();
   execSql(`UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};`);
-  rebuildSearchIndex();
+  updateSearchIndexForNotebook(notebookId);
 }
 
 export function removeImportedNotebook(notebookId: string) {
   ensureDatabase();
   execSql(`DELETE FROM notebooks WHERE id = ${sql(notebookId)};`);
-  rebuildSearchIndex();
+  deleteSearchIndexForNotebook(notebookId);
 }
 
 export function deleteAttachment(userId: string, attachmentId: string) {
@@ -1095,7 +1097,7 @@ export function deleteAttachment(userId: string, attachmentId: string) {
     size: attachment.size,
     blockType: attachment.blockType,
   });
-  rebuildSearchIndex();
+  updateSearchIndexForPage(attachment.pageId);
   return attachment;
 }
 

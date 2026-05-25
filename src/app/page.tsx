@@ -1139,7 +1139,7 @@ export default function Home() {
         {activeView === "home" || activeView === "projectHome" ? (
           <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} importEnexNotebook={() => createNewNotebook(undefined, "import")} />
         ) : activeView === "account" ? (
-          <AccountView user={workspace.user} />
+          <AccountView user={workspace.user} notebooks={workspace.notebooks} />
         ) : activeView === "notebookSettings" ? (
           selectedNotebook ? (
             <NotebookSettingsView
@@ -2708,13 +2708,16 @@ async function assertOk(response: Response) {
   throw new Error(body?.error ?? "Request failed.");
 }
 
-function AccountView({ user }: { user: AppUser }) {
-  const [activeTab, setActiveTab] = useState<"profile" | "security" | "users" | "data">("profile");
-  const tabs = [
-    { id: "profile" as const, label: "Profile", icon: UserCircle },
-    { id: "security" as const, label: "Security", icon: KeyRound },
-    ...(user.role === "admin" ? [{ id: "users" as const, label: "Users", icon: Users }] : []),
-    ...(user.role === "admin" ? [{ id: "data" as const, label: "Data", icon: Database }] : []),
+type AccountTab = "profile" | "notebooks" | "security" | "users" | "data";
+
+function AccountView({ user, notebooks }: { user: AppUser; notebooks: Notebook[] }) {
+  const [activeTab, setActiveTab] = useState<AccountTab>("profile");
+  const tabs: Array<{ id: AccountTab; label: string; icon: typeof UserCircle }> = [
+    { id: "profile", label: "Profile", icon: UserCircle },
+    { id: "notebooks", label: "Notebooks", icon: NotebookIcon },
+    { id: "security", label: "Security", icon: KeyRound },
+    ...(user.role === "admin" ? [{ id: "users" as AccountTab, label: "Users", icon: Users }] : []),
+    ...(user.role === "admin" ? [{ id: "data" as AccountTab, label: "Data", icon: Database }] : []),
   ];
 
   return (
@@ -2743,6 +2746,7 @@ function AccountView({ user }: { user: AppUser }) {
         </div>
 
         {activeTab === "profile" ? <AccountProfile user={user} /> : null}
+        {activeTab === "notebooks" ? <AccountNotebooks notebooks={notebooks} /> : null}
         {activeTab === "security" ? <PasswordPanel /> : null}
         {activeTab === "users" && user.role === "admin" ? <UsersAdminPanel currentUserId={user.id} /> : null}
         {activeTab === "data" && user.role === "admin" ? <DataAdminPanel /> : null}
@@ -2781,6 +2785,70 @@ function AccountProfile({ user }: { user: AppUser }) {
           <dd className="truncate font-mono text-xs text-slate-600">{user.id}</dd>
         </div>
       </dl>
+    </section>
+  );
+}
+
+function AccountNotebooks({ notebooks }: { notebooks: Notebook[] }) {
+  const owned = notebooks.filter((notebook) => notebook.accessRole === "owner");
+  const editor = notebooks.filter((notebook) => notebook.accessRole === "editor");
+  const viewer = notebooks.filter((notebook) => notebook.accessRole === "viewer");
+  const rows = [
+    { label: "Total associated", value: notebooks.length },
+    { label: "Owner", value: owned.length },
+    { label: "Shared with me", value: editor.length + viewer.length },
+    { label: "Editor", value: editor.length },
+    { label: "Viewer", value: viewer.length },
+  ];
+
+  return (
+    <section className="max-w-4xl space-y-6">
+      <div className="border border-slate-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-slate-950">Notebook access</h2>
+        <dl className="mt-4 divide-y divide-slate-100 text-sm">
+          {rows.map((row) => (
+            <div key={row.label} className="grid grid-cols-[180px_minmax(0,1fr)] gap-4 py-2 first:pt-0 last:pb-0">
+              <dt className="text-slate-500">{row.label}</dt>
+              <dd className="font-medium text-slate-950">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+
+      <div className="border border-slate-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-slate-950">Notebooks</h2>
+        {notebooks.length ? (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+              <thead className="border-b border-slate-200 text-slate-500">
+                <tr>
+                  <th className="py-2 pr-4 font-medium">Notebook</th>
+                  <th className="py-2 pr-4 font-medium">Access</th>
+                  <th className="py-2 pr-4 font-medium">Pages</th>
+                  <th className="py-2 pr-4 font-medium">Updated</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {notebooks.map((notebook) => (
+                  <tr key={notebook.id}>
+                    <td className="py-2 pr-4">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: notebook.color }} />
+                        <span className="min-w-0 truncate font-medium text-slate-950">{notebook.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-2 pr-4 capitalize text-slate-700">{notebook.accessRole}</td>
+                    <td className="py-2 pr-4 text-slate-700">{notebook.pages.length}</td>
+                    <td className="py-2 pr-4 text-slate-500">{formatDateTime(notebook.updatedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-slate-500">No notebooks associated with this account.</p>
+        )}
+      </div>
     </section>
   );
 }

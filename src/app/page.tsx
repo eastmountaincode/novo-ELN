@@ -641,8 +641,16 @@ export default function Home() {
       body: JSON.stringify(patch),
     });
     const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
-    setSaveStatus(response.ok ? "Saved" : "Save failed", response.ok ? { clearAfterMs: 2400 } : {});
-    if (response.ok && result?.changed) patchSelectedPage({ updatedAt: "Just now" });
+    if (!response.ok) {
+      setSaveStatus("Save failed");
+      return;
+    }
+    if (!result?.changed) {
+      setSaveStatus("");
+      return;
+    }
+    patchSelectedPage({ ...patch, updatedAt: "Just now" });
+    setSaveStatus("Saved", { clearAfterMs: 2400 });
   }
 
   async function setSelectedPageTags(tags: string[]) {
@@ -2290,6 +2298,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   const color = normalizeColor(accentColor);
   const cardStyle = active ? pageCardActiveStyle(color) : tinted ? pageCardTintStyle(color) : undefined;
   const visibleTags = page.tags.slice(0, 3);
+  const previewText = useMemo(() => bodyToEditorText(page.body) || "Empty page", [page.body]);
   return (
     <div className="group relative min-w-0">
       <button
@@ -2300,7 +2309,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
         <div className="flex min-w-0 items-start justify-between gap-3">
           <h3 className="min-w-0 break-words text-sm font-semibold leading-5 text-slate-900">{page.title || "Untitled"}</h3>
         </div>
-        <p className="mt-2 max-h-10 min-w-0 overflow-hidden break-words text-sm leading-5 text-slate-500">{bodyToEditorText(page.body) || "Empty page"}</p>
+        <p className="mt-2 max-h-10 min-w-0 overflow-hidden break-words text-sm leading-5 text-slate-500">{previewText}</p>
         {(page.lockedAt || page.status || visibleTags.length > 0) ? (
           <div className="mt-3 flex flex-wrap gap-1.5">
             {page.lockedAt ? <span className="inline-flex h-6 items-center gap-1 border border-slate-300 bg-slate-100 px-2 text-[11px] font-medium text-slate-600"><Lock size={11} />Locked</span> : null}
@@ -3295,8 +3304,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
             key={`${page.id}-${canEdit ? "edit" : "read"}`}
             pageId={page.id}
             value={page.body}
-            onChange={(body) => {
-              patchSelectedPage({ body });
+            onChange={() => {
               if (canEdit) markUnsaved();
             }}
             onBlur={(body) => void savePage({ body })}

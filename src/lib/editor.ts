@@ -34,7 +34,7 @@ export function bodyToEditorText(body: string) {
 }
 
 export function editorDocumentToBody(document: JSONContent) {
-  return JSON.stringify(document);
+  return JSON.stringify(sanitizeEditorNode(document));
 }
 
 export function removeAttachmentCardsFromBody(body: string, attachmentId: string) {
@@ -51,6 +51,57 @@ function parseEditorDocument(body: string): JSONContent | null {
   } catch {
     return null;
   }
+}
+
+type EditorAttrs = Record<string, unknown>;
+type EditorMark = NonNullable<JSONContent["marks"]>[number];
+
+function sanitizeEditorNode(node: JSONContent): JSONContent {
+  const next: JSONContent = { ...node };
+  const attrs = sanitizeEditorAttrs(node.type ?? "", node.attrs as EditorAttrs | undefined);
+  if (attrs) next.attrs = attrs;
+  else delete next.attrs;
+
+  if (node.marks?.length) {
+    const marks = node.marks.map(sanitizeEditorMark).filter((mark) => Boolean(mark.type));
+    if (marks.length) next.marks = marks;
+    else delete next.marks;
+  }
+
+  if (node.content?.length) next.content = node.content.map(sanitizeEditorNode);
+  else delete next.content;
+
+  return next;
+}
+
+function sanitizeEditorMark(mark: EditorMark): EditorMark {
+  const next: EditorMark = { ...mark };
+  const attrs = sanitizeEditorAttrs(mark.type ?? "", mark.attrs as EditorAttrs | undefined);
+  if (attrs) next.attrs = attrs;
+  else delete next.attrs;
+  return next;
+}
+
+function sanitizeEditorAttrs(nodeType: string, attrs?: EditorAttrs): EditorAttrs | undefined {
+  if (!attrs) return undefined;
+  const next: EditorAttrs = {};
+  for (const [key, value] of Object.entries(attrs)) {
+    if (shouldDropDefaultEditorAttr(nodeType, key, value)) continue;
+    next[key] = value;
+  }
+  return Object.keys(next).length ? next : undefined;
+}
+
+function shouldDropDefaultEditorAttr(nodeType: string, key: string, value: unknown) {
+  if (value === null || value === undefined) return true;
+  if ((nodeType === "tableCell" || nodeType === "tableHeader") && key === "colspan" && Number(value) === 1) return true;
+  if ((nodeType === "tableCell" || nodeType === "tableHeader") && key === "rowspan" && Number(value) === 1) return true;
+  if ((nodeType === "tableCell" || nodeType === "tableHeader") && key === "colwidth" && Array.isArray(value) && value.length === 0) return true;
+  if (nodeType === "attachmentCard" && key === "displayWidth") {
+    const width = Number(value);
+    return !Number.isFinite(width) || width <= 0;
+  }
+  return false;
 }
 
 function editorDocumentToText(node: JSONContent): string {

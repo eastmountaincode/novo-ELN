@@ -679,7 +679,7 @@ export function getPageActivityEvents(userId: string, pageId: string, options: {
     FROM audit_events ae
     LEFT JOIN users u ON u.id = ae.actor_user_id
     WHERE ae.page_id = ${sql(pageId)}
-    ORDER BY datetime(ae.updated_at) DESC, datetime(ae.created_at) DESC, ae.rowid DESC
+    ORDER BY ae.updated_at DESC, ae.created_at DESC, ae.rowid DESC
     LIMIT ${limit} OFFSET ${offset}
   `).map(toAuditEvent);
   return {
@@ -1335,7 +1335,7 @@ function recordAuditEvent(input: AuditEventInput) {
         AND actor_user_id = ${sql(input.actorUserId)}
         AND action = ${sql(input.action)}
         AND datetime(updated_at) >= datetime('now', '-${pageBodyEditAuditCoalesceSeconds} seconds')
-      ORDER BY datetime(updated_at) DESC, rowid DESC
+      ORDER BY updated_at DESC, rowid DESC
       LIMIT 1
     `);
     if (existing?.id) {

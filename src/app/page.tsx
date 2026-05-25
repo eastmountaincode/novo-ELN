@@ -87,6 +87,7 @@ const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
 ];
 
 const PAGE_ACTIVITY_PAGE_SIZE = 25;
+const SUCCESS_STATUS_CLEAR_AFTER_MS = 4400;
 
 const PAGE_STATUS_OPTIONS: Array<{ value: PageStatus; label: string }> = [
   { value: "", label: "No status" },
@@ -701,7 +702,7 @@ export default function Home() {
         if (latestBody !== bodyToSave) continue;
         if (result?.changed) patchPage(pageId, { body: bodyToSave, updatedAt: "Just now" });
         else patchPage(pageId, { body: bodyToSave });
-        setPageSaveStatus(pageId, "Saved", { clearAfterMs: 2400 });
+        setPageSaveStatus(pageId, "Saved", { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS });
       }
     } finally {
       state.inFlight = false;
@@ -732,7 +733,7 @@ export default function Home() {
       return;
     }
     patchPage(pageId, { ...patch, updatedAt: "Just now" });
-    setPageSaveStatus(pageId, "Saved", { clearAfterMs: 2400 });
+    setPageSaveStatus(pageId, "Saved", { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS });
   }
 
   async function setSelectedPageTags(tags: string[]) {
@@ -747,7 +748,7 @@ export default function Home() {
       body: JSON.stringify({ tags: normalizedTags }),
     });
     const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
-    setSaveStatus(response.ok ? "Saved" : "Tag save failed", response.ok ? { clearAfterMs: 2400 } : {});
+    setSaveStatus(response.ok ? "Saved" : "Tag save failed", response.ok ? { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS } : {});
     if (response.ok && result?.changed) patchSelectedPage({ updatedAt: "Just now" });
     if (!response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
@@ -1029,7 +1030,7 @@ export default function Home() {
     form.set("file", file);
     setSaveStatus("Uploading");
     const response = await fetch(`/api/pages/${selectedPage.id}/attachments`, { method: "POST", body: form });
-    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: 2400 } : {});
+    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS } : {});
     if (response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
 
@@ -1040,7 +1041,7 @@ export default function Home() {
       setSaveStatus("Delete failed");
       return;
     }
-    setSaveStatus("Deleted", { clearAfterMs: 2400 });
+    setSaveStatus("Deleted", { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS });
     await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
   }
 
@@ -1052,7 +1053,7 @@ export default function Home() {
     form.set("blockType", blockType);
     setSaveStatus("Uploading");
     const response = await fetch(`/api/pages/${pageId}/attachments`, { method: "POST", body: form });
-    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: 2400 } : {});
+    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS } : {});
     if (!response.ok) return null;
     const body = (await response.json()) as { attachment: Attachment };
     return body.attachment;

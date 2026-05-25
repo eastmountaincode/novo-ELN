@@ -186,6 +186,7 @@ export default function Home() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchApproxLoading, setSearchApproxLoading] = useState(false);
   const [saving, setSaving] = useState("");
+  const [loadingPageId, setLoadingPageId] = useState("");
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedPageIdRef = useRef("");
   const latestBodyDraftsRef = useRef(new Map<string, string>());
@@ -645,6 +646,29 @@ export default function Home() {
     patchPage(selectedPage.id, patch);
   }
 
+  useEffect(() => {
+    if (!selectedPage?.id || selectedPage.bodyLoaded) return;
+    let active = true;
+    const pageId = selectedPage.id;
+    setLoadingPageId(pageId);
+    async function loadPage() {
+      const response = await fetch(`/api/pages/${pageId}`);
+      if (!active) return;
+      if (!response.ok) {
+        setLoadingPageId("");
+        return;
+      }
+      const body = (await response.json()) as { page?: PageEntry };
+      if (!active) return;
+      if (body.page) patchPage(pageId, body.page);
+      setLoadingPageId("");
+    }
+    void loadPage();
+    return () => {
+      active = false;
+    };
+  }, [selectedPage?.id, selectedPage?.bodyLoaded]);
+
   function setSaveStatus(status: string, options: { clearAfterMs?: number } = {}) {
     if (saveStatusTimer.current) {
       clearTimeout(saveStatusTimer.current);
@@ -1071,10 +1095,16 @@ export default function Home() {
           pages: notebook.pages.map((page) => {
             if (page.id !== pageId) return page;
             const exists = page.attachments.some((candidate) => candidate.id === attachment.id);
+            const currentAttachmentCount = page.attachmentCount ?? page.attachments.length;
+            const currentAttachmentBytes = page.attachmentBytes ?? page.attachments.reduce((total, candidate) => total + candidate.size, 0);
             return {
               ...page,
               body,
+              bodyLoaded: true,
+              bodyPreview: bodyToEditorText(body),
               attachments: exists ? page.attachments : [...page.attachments, attachment],
+              attachmentCount: exists ? currentAttachmentCount : currentAttachmentCount + 1,
+              attachmentBytes: exists ? currentAttachmentBytes : currentAttachmentBytes + attachment.size,
               updatedAt: "Just now",
             };
           }),
@@ -1262,6 +1292,7 @@ export default function Home() {
                 selectedProject={selectedProject}
                 selectedNotebook={selectedNotebook}
                 saving={saving}
+                pageLoading={!selectedPage.bodyLoaded || loadingPageId === selectedPage.id}
                 canEdit={selectedPageCanEdit}
                 canManageLock={selectedPageCanManageLock}
                 uploadInlineFile={uploadInlineFile}
@@ -2403,11 +2434,12 @@ function SearchResultButton({ result, active, compact, onClick }: { result: Hydr
 }
 
 function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2", tinted = false, menuOpen = false, setMenuOpen, onClick, onDelete }: { page: PageEntry; active?: boolean; contextLabel?: string; accentColor?: string; tinted?: boolean; menuOpen?: boolean; setMenuOpen?: (open: boolean) => void; onClick: () => void; onDelete?: () => void }) {
-  const fileLabel = page.attachments.length ? `${page.attachments.length} files` : "No files";
+  const fileCount = page.attachmentCount ?? page.attachments.length;
+  const fileLabel = fileCount ? `${fileCount} files` : "No files";
   const color = normalizeColor(accentColor);
   const cardStyle = active ? pageCardActiveStyle(color) : tinted ? pageCardTintStyle(color) : undefined;
   const visibleTags = page.tags.slice(0, 3);
-  const previewText = useMemo(() => bodyToEditorText(page.body) || "Empty page", [page.body]);
+  const previewText = useMemo(() => (page.bodyLoaded ? bodyToEditorText(page.body) : page.bodyPreview) || "Empty page", [page.body, page.bodyLoaded, page.bodyPreview]);
   return (
     <div data-page-card-id={page.id} className="group relative min-w-0">
       <button
@@ -2550,8 +2582,8 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
 function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteNotebook, onChanged }: { notebook: Notebook; user: AppUser; members: AppUser[]; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; onChanged: () => Promise<void> }) {
   const canManage = notebook.accessRole === "owner";
   const canEdit = canManage || notebook.accessRole === "editor";
-  const attachmentCount = notebook.pages.reduce((total, page) => total + page.attachments.length, 0);
-  const attachmentBytes = notebook.pages.reduce((total, page) => total + page.attachments.reduce((sum, attachment) => sum + attachment.size, 0), 0);
+  const attachmentCount = notebook.pages.reduce((total, page) => total + (page.attachmentCount ?? page.attachments.length), 0);
+  const attachmentBytes = notebook.pages.reduce((total, page) => total + (page.attachmentBytes ?? page.attachments.reduce((sum, attachment) => sum + attachment.size, 0)), 0);
   const memberCount = notebook.members.length;
 
   async function addNotebookMember(input: { email: string; role: AccessRole }) {
@@ -3410,7 +3442,7 @@ function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCa
   );
 }
 
-function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: (body: string) => void; setPageTags: (tags: string[]) => Promise<void>; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
+function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoading, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; pageLoading: boolean; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: (body: string) => void; setPageTags: (tags: string[]) => Promise<void>; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityEvents, setActivityEvents] = useState<AuditEvent[]>([]);
@@ -3418,7 +3450,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
   const [activityLoadingMore, setActivityLoadingMore] = useState(false);
   const [activityHasMore, setActivityHasMore] = useState(false);
   const [activityError, setActivityError] = useState("");
-  const attachmentCount = page.attachments.length;
+  const attachmentCount = page.attachmentCount ?? page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
   const color = projectColor(selectedNotebook ?? selectedProject);
   const locked = Boolean(page.lockedAt);
@@ -3477,20 +3509,26 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
           </div>
         </header>
         <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-white px-6 pb-6 pt-4">
-          <RichTextEditor
-            key={`${page.id}-${canEdit ? "edit" : "read"}`}
-            pageId={page.id}
-            value={page.body}
-            onChange={(body) => {
-              if (canEdit) markUnsaved(body);
-            }}
-            onBlur={(body) => void savePage({ body })}
-            uploadInlineFile={uploadInlineFile}
-            onInlineAttachmentInserted={onInlineAttachmentInserted}
-            openSpreadsheet={openSpreadsheet}
-            openPresentation={openPresentation}
-            readOnly={!canEdit}
-          />
+          {pageLoading ? (
+            <div className="grid min-h-[24rem] place-items-center border border-slate-200 bg-white text-sm text-slate-500">
+              <span className="inline-flex items-center gap-2"><Loader2 size={16} className="animate-spin" />Loading page...</span>
+            </div>
+          ) : (
+            <RichTextEditor
+              key={`${page.id}-${canEdit ? "edit" : "read"}`}
+              pageId={page.id}
+              value={page.body}
+              onChange={(body) => {
+                if (canEdit) markUnsaved(body);
+              }}
+              onBlur={(body) => void savePage({ body })}
+              uploadInlineFile={uploadInlineFile}
+              onInlineAttachmentInserted={onInlineAttachmentInserted}
+              openSpreadsheet={openSpreadsheet}
+              openPresentation={openPresentation}
+              readOnly={!canEdit}
+            />
+          )}
           <div className="mt-4 border border-slate-200 bg-slate-50 p-2">
             <div className="flex flex-wrap items-center justify-between gap-3">
             <button
@@ -3507,7 +3545,9 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
             {canEdit ? <button onClick={openFilePicker} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100"><Plus size={14} />File</button> : null}
             </div>
             {attachmentsOpen ? (
-              page.attachments.length ? (
+              pageLoading ? (
+                <p className="mt-3 border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">Loading files...</p>
+              ) : page.attachments.length ? (
                 <div className="mt-3 grid max-h-80 gap-2 overflow-y-auto scroll-contained pr-1">
                   {page.attachments.map((attachment, index) => <AttachmentRow key={attachment.id} index={index + 1} attachment={attachment} canEdit={canEdit} onDelete={() => void deleteAttachment(attachment)} />)}
                 </div>

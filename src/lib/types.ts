@@ -95,6 +95,8 @@ export type PageEntry = {
   notebookId: string;
   title: string;
   body: string;
+  bodyPreview?: string;
+  bodyLoaded?: boolean;
   status: PageStatus;
   ownerId: string;
   ownerFirstName: string;
@@ -107,6 +109,8 @@ export type PageEntry = {
   updatedAt: string;
   tags: string[];
   attachments: Attachment[];
+  attachmentCount?: number;
+  attachmentBytes?: number;
 };
 
 export type Notebook = {

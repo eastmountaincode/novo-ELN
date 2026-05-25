@@ -1,7 +1,19 @@
 import { NextResponse } from "next/server";
 import type { PageStatus } from "@/lib/types";
 import { currentUser } from "@/lib/auth";
-import { deletePage, setPageLocked, updatePage } from "@/lib/store";
+import { deletePage, getPage, setPageLocked, updatePage } from "@/lib/store";
+
+export async function GET(_request: Request, context: { params: Promise<{ pageId: string }> }) {
+  const user = await currentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { pageId } = await context.params;
+  try {
+    return NextResponse.json({ page: getPage(user.id, pageId) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not load page";
+    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : 404 });
+  }
+}
 
 export async function PATCH(request: Request, context: { params: Promise<{ pageId: string }> }) {
   const user = await currentUser();

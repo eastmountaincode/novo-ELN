@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
 import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
-import { bodyToEditorDocument, editorDocumentToBody, removeAttachmentCardsFromBody } from "./editor";
+import { bodyToEditorDocument, bodyToEditorText, editorDocumentToBody, removeAttachmentCardsFromBody } from "./editor";
 import { uploadDir } from "./paths";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
 import { execSql, queryOne, querySql, sql } from "./sqlite";
@@ -571,7 +571,7 @@ export function getWorkspace(userId: string): Workspace {
           p.id,
           p.notebook_id,
           p.title,
-          p.body,
+          COALESCE(substr(f.body, 1, 500), '') AS body_preview,
           p.status,
           p.owner_id,
           u.first_name AS owner_first_name,
@@ -585,14 +585,15 @@ export function getWorkspace(userId: string): Workspace {
         FROM pages p
         JOIN users u ON u.id = p.owner_id
         LEFT JOIN users locker ON locker.id = p.locked_by
+        LEFT JOIN search_pages_fts f ON f.page_id = p.id
         WHERE p.notebook_id IN (${inList(notebookIds)})
         ORDER BY datetime(p.created_at) DESC, lower(p.title) ASC
       `)
     : [];
   const pageIds = pageRows.map((page) => page.id);
   const tagRows = pageIds.length ? querySql(`SELECT page_id, tag FROM page_tags WHERE page_id IN (${inList(pageIds)}) ORDER BY rowid ASC`) : [];
-  const attachmentRows = pageIds.length
-    ? querySql(`SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, created_at FROM attachments WHERE page_id IN (${inList(pageIds)}) ORDER BY created_at DESC`)
+  const attachmentStatRows = pageIds.length
+    ? querySql(`SELECT page_id, COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM attachments WHERE page_id IN (${inList(pageIds)}) GROUP BY page_id`)
     : [];
   const notebookMemberRows = notebookIds.length
     ? querySql(`
@@ -606,7 +607,7 @@ export function getWorkspace(userId: string): Workspace {
   const memberRows = querySql(`SELECT id, email, first_name, last_name, role FROM users ORDER BY lower(first_name) ASC, lower(last_name) ASC, lower(email) ASC`);
 
   const tagsByPage = groupBy(tagRows, "page_id");
-  const attachmentsByPage = groupBy(attachmentRows, "page_id");
+  const attachmentStatsByPage = Object.fromEntries(attachmentStatRows.map((row) => [row.page_id, row]));
   const pagesByNotebook = groupBy(pageRows, "notebook_id");
   const membersByNotebook = groupBy(notebookMemberRows, "notebook_id");
 
@@ -623,7 +624,9 @@ export function getWorkspace(userId: string): Workspace {
       id: page.id,
       notebookId: page.notebook_id,
       title: page.title,
-      body: page.body,
+      body: "",
+      bodyPreview: page.body_preview,
+      bodyLoaded: false,
       status: normalizePageStatus(page.status),
       ownerId: page.owner_id,
       ownerFirstName: page.owner_first_name,
@@ -635,7 +638,9 @@ export function getWorkspace(userId: string): Workspace {
       createdAt: page.created_at,
       updatedAt: page.updated_at,
       tags: pageTagRowsToList(tagsByPage[page.id] ?? []),
-      attachments: (attachmentsByPage[page.id] ?? []).map(toAttachment),
+      attachments: [],
+      attachmentCount: Number(attachmentStatsByPage[page.id]?.count ?? 0),
+      attachmentBytes: Number(attachmentStatsByPage[page.id]?.bytes ?? 0),
     })),
   }));
 
@@ -658,6 +663,59 @@ export function getWorkspace(userId: string): Workspace {
     members: memberRows.map((row) => ({ id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, role: row.role as UserRole })),
     notebooks,
     projects: [workspaceProject],
+  };
+}
+
+export function getPage(userId: string, pageId: string): PageEntry {
+  ensureDatabase();
+  assertPageReadAccess(userId, pageId);
+  const page = queryOne(`
+    SELECT
+      p.id,
+      p.notebook_id,
+      p.title,
+      p.body,
+      p.status,
+      p.owner_id,
+      u.first_name AS owner_first_name,
+      u.last_name AS owner_last_name,
+      COALESCE(p.locked_at, '') AS locked_at,
+      COALESCE(p.locked_by, '') AS locked_by,
+      COALESCE(locker.first_name, '') AS locked_by_first_name,
+      COALESCE(locker.last_name, '') AS locked_by_last_name,
+      p.created_at,
+      p.updated_at
+    FROM pages p
+    JOIN users u ON u.id = p.owner_id
+    LEFT JOIN users locker ON locker.id = p.locked_by
+    WHERE p.id = ${sql(pageId)}
+    LIMIT 1
+  `);
+  if (!page) throw new Error("Page not found");
+  const tagRows = querySql(`SELECT page_id, tag FROM page_tags WHERE page_id = ${sql(pageId)} ORDER BY rowid ASC`);
+  const attachmentRows = querySql(`SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, created_at FROM attachments WHERE page_id = ${sql(pageId)} ORDER BY created_at DESC`);
+  const attachmentBytes = attachmentRows.reduce((total, attachment) => total + Number(attachment.size ?? 0), 0);
+  return {
+    id: page.id,
+    notebookId: page.notebook_id,
+    title: page.title,
+    body: page.body,
+    bodyPreview: bodyToEditorText(page.body),
+    bodyLoaded: true,
+    status: normalizePageStatus(page.status),
+    ownerId: page.owner_id,
+    ownerFirstName: page.owner_first_name,
+    ownerLastName: page.owner_last_name,
+    lockedAt: page.locked_at,
+    lockedBy: page.locked_by,
+    lockedByFirstName: page.locked_by_first_name,
+    lockedByLastName: page.locked_by_last_name,
+    createdAt: page.created_at,
+    updatedAt: page.updated_at,
+    tags: pageTagRowsToList(tagRows),
+    attachments: attachmentRows.map(toAttachment),
+    attachmentCount: attachmentRows.length,
+    attachmentBytes,
   };
 }
 

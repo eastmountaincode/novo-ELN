@@ -73,6 +73,7 @@ export function ensureDatabase() {
       notebook_id TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       body TEXT NOT NULL DEFAULT '',
+      preview_text TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT '',
       owner_id TEXT NOT NULL REFERENCES users(id),
       locked_at TEXT,
@@ -129,6 +130,7 @@ export function ensureDatabase() {
   migrateProjectsToTopLevelNotebooks();
   ensureNotebookColumns();
   ensurePageLockColumns();
+  ensurePagePreviewColumn();
   migrateAttachmentPreviewTextColumn();
   execSql(`
     CREATE VIRTUAL TABLE IF NOT EXISTS search_pages_fts USING fts5(
@@ -253,6 +255,15 @@ function ensurePageLockColumns() {
   const names = new Set(columns.map((column) => column.name));
   if (!names.has("locked_at")) execSql("ALTER TABLE pages ADD COLUMN locked_at TEXT;");
   if (!names.has("locked_by")) execSql("ALTER TABLE pages ADD COLUMN locked_by TEXT REFERENCES users(id);");
+}
+
+function ensurePagePreviewColumn() {
+  const columns = querySql("PRAGMA table_info(pages);");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("preview_text")) execSql("ALTER TABLE pages ADD COLUMN preview_text TEXT NOT NULL DEFAULT '';");
+  const rows = querySql("SELECT id, body FROM pages WHERE preview_text = '' AND body <> ''");
+  if (!rows.length) return;
+  execSql(rows.map((row) => `UPDATE pages SET preview_text = ${sql(bodyToEditorText(row.body).slice(0, 500))} WHERE id = ${sql(row.id)};`).join("\n"));
 }
 
 function migrateAttachmentPreviewTextColumn() {
@@ -571,7 +582,7 @@ export function getWorkspace(userId: string): Workspace {
           p.id,
           p.notebook_id,
           p.title,
-          p.body,
+          p.preview_text AS body_preview,
           p.status,
           p.owner_id,
           u.first_name AS owner_first_name,
@@ -624,7 +635,7 @@ export function getWorkspace(userId: string): Workspace {
       notebookId: page.notebook_id,
       title: page.title,
       body: "",
-      bodyPreview: bodyToEditorText(page.body).slice(0, 500),
+      bodyPreview: page.body_preview,
       bodyLoaded: false,
       status: normalizePageStatus(page.status),
       ownerId: page.owner_id,
@@ -674,6 +685,7 @@ export function getPage(userId: string, pageId: string): PageEntry {
       p.notebook_id,
       p.title,
       p.body,
+      p.preview_text,
       p.status,
       p.owner_id,
       u.first_name AS owner_first_name,
@@ -699,7 +711,7 @@ export function getPage(userId: string, pageId: string): PageEntry {
     notebookId: page.notebook_id,
     title: page.title,
     body: page.body,
-    bodyPreview: bodyToEditorText(page.body),
+    bodyPreview: page.preview_text || bodyToEditorText(page.body),
     bodyLoaded: true,
     status: normalizePageStatus(page.status),
     ownerId: page.owner_id,
@@ -843,7 +855,10 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
   const bodyChanged = patch.body !== undefined && nextNormalizedBody !== previousNormalizedBody;
   const statusChanged = normalizedStatus !== undefined && normalizedStatus !== previousStatus;
   if (titleChanged) assignments.push(`title = ${sql(patch.title)}`);
-  if (bodyChanged) assignments.push(`body = ${sql(nextNormalizedBody)}`);
+  if (bodyChanged) {
+    assignments.push(`body = ${sql(nextNormalizedBody)}`);
+    assignments.push(`preview_text = ${sql(bodyToEditorText(nextNormalizedBody).slice(0, 500))}`);
+  }
   if (statusChanged) assignments.push(`status = ${sql(normalizedStatus)}`);
   if (!assignments.length) return false;
   assignments.push("updated_at = datetime('now')");
@@ -1087,7 +1102,7 @@ export function createImportedPage(input: {
   if (input.replaceExisting) {
     execSql(`
       UPDATE pages
-      SET title = ${sql(title)}, body = ${sql(input.body)}, created_at = ${sql(createdAt)}, updated_at = ${sql(updatedAt)}
+      SET title = ${sql(title)}, body = ${sql(input.body)}, preview_text = ${sql(bodyToEditorText(input.body).slice(0, 500))}, created_at = ${sql(createdAt)}, updated_at = ${sql(updatedAt)}
       WHERE id = ${sql(pageId)};
       DELETE FROM page_tags WHERE page_id = ${sql(pageId)};
       ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
@@ -1096,8 +1111,8 @@ export function createImportedPage(input: {
   }
 
   execSql(`
-    INSERT INTO pages (id, notebook_id, title, body, status, owner_id, created_at, updated_at)
-    VALUES (${sql(pageId)}, ${sql(input.notebookId)}, ${sql(title)}, ${sql(input.body)}, '', ${sql(input.userId)}, ${sql(createdAt)}, ${sql(updatedAt)});
+    INSERT INTO pages (id, notebook_id, title, body, preview_text, status, owner_id, created_at, updated_at)
+    VALUES (${sql(pageId)}, ${sql(input.notebookId)}, ${sql(title)}, ${sql(input.body)}, ${sql(bodyToEditorText(input.body).slice(0, 500))}, '', ${sql(input.userId)}, ${sql(createdAt)}, ${sql(updatedAt)});
     ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
   `);
   return pageId;

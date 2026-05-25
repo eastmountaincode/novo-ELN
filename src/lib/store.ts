@@ -571,7 +571,7 @@ export function getWorkspace(userId: string): Workspace {
           p.id,
           p.notebook_id,
           p.title,
-          COALESCE(substr(f.body, 1, 500), '') AS body_preview,
+          p.body,
           p.status,
           p.owner_id,
           u.first_name AS owner_first_name,
@@ -585,7 +585,6 @@ export function getWorkspace(userId: string): Workspace {
         FROM pages p
         JOIN users u ON u.id = p.owner_id
         LEFT JOIN users locker ON locker.id = p.locked_by
-        LEFT JOIN search_pages_fts f ON f.page_id = p.id
         WHERE p.notebook_id IN (${inList(notebookIds)})
         ORDER BY datetime(p.created_at) DESC, lower(p.title) ASC
       `)
@@ -625,7 +624,7 @@ export function getWorkspace(userId: string): Workspace {
       notebookId: page.notebook_id,
       title: page.title,
       body: "",
-      bodyPreview: page.body_preview,
+      bodyPreview: bodyToEditorText(page.body).slice(0, 500),
       bodyLoaded: false,
       status: normalizePageStatus(page.status),
       ownerId: page.owner_id,

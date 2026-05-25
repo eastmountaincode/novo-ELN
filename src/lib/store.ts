@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
 import { bodyToEditorDocument, editorDocumentToBody, removeAttachmentCardsFromBody } from "./editor";
 import { uploadDir } from "./paths";
-import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, rebuildSearchIndex, updateSearchIndexForNotebook, updateSearchIndexForPage } from "./search";
+import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
 import { execSql, queryOne, querySql, sql } from "./sqlite";
 
 let initialized = false;
@@ -117,6 +117,11 @@ export function ensureDatabase() {
     CREATE INDEX IF NOT EXISTS audit_events_notebook_idx ON audit_events(notebook_id, updated_at);
     CREATE INDEX IF NOT EXISTS audit_events_actor_idx ON audit_events(actor_user_id, updated_at);
 
+    CREATE TABLE IF NOT EXISTS search_index_queue (
+      page_id TEXT PRIMARY KEY,
+      queued_at INTEGER NOT NULL
+    );
+
     DROP TABLE IF EXISTS import_jobs;
     DROP TABLE IF EXISTS page_versions;
   `);
@@ -143,6 +148,7 @@ export function ensureDatabase() {
   const searchIndexCount = Number(queryOne("SELECT COUNT(*) AS count FROM search_pages_fts")?.count ?? 0);
   if (searchIndexCount === 0 && countRows("pages") > 0) rebuildSearchIndex();
   initialized = true;
+  scheduleSearchIndexDrain();
 }
 
 function migrateProjectsToTopLevelNotebooks() {
@@ -417,7 +423,7 @@ export function createUser(input: { email: string; firstName: string; lastName?:
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
   `);
-  updateSearchIndexForPage(pageId);
+  queueSearchIndexForPage(pageId);
   return { id: userId, email, firstName, lastName, role };
 }
 
@@ -705,7 +711,7 @@ export function createNotebook(userId: string, name = "New Notebook") {
   `);
   recordNotebookAuditEvent(userId, notebookId, "notebook.created", `created notebook ${quoteAuditValue(name)}`, { name });
   recordPageAuditEvent(userId, pageId, "page.created", "created page", { source: "notebook.create" });
-  updateSearchIndexForPage(pageId);
+  queueSearchIndexForPage(pageId);
   return { notebookId, pageId };
 }
 
@@ -721,7 +727,7 @@ export function renameNotebook(userId: string, notebookId: string, name: string)
     oldName: current?.name ?? "",
     newName: nextName,
   });
-  updateSearchIndexForNotebook(notebookId);
+  queueSearchIndexForNotebook(notebookId);
 }
 
 export function updateNotebookColor(userId: string, notebookId: string, color: string) {
@@ -758,7 +764,7 @@ export function createPage(userId: string, notebookId: string) {
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
   `);
   recordPageAuditEvent(userId, pageId, "page.created", "created page");
-  updateSearchIndexForPage(pageId);
+  queueSearchIndexForPage(pageId);
   return pageId;
 }
 
@@ -829,7 +835,7 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
       coalesce: true,
     });
   }
-  updateSearchIndexForPage(pageId);
+  queueSearchIndexForPage(pageId);
   return true;
 }
 
@@ -859,7 +865,7 @@ export function setPageLocked(userId: string, pageId: string, locked: boolean) {
     summary: locked ? "locked page" : "unlocked page",
     metadata: { locked },
   });
-  updateSearchIndexForPage(pageId);
+  queueSearchIndexForPage(pageId);
 }
 
 export function setPageTags(userId: string, pageId: string, tags: string[]) {
@@ -890,7 +896,7 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
       removedTags: currentTags.filter((tag) => !normalizedTags.includes(tag)),
     },
   });
-  updateSearchIndexForPage(pageId);
+  queueSearchIndexForPage(pageId);
   return true;
 }
 
@@ -941,7 +947,7 @@ export function createAttachment(input: {
     size: input.size,
     blockType: input.blockType,
   });
-  updateSearchIndexForPage(input.pageId);
+  queueSearchIndexForPage(input.pageId);
   return id;
 }
 
@@ -984,7 +990,7 @@ export function updateAttachmentFile(input: {
     newSize: input.size,
     mimeType: input.mimeType,
   });
-  updateSearchIndexForPage(attachment.pageId);
+  queueSearchIndexForPage(attachment.pageId);
   return getAttachmentForUser(input.userId, input.attachmentId);
 }
 
@@ -1070,7 +1076,7 @@ export function createImportedAttachment(input: {
 export function finishImportedNotebook(notebookId: string) {
   ensureDatabase();
   execSql(`UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};`);
-  updateSearchIndexForNotebook(notebookId);
+  queueSearchIndexForNotebook(notebookId);
 }
 
 export function removeImportedNotebook(notebookId: string) {
@@ -1097,7 +1103,7 @@ export function deleteAttachment(userId: string, attachmentId: string) {
     size: attachment.size,
     blockType: attachment.blockType,
   });
-  updateSearchIndexForPage(attachment.pageId);
+  queueSearchIndexForPage(attachment.pageId);
   return attachment;
 }
 

@@ -1,5 +1,5 @@
 import { bodyToEditorText } from "./editor";
-import { execSql, querySql, sql } from "./sqlite";
+import { execSql, queryOne, querySql, sql } from "./sqlite";
 import type { SearchMatchType, SearchResult } from "./types";
 
 type SearchablePage = {
@@ -13,6 +13,10 @@ type SearchablePage = {
   updatedAt: string;
 };
 
+const searchIndexQueueBatchSize = 25;
+let searchIndexDrainScheduled = false;
+let searchIndexDrainRunning = false;
+
 export function rebuildSearchIndex() {
   execSql(`
     DELETE FROM search_pages_fts;
@@ -21,21 +25,106 @@ export function rebuildSearchIndex() {
 }
 
 export function updateSearchIndexForPage(pageId: string) {
-  execSql(`DELETE FROM search_pages_fts WHERE page_id = ${sql(pageId)};`);
-  insertSearchRows(getSearchablePages(`WHERE p.id = ${sql(pageId)}`));
+  updateSearchIndexForPages([pageId]);
 }
 
 export function updateSearchIndexForNotebook(notebookId: string) {
-  execSql(`DELETE FROM search_pages_fts WHERE notebook_id = ${sql(notebookId)};`);
-  insertSearchRows(getSearchablePages(`WHERE p.notebook_id = ${sql(notebookId)}`));
+  const pageRows = querySql(`SELECT id FROM pages WHERE notebook_id = ${sql(notebookId)}`);
+  updateSearchIndexForPages(pageRows.map((row) => row.id));
+}
+
+export function queueSearchIndexForPage(pageId: string) {
+  queueSearchIndexForPages([pageId]);
+}
+
+export function queueSearchIndexForNotebook(notebookId: string) {
+  execSql(`
+    INSERT INTO search_index_queue (page_id, queued_at)
+    SELECT p.id, strftime('%s', 'now')
+    FROM pages p
+    WHERE p.notebook_id = ${sql(notebookId)}
+    ON CONFLICT(page_id) DO UPDATE SET queued_at = excluded.queued_at;
+  `);
+  scheduleSearchIndexDrain();
+}
+
+export function queueSearchIndexForPages(pageIds: string[]) {
+  const uniquePageIds = uniqueIds(pageIds);
+  if (!uniquePageIds.length) return;
+  execSql(uniquePageIds.map((pageId) => `
+    INSERT INTO search_index_queue (page_id, queued_at)
+    VALUES (${sql(pageId)}, strftime('%s', 'now'))
+    ON CONFLICT(page_id) DO UPDATE SET queued_at = excluded.queued_at;
+  `).join("\n"));
+  scheduleSearchIndexDrain();
+}
+
+export function scheduleSearchIndexDrain(delayMs = 100) {
+  if (searchIndexDrainScheduled || searchIndexDrainRunning) return;
+  searchIndexDrainScheduled = true;
+  const timer = setTimeout(drainSearchIndexQueue, delayMs);
+  timer.unref?.();
+}
+
+function updateSearchIndexForPages(pageIds: string[]) {
+  const uniquePageIds = uniqueIds(pageIds);
+  if (!uniquePageIds.length) return;
+  const pageIdList = inList(uniquePageIds);
+  execSql(`DELETE FROM search_pages_fts WHERE page_id IN (${pageIdList});`);
+  insertSearchRows(getSearchablePages(`WHERE p.id IN (${pageIdList})`));
+}
+
+function drainSearchIndexQueue() {
+  if (searchIndexDrainRunning) return;
+  searchIndexDrainScheduled = false;
+  searchIndexDrainRunning = true;
+  let shouldContinue = false;
+  try {
+    const rows = querySql(`
+      SELECT page_id
+      FROM search_index_queue
+      ORDER BY queued_at ASC
+      LIMIT ${searchIndexQueueBatchSize}
+    `);
+    const pageIds = rows.map((row) => row.page_id);
+    if (pageIds.length) {
+      updateSearchIndexForPages(pageIds);
+      execSql(`DELETE FROM search_index_queue WHERE page_id IN (${inList(pageIds)});`);
+    }
+    shouldContinue = pageIds.length === searchIndexQueueBatchSize && hasQueuedSearchIndexPages();
+  } catch (error) {
+    console.error("Search index queue failed", error);
+    shouldContinue = true;
+  } finally {
+    searchIndexDrainRunning = false;
+  }
+  if (shouldContinue) scheduleSearchIndexDrain(shouldContinue ? 500 : 100);
+}
+
+function hasQueuedSearchIndexPages() {
+  return Number(queryOne("SELECT COUNT(*) AS count FROM search_index_queue")?.count ?? 0) > 0;
 }
 
 export function deleteSearchIndexForPage(pageId: string) {
-  execSql(`DELETE FROM search_pages_fts WHERE page_id = ${sql(pageId)};`);
+  execSql(`
+    DELETE FROM search_index_queue WHERE page_id = ${sql(pageId)};
+    DELETE FROM search_pages_fts WHERE page_id = ${sql(pageId)};
+  `);
 }
 
 export function deleteSearchIndexForNotebook(notebookId: string) {
-  execSql(`DELETE FROM search_pages_fts WHERE notebook_id = ${sql(notebookId)};`);
+  execSql(`
+    DELETE FROM search_index_queue WHERE page_id IN (SELECT id FROM pages WHERE notebook_id = ${sql(notebookId)});
+    DELETE FROM search_pages_fts WHERE notebook_id = ${sql(notebookId)};
+  `);
+}
+
+function uniqueIds(ids: string[]) {
+  return [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+}
+
+function inList(ids: string[]) {
+  return uniqueIds(ids).map(sql).join(", ") || "NULL";
 }
 
 function insertSearchRows(rows: SearchablePage[]) {

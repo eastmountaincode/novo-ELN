@@ -186,6 +186,9 @@ export default function Home() {
   const [searchApproxLoading, setSearchApproxLoading] = useState(false);
   const [saving, setSaving] = useState("");
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectedPageIdRef = useRef("");
+  const latestBodyDraftsRef = useRef(new Map<string, string>());
+  const bodySaveStatesRef = useRef(new Map<string, { inFlight: boolean; pendingBody: string | null }>());
   const [creatingPage, setCreatingPage] = useState(false);
   const [deletingPage, setDeletingPage] = useState(false);
   const [deletingNotebook, setDeletingNotebook] = useState(false);
@@ -404,6 +407,7 @@ export default function Home() {
   const selectedProject = workspace?.projects.find((project) => project.id === selectedProjectId) ?? workspace?.projects[0];
   const selectedNotebook = selectedProject?.notebooks.find((notebook) => notebook.id === selectedNotebookId) ?? selectedProject?.notebooks[0];
   const selectedPage = selectedNotebook?.pages.find((page) => page.id === selectedPageId) ?? selectedNotebook?.pages[0];
+  selectedPageIdRef.current = selectedPage?.id ?? "";
   const selectedNotebookCanEdit = canEditNotebook(workspace?.user, selectedNotebook);
   const selectedPageCanEdit = selectedNotebookCanEdit && !selectedPage?.lockedAt;
   const selectedPageCanManageLock = selectedNotebook?.accessRole === "owner";
@@ -622,9 +626,7 @@ export default function Home() {
     closeSearch();
   }
 
-  function patchSelectedPage(patch: Partial<PageEntry>) {
-    if (!workspace || !selectedPage || !selectedNotebookCanEdit) return;
-    const pageId = selectedPage.id;
+  function patchPage(pageId: string, patch: Partial<PageEntry>) {
     setWorkspace((current) => current ? {
       ...current,
       projects: current.projects.map((project) => ({
@@ -635,6 +637,11 @@ export default function Home() {
         })),
       })),
     } : current);
+  }
+
+  function patchSelectedPage(patch: Partial<PageEntry>) {
+    if (!workspace || !selectedPage || !selectedNotebookCanEdit) return;
+    patchPage(selectedPage.id, patch);
   }
 
   function setSaveStatus(status: string, options: { clearAfterMs?: number } = {}) {
@@ -657,10 +664,59 @@ export default function Home() {
     };
   }, []);
 
+  function setPageSaveStatus(pageId: string, status: string, options: { clearAfterMs?: number } = {}) {
+    if (selectedPageIdRef.current !== pageId) return;
+    setSaveStatus(status, options);
+  }
+
+  function markBodyUnsaved(pageId: string, body: string) {
+    latestBodyDraftsRef.current.set(pageId, body);
+    setPageSaveStatus(pageId, "Unsaved");
+  }
+
+  async function saveBodyPage(pageId: string, body: string) {
+    const states = bodySaveStatesRef.current;
+    const state = states.get(pageId) ?? { inFlight: false, pendingBody: null };
+    state.pendingBody = body;
+    states.set(pageId, state);
+    if (state.inFlight) return;
+
+    state.inFlight = true;
+    try {
+      while (state.pendingBody !== null) {
+        const bodyToSave = state.pendingBody;
+        state.pendingBody = null;
+        setPageSaveStatus(pageId, "Saving...");
+        const response = await fetch(`/api/pages/${pageId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: bodyToSave }),
+        });
+        const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
+        const latestBody = latestBodyDraftsRef.current.get(pageId);
+        if (!response.ok) {
+          setPageSaveStatus(pageId, "Save failed");
+          return;
+        }
+        if (latestBody !== bodyToSave) continue;
+        if (result?.changed) patchPage(pageId, { body: bodyToSave, updatedAt: "Just now" });
+        else patchPage(pageId, { body: bodyToSave });
+        setPageSaveStatus(pageId, "Saved", { clearAfterMs: 2400 });
+      }
+    } finally {
+      state.inFlight = false;
+      if (state.pendingBody !== null) void saveBodyPage(pageId, state.pendingBody);
+    }
+  }
+
   async function savePage(patch: { title?: string; body?: string; status?: PageStatus }) {
     if (!selectedPage || !selectedPageCanEdit) return;
     const pageId = selectedPage.id;
-    setSaveStatus("Saving...");
+    if (Object.prototype.hasOwnProperty.call(patch, "body")) {
+      await saveBodyPage(pageId, patch.body ?? "");
+      return;
+    }
+    setPageSaveStatus(pageId, "Saving...");
     const response = await fetch(`/api/pages/${pageId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -668,15 +724,15 @@ export default function Home() {
     });
     const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
     if (!response.ok) {
-      setSaveStatus("Save failed");
+      setPageSaveStatus(pageId, "Save failed");
       return;
     }
     if (!result?.changed) {
-      setSaveStatus("");
+      setPageSaveStatus(pageId, "");
       return;
     }
-    patchSelectedPage({ ...patch, updatedAt: "Just now" });
-    setSaveStatus("Saved", { clearAfterMs: 2400 });
+    patchPage(pageId, { ...patch, updatedAt: "Just now" });
+    setPageSaveStatus(pageId, "Saved", { clearAfterMs: 2400 });
   }
 
   async function setSelectedPageTags(tags: string[]) {
@@ -1214,7 +1270,7 @@ export default function Home() {
                 deleteAttachment={deletePageAttachment}
                 patchSelectedPage={patchSelectedPage}
                 savePage={savePage}
-                markUnsaved={() => setSaveStatus("Unsaved")}
+                markUnsaved={(body) => markBodyUnsaved(selectedPage.id, body)}
                 setPageTags={setSelectedPageTags}
                 setPageLocked={setSelectedPageLocked}
                 openFilePicker={() => fileInputRef.current?.click()}
@@ -3340,7 +3396,7 @@ function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCa
   );
 }
 
-function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: () => void; setPageTags: (tags: string[]) => Promise<void>; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
+function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: (body: string) => void; setPageTags: (tags: string[]) => Promise<void>; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityEvents, setActivityEvents] = useState<AuditEvent[]>([]);
@@ -3411,8 +3467,8 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, canEdit, 
             key={`${page.id}-${canEdit ? "edit" : "read"}`}
             pageId={page.id}
             value={page.body}
-            onChange={() => {
-              if (canEdit) markUnsaved();
+            onChange={(body) => {
+              if (canEdit) markUnsaved(body);
             }}
             onBlur={(body) => void savePage({ body })}
             uploadInlineFile={uploadInlineFile}

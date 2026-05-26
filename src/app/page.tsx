@@ -2126,7 +2126,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   }
 
   return (
-    <aside className="grid min-h-screen min-w-0 grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
+    <aside className="relative z-30 grid min-h-screen min-w-0 grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
       <div className="min-w-0 border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
           <div className="flex min-w-0 items-start justify-between gap-3">
@@ -2211,7 +2211,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
                 <section
                   role="dialog"
                   aria-label="Filter pages"
-                  className="absolute left-0 top-10 z-30 flex items-start gap-2 text-slate-900"
+                  className="absolute right-0 top-10 z-50 flex items-start gap-2 text-slate-900"
                 >
                   <div className="w-52 border border-slate-200 bg-white p-1 shadow-2xl shadow-slate-950/15">
                     <div className="flex items-center justify-between gap-3 px-3 pb-1.5 pt-2">

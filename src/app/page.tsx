@@ -1992,7 +1992,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
 
 function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, creatingPage, canEdit, deletePage, collapsed, toggleCollapsed }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; creatingPage: boolean; canEdit: boolean; deletePage: (page: PageEntry) => void; collapsed: boolean; toggleCollapsed: () => void }) {
   const pages = useMemo(() => selectedNotebook?.pages ?? [], [selectedNotebook]);
-  const [sortKey, setSortKey] = useState<PageSortKey>("updated");
+  const [sortKey, setSortKey] = useState<PageSortKey>("created");
   const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
   const [filterOptionsOpen, setFilterOptionsOpen] = useState(false);
   const [activeFilterPanel, setActiveFilterPanel] = useState<"tags" | "status">("tags");

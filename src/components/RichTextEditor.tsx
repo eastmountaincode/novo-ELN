@@ -274,7 +274,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   }
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] border border-slate-300 bg-white">
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border border-slate-300 bg-white">
       {!readOnly ? <div className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
         <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
         <ToolbarButton active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()} label="Italic"><Italic size={15} /></ToolbarButton>
@@ -303,7 +303,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
         <ToolbarButton onClick={() => editor.chain().focus().undo().run()} label="Undo"><Undo2 size={15} /></ToolbarButton>
         <ToolbarButton onClick={() => editor.chain().focus().redo().run()} label="Redo"><Redo2 size={15} /></ToolbarButton>
       </div> : null}
-      <div className="min-h-0 overflow-y-auto scroll-contained p-4" onDragOverCapture={readOnly ? undefined : handleEditorDragOver} onDropCapture={readOnly ? undefined : handleEditorDrop}>
+      <div className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden scroll-contained p-4" onDragOverCapture={readOnly ? undefined : handleEditorDragOver} onDropCapture={readOnly ? undefined : handleEditorDrop}>
         <EditorContent editor={editor} />
       </div>
     </div>
@@ -530,7 +530,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
   if (kind === "sheet") {
     return (
       <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
-        <div className={`max-w-3xl border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
+        <div className={`max-w-3xl overflow-hidden border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
             {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move spreadsheet" aria-label="Move spreadsheet">
               <GripVertical size={16} />
@@ -577,7 +577,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
   if (kind === "slides") {
     return (
       <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
-        <div className={`max-w-3xl border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
+        <div className={`max-w-3xl overflow-hidden border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
             {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move presentation" aria-label="Move presentation"><GripVertical size={16} /></button> : null}
             <Presentation size={17} className="shrink-0 text-orange-600" />
@@ -594,7 +594,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
 
   return (
     <NodeViewWrapper className="my-3" {...dragHandlers}>
-      <div data-attachment-card="true" className="max-w-lg border border-slate-300 border-l-cyan-500 border-l-4 bg-slate-50 px-3 py-2.5 text-sm">
+      <div data-attachment-card="true" className="max-w-lg overflow-hidden border border-slate-300 border-l-cyan-500 border-l-4 bg-slate-50 px-3 py-2.5 text-sm">
         <div className="flex items-start gap-2.5">
           {renderKindIcon(kind)}
           <div className="min-w-0 flex-1">

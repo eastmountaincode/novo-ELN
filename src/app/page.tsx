@@ -1223,7 +1223,7 @@ export default function Home() {
     <main className="app-scroll-root overflow-x-auto bg-white text-slate-950">
       <input ref={fileInputRef} type="file" className="hidden" onChange={(event) => void uploadAttachment(event.target.files?.[0])} />
 
-      <div className="grid h-dvh min-w-[980px]" style={{ gridTemplateColumns: activeView === "project" ? `${effectiveSidebarWidth}px 1px ${effectivePagesWidth}px 1px minmax(560px, 1fr)` : `${effectiveSidebarWidth}px 1px minmax(560px, 1fr)` } as React.CSSProperties}>
+      <div className="grid h-dvh min-w-[980px]" style={{ gridTemplateColumns: activeView === "project" ? `${effectiveSidebarWidth}px 1px minmax(0,${effectivePagesWidth}px) 1px minmax(560px, 1fr)` : `${effectiveSidebarWidth}px 1px minmax(560px, 1fr)` } as React.CSSProperties}>
         <UnifiedSidebar
           workspace={workspace}
           activeView={activeView}
@@ -2126,7 +2126,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   }
 
   return (
-    <aside className="grid min-h-screen grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
+    <aside className="grid min-h-screen min-w-0 grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
           <div className="flex min-w-0 items-start justify-between gap-3">
@@ -2321,8 +2321,8 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
         ) : null}
       </div>
 
-      <div ref={pageListRef} className="overflow-y-auto scroll-contained py-3">
-        <div className="space-y-2 px-4">
+      <div ref={pageListRef} className="overflow-y-auto overflow-x-hidden scroll-contained py-3">
+        <div className="min-w-0 space-y-2 px-4">
           {sortedPages.map((page) => (
             <PageCard
               key={page.id}
@@ -2450,16 +2450,16 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   const visibleTags = page.tags.slice(0, 3);
   const previewText = useMemo(() => (page.bodyLoaded ? bodyToEditorText(page.body) : page.bodyPreview) || "Empty page", [page.body, page.bodyLoaded, page.bodyPreview]);
   return (
-    <div data-page-card-id={page.id} className="group relative min-w-0">
+    <div data-page-card-id={page.id} className="group relative min-w-0 max-w-full overflow-hidden">
       <button
         onClick={onClick}
-        className={`block min-w-0 w-full border p-3 pr-10 text-left ${active ? "" : "border-slate-200 bg-white hover:border-slate-400"}`}
+        className={`block min-w-0 w-full max-w-full overflow-hidden border p-3 pr-10 text-left ${active ? "" : "border-slate-200 bg-white hover:border-slate-400"}`}
         style={cardStyle}
       >
         <div className="flex min-w-0 items-start justify-between gap-3">
-          <h3 className="min-w-0 break-words text-sm font-semibold leading-5 text-slate-900">{page.title || "Untitled"}</h3>
+          <h3 className="min-w-0 max-w-full break-words text-sm font-semibold leading-5 text-slate-900 [overflow-wrap:anywhere]">{page.title || "Untitled"}</h3>
         </div>
-        <p className="mt-2 max-h-10 min-w-0 overflow-hidden break-words text-sm leading-5 text-slate-500">{previewText}</p>
+        <p className="mt-2 max-h-10 min-w-0 max-w-full overflow-hidden break-words text-sm leading-5 text-slate-500 [overflow-wrap:anywhere]">{previewText}</p>
         {(page.lockedAt || page.status || visibleTags.length > 0) ? (
           <div className="mt-3 flex flex-wrap gap-1.5">
             {page.lockedAt ? <span className="inline-flex h-6 items-center gap-1 border border-slate-300 bg-slate-100 px-2 text-[11px] font-medium text-slate-600"><Lock size={11} />Locked</span> : null}
@@ -3488,10 +3488,10 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
 
   return (
     <>
-      <section className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-white">
+      <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-white">
         <header className="border-b border-slate-200 px-6 py-4">
-          <div className="flex items-center gap-3">
-            <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
+          <div className="flex min-w-0 items-center gap-3">
+            <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 truncate bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
             {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
             <button
               type="button"
@@ -3517,7 +3517,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
             <PageLockControl locked={locked} canManage={canManageLock} setLocked={setPageLocked} />
           </div>
         </header>
-        <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-white px-6 pb-6 pt-4">
+        <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white px-6 pb-6 pt-4">
           {pageLoading ? (
             <div className="grid min-h-[24rem] place-items-center border border-slate-200 bg-white text-sm text-slate-500">
               <span className="inline-flex items-center gap-2"><Loader2 size={16} className="animate-spin" />Loading page...</span>
@@ -3707,12 +3707,12 @@ function PageTagsBar({ tags, canEdit, setPageTags }: { tags: string[]; canEdit: 
   }
 
   return (
-    <div className="mt-2 flex min-h-8 flex-wrap items-center gap-1.5">
+    <div className="mt-2 flex min-h-8 min-w-0 flex-wrap items-center gap-1.5">
       <Tag size={15} className="mr-1 shrink-0 text-slate-400" />
       {normalizedTags.map((tag) => (
-        <span key={tag} className="inline-flex h-7 items-center gap-1 border border-slate-200 bg-slate-100 px-2 text-sm text-slate-700">
-          {tag}
-          {canEdit ? <button type="button" onClick={() => removeTag(tag)} className="-mr-1 grid size-5 place-items-center text-slate-400 hover:text-slate-900" aria-label={`Remove ${tag} tag`}>
+        <span key={tag} className="inline-flex h-7 max-w-full min-w-0 items-center gap-1 border border-slate-200 bg-slate-100 px-2 text-sm text-slate-700">
+          <span className="min-w-0 truncate">{tag}</span>
+          {canEdit ? <button type="button" onClick={() => removeTag(tag)} className="-mr-1 grid size-5 shrink-0 place-items-center text-slate-400 hover:text-slate-900" aria-label={`Remove ${tag} tag`}>
             <X size={13} />
           </button> : null}
         </span>

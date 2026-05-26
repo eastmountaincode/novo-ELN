@@ -111,6 +111,9 @@ input:disabled {
   color: #0f172a;
   font-size: 1rem;
   line-height: 1.7;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .rich-text-surface p,

@@ -2211,7 +2211,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
                 <section
                   role="dialog"
                   aria-label="Filter pages"
-                  className="absolute right-0 top-10 z-50 flex items-start gap-2 text-slate-900"
+                  className="absolute left-0 top-10 z-50 flex items-start gap-2 text-slate-900"
                 >
                   <div className="w-52 border border-slate-200 bg-white p-1 shadow-2xl shadow-slate-950/15">
                     <div className="flex items-center justify-between gap-3 px-3 pb-1.5 pt-2">

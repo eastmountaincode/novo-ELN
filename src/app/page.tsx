@@ -1118,7 +1118,16 @@ export default function Home() {
     setSpreadsheetModal(attachment);
   }
 
-  if (loading) return <main className="grid min-h-screen place-items-center bg-slate-50 text-slate-600">Loading...</main>;
+  if (loading) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-slate-50 text-slate-600">
+        <div className="flex flex-col items-center gap-4">
+          <div className="novo-wordmark select-none text-7xl leading-none tracking-normal text-slate-950">novo</div>
+          <span className="inline-flex items-center gap-2 text-sm"><Loader2 size={16} className="animate-spin" />Loading...</span>
+        </div>
+      </main>
+    );
+  }
   if (!workspace) {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-50 px-6 text-slate-950">

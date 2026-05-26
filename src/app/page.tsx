@@ -2126,7 +2126,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   }
 
   return (
-    <aside className="grid min-h-screen min-w-0 grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
+    <aside className="grid min-h-screen min-w-0 grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
       <div className="border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
           <div className="flex min-w-0 items-start justify-between gap-3">

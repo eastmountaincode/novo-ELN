@@ -2130,7 +2130,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
       <div className="min-w-0 border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
           <div className="flex min-w-0 items-start justify-between gap-3">
-            <h2 className="min-w-0 truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
+            <h2 className="min-w-0 flex-1 break-words text-lg font-semibold leading-6 [overflow-wrap:anywhere]">{selectedNotebook?.name ?? "Notebook"}</h2>
             <button
               type="button"
               onClick={toggleCollapsed}
@@ -3463,6 +3463,17 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
   const color = projectColor(selectedNotebook ?? selectedProject);
   const locked = Boolean(page.lockedAt);
+  const titleFieldRef = useRef<HTMLTextAreaElement>(null);
+
+  function resizeTitleField(element: HTMLTextAreaElement | null) {
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+  }
+
+  useEffect(() => {
+    resizeTitleField(titleFieldRef.current);
+  }, [page.id, page.title]);
 
   async function loadActivity(offset: number) {
     const append = offset > 0;
@@ -3490,8 +3501,26 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
     <>
       <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-white">
         <header className="border-b border-slate-200 px-6 py-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <input value={page.title} readOnly={!canEdit} onChange={(event) => canEdit && patchSelectedPage({ title: event.target.value })} onBlur={(event) => canEdit && void savePage({ title: event.target.value })} className={`min-w-0 flex-1 truncate bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none ${canEdit ? "" : "cursor-default"}`} />
+          <div className="flex min-w-0 items-start gap-3">
+            <textarea
+              ref={titleFieldRef}
+              rows={1}
+              value={page.title}
+              readOnly={!canEdit}
+              onChange={(event) => {
+                if (!canEdit) return;
+                const title = event.target.value.replace(/\s*\n+\s*/g, " ");
+                patchSelectedPage({ title });
+                resizeTitleField(event.currentTarget);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                event.currentTarget.blur();
+              }}
+              onBlur={(event) => canEdit && void savePage({ title: event.target.value })}
+              className={`min-w-0 flex-1 resize-none overflow-hidden break-words bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none [overflow-wrap:anywhere] ${canEdit ? "" : "cursor-default"}`}
+            />
             {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
             <button
               type="button"

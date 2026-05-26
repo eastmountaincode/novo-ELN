@@ -2126,8 +2126,8 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   }
 
   return (
-    <aside className="grid min-h-screen min-w-0 grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
-      <div className="border-b border-slate-200 px-4 py-4">
+    <aside className="grid min-h-screen min-w-0 grid-rows-[auto_1fr] overflow-hidden bg-slate-50 text-slate-900">
+      <div className="min-w-0 border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
           <div className="flex min-w-0 items-start justify-between gap-3">
             <h2 className="min-w-0 truncate text-lg font-semibold">{selectedNotebook?.name ?? "Notebook"}</h2>
@@ -2321,8 +2321,8 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
         ) : null}
       </div>
 
-      <div ref={pageListRef} className="overflow-y-auto overflow-x-hidden scroll-contained py-3">
-        <div className="min-w-0 space-y-2 px-4">
+      <div ref={pageListRef} className="min-w-0 max-w-full overflow-y-auto overflow-x-hidden scroll-contained py-3">
+        <div className="min-w-0 max-w-full space-y-2 overflow-hidden px-4">
           {sortedPages.map((page) => (
             <PageCard
               key={page.id}
@@ -2450,7 +2450,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   const visibleTags = page.tags.slice(0, 3);
   const previewText = useMemo(() => (page.bodyLoaded ? bodyToEditorText(page.body) : page.bodyPreview) || "Empty page", [page.body, page.bodyLoaded, page.bodyPreview]);
   return (
-    <div data-page-card-id={page.id} className="group relative min-w-0 max-w-full overflow-hidden">
+    <div data-page-card-id={page.id} className="group relative w-full min-w-0 max-w-full overflow-hidden">
       <button
         onClick={onClick}
         className={`block min-w-0 w-full max-w-full overflow-hidden border p-3 pr-10 text-left ${active ? "" : "border-slate-200 bg-white hover:border-slate-400"}`}

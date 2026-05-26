@@ -3475,6 +3475,26 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
     resizeTitleField(titleFieldRef.current);
   }, [page.id, page.title]);
 
+  useEffect(() => {
+    const element = titleFieldRef.current;
+    const container = element?.parentElement;
+    if (!element || !container) return;
+
+    function handleResize() {
+      resizeTitleField(element);
+    }
+
+    handleResize();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", handleResize);
+      return () => window.removeEventListener("resize", handleResize);
+    }
+
+    const observer = new ResizeObserver(handleResize);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [page.id]);
+
   async function loadActivity(offset: number) {
     const append = offset > 0;
     if (append) setActivityLoadingMore(true);

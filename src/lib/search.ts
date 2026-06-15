@@ -16,10 +16,14 @@ type SearchablePage = {
 type SearchMode = "full" | "fast" | "approx";
 type SearchFtsMode = "strict" | "relaxed" | "approx";
 type TokenExpansion = { token: string; terms: string[] };
+type SearchField = "title" | "body" | "tags" | "attachments";
+type SearchScope = { notebookId?: string; includeTerms?: string[]; excludeTerms?: string[]; tags?: string[]; fields?: string[] };
 
 const searchIndexQueueBatchSize = 25;
 const approximateCandidateLimit = 800;
 const approximateAlternativesPerToken = 5;
+const defaultSearchFields: SearchField[] = ["title", "body", "tags", "attachments"];
+const searchFields: SearchField[] = ["title", "body", "tags", "attachments"];
 let searchIndexDrainScheduled = false;
 let searchIndexDrainRunning = false;
 
@@ -136,28 +140,37 @@ function inList(ids: string[]) {
 function insertSearchRows(rows: SearchablePage[]) {
   if (!rows.length) return;
   execSql(rows.map((row) => `
-    INSERT INTO search_pages_fts (page_id, notebook_id, title, body, tags, attachments, notebook, updated_at)
-    VALUES (${sql(row.pageId)}, ${sql(row.notebookId)}, ${sql(row.title)}, ${sql(row.body)}, ${sql(row.tags)}, ${sql(row.attachments)}, ${sql(row.notebookName)}, ${sql(row.updatedAt)});
+    INSERT INTO search_pages_fts (page_id, notebook_id, title, body, tags, attachments, updated_at)
+    VALUES (${sql(row.pageId)}, ${sql(row.notebookId)}, ${sql(row.title)}, ${sql(row.body)}, ${sql(row.tags)}, ${sql(row.attachments)}, ${sql(row.updatedAt)});
   `).join("\n"));
 }
 
-export function searchWorkspace(userId: string, rawQuery: string, limit = 30, mode: SearchMode = "full"): SearchResult[] {
+export function searchWorkspace(userId: string, rawQuery: string, limit = 30, mode: SearchMode = "full", scope: SearchScope = {}): SearchResult[] {
   const query = rawQuery.trim();
-  if (!query) return [];
+  const advancedScope = normalizeSearchScope(scope);
+  const includeQuery = (advancedScope.includeTerms ?? []).filter((term) => !term.includes("*")).join(" ");
+  const searchQuery = [query, includeQuery].filter(Boolean).join(" ").trim();
+  if (!searchQuery) {
+    if (!hasAdvancedSearchFilters(advancedScope)) return [];
+    return searchFilteredPages(userId, limit, advancedScope);
+  }
 
-  if (mode === "fast") return searchFast(userId, query, limit);
-  if (mode === "approx") return searchApproximate(userId, query, limit);
+  if (mode === "fast") return searchFast(userId, searchQuery, limit, advancedScope);
+  if (mode === "approx") return searchApproximate(userId, searchQuery, limit, advancedScope);
 
-  return mergeSearchResults(searchFast(userId, query, limit), searchApproximate(userId, query, limit)).slice(0, limit);
+  return mergeSearchResults(searchFast(userId, searchQuery, limit, advancedScope), searchApproximate(userId, searchQuery, limit, advancedScope)).slice(0, limit);
 }
 
-function searchFast(userId: string, query: string, limit: number) {
-  const strictResults = searchFts(userId, query, limit, "strict");
-  const relaxedResults = searchFts(userId, query, limit, "relaxed");
-  return mergeSearchResults(strictResults, relaxedResults).sort((a, b) => b.score - a.score).slice(0, limit);
+function searchFast(userId: string, query: string, limit: number, scope: SearchScope) {
+  const exactSubstringResults = searchExactSubstring(userId, query, limit, scope);
+  const strictResults = searchFts(userId, query, limit, "strict", "", undefined, scope);
+  const relaxedResults = searchFts(userId, query, limit, "relaxed", "", undefined, scope);
+  return mergeSearchResults(mergeSearchResults(exactSubstringResults, strictResults), relaxedResults)
+    .sort((a, b) => b.score - a.score || Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, limit);
 }
 
-function searchApproximate(userId: string, query: string, limit: number): SearchResult[] {
+function searchApproximate(userId: string, query: string, limit: number, scope: SearchScope): SearchResult[] {
   const tokens = tokenize(query);
   if (!tokens.length) return [];
 
@@ -169,32 +182,34 @@ function searchApproximate(userId: string, query: string, limit: number): Search
   if (!match) return [];
 
   const matchTokens = uniqueIds(expansions.flatMap((expansion) => expansion.terms));
-  return searchFts(userId, query, limit, "approx", match, matchTokens).map((result) => ({
+  return searchFts(userId, query, limit, "approx", match, matchTokens, scope).map((result) => ({
     ...result,
     matchType: "fuzzy",
   }));
 }
 
-function searchFts(userId: string, query: string, limit: number, mode: SearchFtsMode, customMatch = "", matchTokens?: string[]): SearchResult[] {
+function searchFts(userId: string, query: string, limit: number, mode: SearchFtsMode, customMatch = "", matchTokens?: string[], scope: SearchScope = {}): SearchResult[] {
   const queryTokens = tokenize(query);
   const tokens = matchTokens?.length ? matchTokens : queryTokens;
-  const match = customMatch || buildFtsQuery(queryTokens, mode === "strict" ? "strict" : "relaxed");
+  const match = buildScopedFtsQuery(customMatch || buildFtsQuery(queryTokens, mode === "strict" ? "strict" : "relaxed"), scope.fields);
   if (!match) return [];
   const literal = `%${query.toLowerCase()}%`;
   const queryLimit = mode === "strict" ? limit : mode === "approx" ? Math.max(limit * 6, 120) : Math.max(limit * 4, 60);
   const accessCondition = searchAccessCondition(userId, "n", "nm");
+  const notebookCondition = scope.notebookId ? `AND f.notebook_id = ${sql(scope.notebookId)}` : "";
+  const advancedCondition = advancedSearchSqlCondition(scope);
   const rows = querySql(`
     SELECT
       f.page_id,
       f.notebook_id,
       f.title,
-      f.notebook,
+      n.name AS notebook_name,
       f.body,
       f.tags,
       f.attachments,
       f.updated_at,
       snippet(search_pages_fts, -1, '', '', '...', 28) AS snippet,
-      bm25(search_pages_fts, 0.0, 0.0, 8.0, 2.0, 2.0, 3.0, 1.5, 0.0) AS bm25_score,
+      bm25(search_pages_fts, 0.0, 0.0, 8.0, 2.0, 2.0, 3.0, 0.0) AS bm25_score,
       CASE
         WHEN lower(f.title) LIKE ${sql(literal)} THEN 'title'
         WHEN lower(f.attachments) LIKE ${sql(literal)} THEN 'attachment'
@@ -204,6 +219,8 @@ function searchFts(userId: string, query: string, limit: number, mode: SearchFts
     JOIN notebooks n ON n.id = f.notebook_id
     LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
     WHERE ${accessCondition}
+      ${notebookCondition}
+      ${advancedCondition}
       AND search_pages_fts MATCH ${sql(match)}
     ORDER BY
       bm25_score ASC,
@@ -213,8 +230,9 @@ function searchFts(userId: string, query: string, limit: number, mode: SearchFts
 
   const minimumMatchCount = relaxedMinimumMatchCount(queryTokens.length);
   return rows
+    .filter((row) => rowMatchesAdvancedFilters(row, scope))
     .map((row): SearchResult & { matchedTokenCount: number } => {
-      const searchableText = [row.title, row.body, row.tags, row.attachments].join(" ");
+      const searchableText = searchableTextForScope(row, scope.fields);
       const matchedTokenCount = countMatchedTokens(tokens, searchableText);
       const titleMatchedTokenCount = countMatchedTokens(tokens, row.title);
       const matchType = mode === "approx" ? "fuzzy" : titleMatchedTokenCount >= relaxedMinimumMatchCount(queryTokens.length) ? "title" : row.match_type;
@@ -224,7 +242,7 @@ function searchFts(userId: string, query: string, limit: number, mode: SearchFts
         notebookId: row.notebook_id,
         title: row.title,
         projectName: "Notebooks",
-        notebookName: row.notebook,
+        notebookName: row.notebook_name,
         snippet: cleanSnippet(row.snippet),
         updatedAt: row.updated_at,
         matchType: matchType as SearchMatchType,
@@ -253,6 +271,98 @@ function searchFts(userId: string, query: string, limit: number, mode: SearchFts
       matchType: result.matchType,
       score: result.score,
     }));
+}
+
+function searchFilteredPages(userId: string, limit: number, scope: SearchScope): SearchResult[] {
+  const accessCondition = searchAccessCondition(userId, "n", "nm");
+  const notebookCondition = scope.notebookId ? `AND f.notebook_id = ${sql(scope.notebookId)}` : "";
+  const advancedCondition = advancedSearchSqlCondition(scope, { includeTextCandidates: true });
+  const rows = querySql(`
+    SELECT
+      f.page_id,
+      f.notebook_id,
+      f.title,
+      n.name AS notebook_name,
+      f.body,
+      f.tags,
+      f.attachments,
+      f.updated_at
+    FROM search_pages_fts f
+    JOIN notebooks n ON n.id = f.notebook_id
+    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    WHERE ${accessCondition}
+      ${notebookCondition}
+      ${advancedCondition}
+    ORDER BY datetime(f.updated_at) DESC
+    LIMIT ${Math.max(250, Math.min(limit * 80, 2500))}
+  `);
+
+  return rows.filter((row) => rowMatchesAdvancedFilters(row, scope)).slice(0, limit).map((row): SearchResult => {
+    const searchableText = searchableTextForScope(row, scope.fields);
+    return {
+      pageId: row.page_id,
+      projectId: "workspace",
+      notebookId: row.notebook_id,
+      title: row.title,
+      projectName: "Notebooks",
+      notebookName: row.notebook_name,
+      snippet: cleanSnippet(searchableText).slice(0, 180),
+      updatedAt: row.updated_at,
+      matchType: attachmentTermsMatch(scope.includeTerms ?? [], row.attachments) ? "attachment" : "content",
+      score: 1,
+    };
+  });
+}
+
+function searchExactSubstring(userId: string, query: string, limit: number, scope: SearchScope): SearchResult[] {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return [];
+  const accessCondition = searchAccessCondition(userId, "n", "nm");
+  const notebookCondition = scope.notebookId ? `AND f.notebook_id = ${sql(scope.notebookId)}` : "";
+  const advancedCondition = advancedSearchSqlCondition(scope);
+  const textExpression = searchableSqlExpression(scope.fields);
+  const rows = querySql(`
+    SELECT
+      f.page_id,
+      f.notebook_id,
+      f.title,
+      n.name AS notebook_name,
+      f.body,
+      f.tags,
+      f.attachments,
+      f.updated_at
+    FROM search_pages_fts f
+    JOIN notebooks n ON n.id = f.notebook_id
+    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    WHERE ${accessCondition}
+      ${notebookCondition}
+      ${advancedCondition}
+      AND ${textExpression} LIKE ${sql(termCandidateLikePattern(query))} ESCAPE '\\'
+    ORDER BY datetime(f.updated_at) DESC
+    LIMIT ${Math.max(1, Math.min(limit * 10, 300))}
+  `);
+
+  return rows
+    .filter((row) => rowMatchesAdvancedFilters(row, scope))
+    .filter((row) => fieldMatchesSearchQuery(row, scope.fields, query))
+    .map((row): SearchResult => {
+      const titleMatch = scopedFieldMatches(row, scope.fields, "title", query);
+      const attachmentMatch = scopedFieldMatches(row, scope.fields, "attachments", query);
+      return {
+        pageId: row.page_id,
+        projectId: "workspace",
+        notebookId: row.notebook_id,
+        title: row.title,
+        projectName: "Notebooks",
+        notebookName: row.notebook_name,
+        snippet: bestSubstringSnippet(row, scope.fields, query),
+        updatedAt: row.updated_at,
+        matchType: titleMatch ? "title" : attachmentMatch ? "attachment" : "content",
+        score: titleMatch ? 8 : attachmentMatch ? 6 : 5,
+      };
+    })
+    .sort((a, b) => b.score - a.score || Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, limit);
 }
 
 function expandSearchToken(token: string): TokenExpansion {
@@ -336,8 +446,148 @@ function mapSearchRows(rows: Record<string, string>[]): SearchablePage[] {
   }));
 }
 
-function searchAccessCondition(_userId: string, _notebookAlias: string, memberAlias: string) {
+function searchAccessCondition(userId: string, _notebookAlias: string, memberAlias: string) {
+  const user = queryOne(`SELECT role FROM users WHERE id = ${sql(userId)} LIMIT 1`);
+  if (user?.role === "admin") return "1=1";
   return `${memberAlias}.user_id IS NOT NULL`;
+}
+
+function normalizeSearchScope(scope: SearchScope): SearchScope {
+  return {
+    notebookId: scope.notebookId?.trim() || undefined,
+    includeTerms: normalizeTermFilters(scope.includeTerms ?? []),
+    excludeTerms: normalizeTermFilters(scope.excludeTerms ?? []),
+    tags: uniqueIds((scope.tags ?? []).map((tag) => tag.trim()).filter(Boolean)),
+    fields: normalizeSearchFields(scope.fields ?? defaultSearchFields),
+  };
+}
+
+function normalizeSearchFields(fields: string[]) {
+  const normalized = uniqueIds(fields).filter((field): field is SearchField => searchFields.includes(field as SearchField));
+  return normalized.length ? normalized : defaultSearchFields;
+}
+
+function normalizeTermFilters(values: string[]) {
+  return uniqueIds(values.map((value) => value.trim().replace(/\s+/g, " ")).filter(Boolean)).slice(0, 12);
+}
+
+function hasAdvancedSearchFilters(scope: SearchScope) {
+  return Boolean(scope.includeTerms?.length || scope.excludeTerms?.length || scope.tags?.length);
+}
+
+function advancedSearchSqlCondition(scope: SearchScope, options: { includeTextCandidates?: boolean } = {}) {
+  const textExpression = searchableSqlExpression(scope.fields);
+  const conditions: string[] = [];
+  if (options.includeTextCandidates) {
+    for (const term of scope.includeTerms ?? []) {
+      conditions.push(`${textExpression} LIKE ${sql(termCandidateLikePattern(term))} ESCAPE '\\'`);
+    }
+  }
+  for (const tag of scope.tags ?? []) {
+    conditions.push(`EXISTS (
+      SELECT 1
+      FROM page_tags search_filter_tag
+      WHERE search_filter_tag.page_id = f.page_id
+        AND lower(search_filter_tag.tag) = ${sql(tag.toLowerCase())}
+    )`);
+  }
+  return conditions.length ? `AND ${conditions.join("\n      AND ")}` : "";
+}
+
+function termCandidateLikePattern(term: string) {
+  const lowerTerm = term.toLowerCase();
+  const escaped = lowerTerm
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_")
+    .replace(/\*/g, "%");
+  return `%${escaped}%`;
+}
+
+function rowMatchesAdvancedFilters(row: Record<string, string>, scope: SearchScope) {
+  const searchableText = searchableTextForScope(row, scope.fields);
+  return (scope.includeTerms ?? []).every((term) => termMatchesSearchText(searchableText, term))
+    && (scope.excludeTerms ?? []).every((term) => !termMatchesSearchText(searchableText, term));
+}
+
+function attachmentTermsMatch(terms: string[], attachments: string) {
+  return terms.some((term) => termMatchesSearchText(attachments, term));
+}
+
+function termMatchesSearchText(text: string, rawTerm: string) {
+  const phrase = normalizeTermPhrase(rawTerm);
+  if (!phrase) return true;
+  if (phrase.includes(" ")) {
+    if (phrase.includes("*")) {
+      const source = phrase.split("*").map(escapeRegExp).join(".*");
+      return new RegExp(source, "i").test(normalizeSearchText(text));
+    }
+    return normalizeSearchText(text).includes(phrase);
+  }
+  const term = normalizeTermPattern(rawTerm);
+  if (!term) return true;
+  const words = tokenize(text);
+  if (term.includes("*")) {
+    const source = `^${term.split("*").map(escapeRegExp).join(".*")}$`;
+    const matcher = new RegExp(source, "i");
+    return words.some((word) => matcher.test(word));
+  }
+  return words.some((word) => word.startsWith(term) || word.includes(term));
+}
+
+function fieldMatchesSearchQuery(row: Record<string, string>, fields: string[] | undefined, query: string) {
+  return normalizeSearchText(searchableTextForScope(row, fields)).includes(normalizeSearchText(query));
+}
+
+function scopedFieldMatches(row: Record<string, string>, fields: string[] | undefined, field: SearchField, query: string) {
+  const scopedFields = normalizeSearchFields(fields ?? defaultSearchFields);
+  return scopedFields.includes(field) && normalizeSearchText(String(row[field] ?? "")).includes(normalizeSearchText(query));
+}
+
+function bestSubstringSnippet(row: Record<string, string>, fields: string[] | undefined, query: string) {
+  const scopedFields = normalizeSearchFields(fields ?? defaultSearchFields);
+  const normalizedQuery = normalizeSearchText(query);
+  const field = scopedFields.find((candidate) => normalizeSearchText(String(row[candidate] ?? "")).includes(normalizedQuery));
+  const value = cleanSnippet(String(field ? row[field] ?? "" : searchableTextForScope(row, fields)));
+  if (!normalizedQuery) return value.slice(0, 180);
+
+  const index = value.toLowerCase().indexOf(query.toLowerCase());
+  if (index < 0) return value.slice(0, 180);
+  const start = Math.max(0, index - 60);
+  const end = Math.min(value.length, index + query.length + 100);
+  return `${start > 0 ? "..." : ""}${value.slice(start, end)}${end < value.length ? "..." : ""}`;
+}
+
+function normalizeTermPattern(term: string) {
+  return term
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9_*]/g, "");
+}
+
+function normalizeTermPhrase(term: string) {
+  return term
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9_*\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeSearchText(text: string) {
+  return text
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9_*\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function buildFtsQuery(tokens: string[], mode: "strict" | "relaxed") {
@@ -355,6 +605,23 @@ function buildExpandedFtsQuery(expansions: TokenExpansion[]) {
     })
     .filter(Boolean)
     .join(" AND ");
+}
+
+function buildScopedFtsQuery(match: string, fields: string[] | undefined) {
+  if (!match) return "";
+  const scopedFields = normalizeSearchFields(fields ?? defaultSearchFields);
+  if (scopedFields.length === searchFields.length) return match;
+  return `{${scopedFields.join(" ")}} : (${match})`;
+}
+
+function searchableTextForScope(row: Record<string, string>, fields: string[] | undefined) {
+  const scopedFields = normalizeSearchFields(fields ?? defaultSearchFields);
+  return scopedFields.map((field) => String(row[field] ?? "")).join(" ");
+}
+
+function searchableSqlExpression(fields: string[] | undefined) {
+  const scopedFields = normalizeSearchFields(fields ?? defaultSearchFields);
+  return `lower(${scopedFields.map((field) => `coalesce(f.${field}, '')`).join(" || ' ' || ")})`;
 }
 
 function escapeFtsToken(token: string) {
@@ -408,4 +675,3 @@ function levenshteinDistance(a: string, b: string) {
 function cleanSnippet(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
-

@@ -1,20 +1,25 @@
 "use client";
 
-import { Extension, Node, mergeAttributes, type Editor } from "@tiptap/core";
-import { NodeSelection } from "@tiptap/pm/state";
-import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type NodeViewProps } from "@tiptap/react";
+import { Extension, Mark, Node, mergeAttributes, type Editor } from "@tiptap/core";
+import type { Mark as ProseMirrorMark } from "@tiptap/pm/model";
+import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type JSONContent, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { Color } from "@tiptap/extension-color";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
+import { TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import {
   Bold,
   CalendarClock,
   CalendarPlus,
   Code,
+  Columns3,
   Download,
-  Edit3,
+  Eraser,
   Eye,
   File,
   FileArchive,
@@ -26,10 +31,17 @@ import {
   Heading2,
   HardDrive,
   Italic,
+  Loader2,
   Link as LinkIcon,
   List,
   ListOrdered,
+  MessageSquarePlus,
+  Minus,
+  Palette,
+  ArrowUpRight,
+  Pencil,
   Plus,
+  Printer,
   Presentation,
   Quote,
   Redo2,
@@ -40,12 +52,14 @@ import {
   Underline as UnderlineIcon,
   Undo2,
   Unlink,
+  X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { PresentationPreviewCarousel } from "@/components/PresentationPreviewCarousel";
 import { bodyToEditorDocument, editorDocumentToBody } from "@/lib/editor";
-import type { SpreadsheetPreview } from "@/lib/spreadsheetPreview";
-import type { Attachment, BlockType } from "@/lib/types";
+import type { SpreadsheetPreview, SpreadsheetPreviewCell } from "@/lib/spreadsheetPreview";
+import type { Attachment, BlockType, PageCommentThread } from "@/lib/types";
 
 export const INLINE_ATTACHMENT_DRAG_TYPE = "application/x-novo-attachment";
 
@@ -69,6 +83,14 @@ type RichTextEditorProps = {
   onInlineAttachmentInserted: (attachment: Attachment, body: string) => void;
   openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void;
   openPresentation: (attachment: InlineAttachmentAttrs) => void;
+  onPrint?: (selection?: { content: JSONContent[] }) => void;
+  onExportPdf?: () => void;
+  onExportArchive?: () => void;
+  exporting?: boolean;
+  onCreateComment?: (input: { selectedText: string; body: string }) => Promise<PageCommentThread | null>;
+  onSelectCommentThread?: (threadId: string) => void;
+  commentThreadToRemove?: string;
+  onCommentThreadRemoved?: (body: string | null) => void;
   readOnly?: boolean;
 };
 
@@ -81,6 +103,25 @@ const PDF_MIN_WIDTH = 260;
 const PDF_PAGE_ASPECT = 11 / 8.5;
 const INLINE_ATTACHMENT_DRAGGING_CLASS = "inline-attachment-dragging";
 const TAB_INDENT = "    ";
+const TEXT_COLOR_OPTIONS = [
+  { label: "Default", value: "", swatch: "#0f172a" },
+  { label: "Gray", value: "#475569", swatch: "#475569" },
+  { label: "Red", value: "#dc2626", swatch: "#dc2626" },
+  { label: "Amber", value: "#d97706", swatch: "#d97706" },
+  { label: "Green", value: "#16a34a", swatch: "#16a34a" },
+  { label: "Blue", value: "#2563eb", swatch: "#2563eb" },
+  { label: "Purple", value: "#9333ea", swatch: "#9333ea" },
+] as const;
+
+const ANNOTATION_COLORS = ["#dc2626", "#d97706", "#16a34a", "#2563eb", "#9333ea", "#0f172a"] as const;
+const ANNOTATION_CANVAS_SIZE = 1000;
+
+type AnnotationTool = "pen" | "arrow" | "erase";
+type AnnotationPoint = { x: number; y: number };
+type AnnotationItem =
+  | { id: string; type: "pen"; color: string; width: number; points: AnnotationPoint[] }
+  | { id: string; type: "arrow"; color: string; width: number; from: AnnotationPoint; to: AnnotationPoint };
+type AnnotationDocument = { items: AnnotationItem[] };
 
 const EditorTabBehavior = Extension.create({
   name: "editorTabBehavior",
@@ -89,6 +130,61 @@ const EditorTabBehavior = Extension.create({
       Tab: () => handleEditorTab(this.editor, false),
       "Shift-Tab": () => handleEditorTab(this.editor, true),
     };
+  },
+});
+
+type CommentDraftSelectionRange = { from: number; to: number } | null;
+
+const commentDraftSelectionKey = new PluginKey<CommentDraftSelectionRange>("novoCommentDraftSelection");
+
+const CommentDraftSelectionHighlight = Extension.create({
+  name: "commentDraftSelectionHighlight",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<CommentDraftSelectionRange>({
+        key: commentDraftSelectionKey,
+        state: {
+          init: (): CommentDraftSelectionRange => null,
+          apply(transaction, value) {
+            const next = transaction.getMeta(commentDraftSelectionKey) as { from: number; to: number } | null | undefined;
+            if (next !== undefined) return next;
+            if (!value || !transaction.docChanged) return value;
+            const from = transaction.mapping.map(value.from);
+            const to = transaction.mapping.map(value.to);
+            return from < to ? { from, to } : null;
+          },
+        },
+        props: {
+          decorations(state) {
+            const range = commentDraftSelectionKey.getState(state);
+            if (!range) return null;
+            return DecorationSet.create(state.doc, [
+              Decoration.inline(range.from, range.to, { class: "novo-comment-draft-mark" }),
+            ]);
+          },
+        },
+      }),
+    ];
+  },
+});
+
+const CommentMark = Mark.create({
+  name: "comment",
+  inclusive: false,
+  addAttributes() {
+    return {
+      threadId: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("data-comment-thread-id") ?? "",
+        renderHTML: (attributes) => attributes.threadId ? { "data-comment-thread-id": attributes.threadId } : {},
+      },
+    };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-comment-thread-id]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["span", mergeAttributes(HTMLAttributes, { class: "novo-comment-mark" }), 0];
   },
 });
 
@@ -104,14 +200,21 @@ export function attachmentToInlineAttrs(attachment: Attachment): InlineAttachmen
   };
 }
 
-export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, readOnly = false }: RichTextEditorProps) {
+export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, onPrint, onExportPdf, onExportArchive, exporting = false, onCreateComment, onSelectCommentThread, commentThreadToRemove = "", onCommentThreadRemoved, readOnly = false }: RichTextEditorProps) {
   const lastPageId = useRef(pageId);
   const dirty = useRef(false);
   const initialCanonicalBody = useRef<string | null>(null);
   if (initialCanonicalBody.current === null) initialCanonicalBody.current = editorDocumentToBody(bodyToEditorDocument(value));
   const latestBody = useRef<string>(initialCanonicalBody.current ?? "");
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commentButtonRef = useRef<HTMLButtonElement | null>(null);
   const AttachmentCard = useMemo(() => createAttachmentCardExtension({ openSpreadsheet, openPresentation, readOnly }), [openPresentation, openSpreadsheet, readOnly]);
+  const [commentDraftOpen, setCommentDraftOpen] = useState(false);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentSelection, setCommentSelection] = useState<{ from: number; to: number; selectedText: string } | null>(null);
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+  const [commentError, setCommentError] = useState("");
+  const [commentBlockMessage, setCommentBlockMessage] = useState("");
 
   function clearAutosaveTimer() {
     if (!autosaveTimer.current) return;
@@ -144,6 +247,12 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       }),
       EditorTabBehavior,
       Underline,
+      TextStyle,
+      Color.configure({
+        types: ["textStyle"],
+      }),
+      CommentDraftSelectionHighlight,
+      CommentMark,
       Link.configure({
         autolink: true,
         openOnClick: false,
@@ -166,11 +275,24 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       attributes: {
         class: "rich-text-surface min-h-[460px] outline-none",
       },
+      handleClick: (_view, _pos, event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return false;
+        const commentElement = target.closest("[data-comment-thread-id]");
+        const threadId = commentElement?.getAttribute("data-comment-thread-id");
+        if (!threadId) return false;
+        onSelectCommentThread?.(threadId);
+        return false;
+      },
     },
     onUpdate: ({ editor: activeEditor }) => {
       if (readOnly) return;
       const body = editorDocumentToBody(activeEditor.getJSON());
       if (body === latestBody.current) return;
+      if (!activeEditor.isFocused && !dirty.current) {
+        latestBody.current = body;
+        return;
+      }
       dirty.current = true;
       latestBody.current = body;
       onChange(body);
@@ -199,6 +321,12 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     latestBody.current = nextBody;
     dirty.current = false;
     clearAutosaveTimer();
+    clearCommentDraftSelectionHighlight(editor);
+    setCommentDraftOpen(false);
+    setCommentDraft("");
+    setCommentSelection(null);
+    setCommentError("");
+    setCommentBlockMessage("");
     let canceled = false;
     queueMicrotask(() => {
       if (!canceled && !editor.isDestroyed) {
@@ -216,6 +344,21 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     };
   }, []);
 
+  useEffect(() => {
+    if (!editor || !commentThreadToRemove) return;
+    const removed = removeCommentMarkByThreadId(editor, commentThreadToRemove);
+    if (!removed) {
+      onCommentThreadRemoved?.(null);
+      return;
+    }
+    const body = editorDocumentToBody(editor.getJSON());
+    latestBody.current = body;
+    dirty.current = false;
+    clearAutosaveTimer();
+    onChange(body);
+    onCommentThreadRemoved?.(body);
+  }, [commentThreadToRemove, editor, onChange, onCommentThreadRemoved]);
+
   if (!editor) {
     return <div className="min-h-[460px] border border-slate-300 bg-white p-4 text-sm text-slate-500">Loading editor...</div>;
   }
@@ -230,6 +373,60 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       return;
     }
     editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run();
+  }
+
+  function openCommentComposer() {
+    if (!editor || readOnly || !onCreateComment) return;
+    const { from, to, empty } = editor.state.selection;
+    if (empty || from === to) return;
+    const selectedText = editor.state.doc.textBetween(from, to, " ").trim();
+    if (!selectedText) return;
+    if (selectionHasCommentMark(editor, from, to)) {
+      clearCommentDraftSelectionHighlight(editor);
+      setCommentSelection(null);
+      setCommentDraft("");
+      setCommentError("");
+      setCommentBlockMessage("This selection overlaps an existing comment. Open the existing comment or select different text.");
+      setCommentDraftOpen(true);
+      return;
+    }
+    setCommentSelection({ from, to, selectedText });
+    setCommentDraftSelectionHighlight(editor, { from, to });
+    setCommentDraft("");
+    setCommentError("");
+    setCommentBlockMessage("");
+    setCommentDraftOpen(true);
+  }
+
+  async function submitCommentDraft() {
+    if (!editor || !commentSelection || !onCreateComment || commentSubmitting) return;
+    const body = commentDraft.trim();
+    if (!body) {
+      setCommentError("Write a comment first.");
+      return;
+    }
+    setCommentSubmitting(true);
+    setCommentError("");
+    try {
+      const thread = await onCreateComment({ selectedText: commentSelection.selectedText, body });
+      if (!thread) throw new Error("Comment was not created.");
+      editor.chain().focus().setTextSelection({ from: commentSelection.from, to: commentSelection.to }).setMark("comment", { threadId: thread.id }).run();
+      clearCommentDraftSelectionHighlight(editor);
+      const nextBody = editorDocumentToBody(editor.getJSON());
+      latestBody.current = nextBody;
+      dirty.current = false;
+      clearAutosaveTimer();
+      onChange(nextBody);
+      onBlur(nextBody);
+      setCommentDraftOpen(false);
+      setCommentDraft("");
+      setCommentSelection(null);
+      onSelectCommentThread?.(thread.id);
+    } catch (error) {
+      setCommentError(error instanceof Error ? error.message : "Could not add comment.");
+    } finally {
+      setCommentSubmitting(false);
+    }
   }
 
   async function insertInlineFile(blockType: BlockType, accept: string) {
@@ -275,39 +472,122 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
 
   return (
     <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border border-slate-300 bg-white">
-      {!readOnly ? <div className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
-        <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
-        <ToolbarButton active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()} label="Italic"><Italic size={15} /></ToolbarButton>
-        <ToolbarButton active={editor.isActive("underline")} onClick={() => editor.chain().focus().toggleUnderline().run()} label="Underline"><UnderlineIcon size={15} /></ToolbarButton>
-        <ToolbarButton active={editor.isActive("strike")} onClick={() => editor.chain().focus().toggleStrike().run()} label="Strikethrough"><Strikethrough size={15} /></ToolbarButton>
-        <ToolbarDivider />
-        <ToolbarButton active={editor.isActive("heading", { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} label="Heading 1"><Heading1 size={16} /></ToolbarButton>
-        <ToolbarButton active={editor.isActive("heading", { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} label="Heading 2"><Heading2 size={16} /></ToolbarButton>
-        <ToolbarButton active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()} label="Bullet list"><List size={15} /></ToolbarButton>
-        <ToolbarButton active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()} label="Numbered list"><ListOrdered size={15} /></ToolbarButton>
-        <ToolbarButton active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()} label="Quote"><Quote size={15} /></ToolbarButton>
-        <ToolbarButton active={editor.isActive("codeBlock")} onClick={() => editor.chain().focus().toggleCodeBlock().run()} label="Code block"><Code size={15} /></ToolbarButton>
-        <ToolbarDivider />
-        <ToolbarButton active={editor.isActive("link")} onClick={setLink} label="Link"><LinkIcon size={15} /></ToolbarButton>
-        <ToolbarButton onClick={() => editor.chain().focus().unsetLink().run()} label="Remove link"><Unlink size={15} /></ToolbarButton>
-        <ToolbarDivider />
-        <ToolbarButton onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} label="Insert table"><TableIcon size={15} /></ToolbarButton>
-        <ToolbarButton onClick={() => editor.chain().focus().addRowAfter().run()} label="Add table row"><Rows3 size={15} /></ToolbarButton>
-        <ToolbarButton onClick={() => editor.chain().focus().deleteTable().run()} label="Delete table"><Trash2 size={15} /></ToolbarButton>
-        <ToolbarDivider />
-        <ToolbarButton onClick={() => void insertInlineFile("image", imageAccept)} label="Insert image"><FileImage size={15} /></ToolbarButton>
-        <ToolbarButton onClick={() => void insertInlineFile("sheet", spreadsheetAccept)} label="Insert spreadsheet"><FileSpreadsheet size={15} /></ToolbarButton>
-        <ToolbarButton onClick={() => void insertInlineFile("slides", presentationAccept)} label="Insert presentation"><Presentation size={15} /></ToolbarButton>
-        <ToolbarButton onClick={() => void insertInlineFile("file", "")} label="Insert file"><Plus size={15} /></ToolbarButton>
-        <ToolbarDivider />
-        <ToolbarButton onClick={() => editor.chain().focus().undo().run()} label="Undo"><Undo2 size={15} /></ToolbarButton>
-        <ToolbarButton onClick={() => editor.chain().focus().redo().run()} label="Redo"><Redo2 size={15} /></ToolbarButton>
+      {!readOnly || onPrint || onExportPdf || onExportArchive ? <div className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
+        {!readOnly ? (
+          <>
+            <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
+            <ToolbarButton active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()} label="Italic"><Italic size={15} /></ToolbarButton>
+            <ToolbarButton active={editor.isActive("underline")} onClick={() => editor.chain().focus().toggleUnderline().run()} label="Underline"><UnderlineIcon size={15} /></ToolbarButton>
+            <ToolbarButton active={editor.isActive("strike")} onClick={() => editor.chain().focus().toggleStrike().run()} label="Strikethrough"><Strikethrough size={15} /></ToolbarButton>
+            <TextColorMenu editor={editor} />
+            <ToolbarDivider />
+            <ToolbarButton active={editor.isActive("heading", { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} label="Heading 1"><Heading1 size={16} /></ToolbarButton>
+            <ToolbarButton active={editor.isActive("heading", { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} label="Heading 2"><Heading2 size={16} /></ToolbarButton>
+            <ToolbarButton active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()} label="Bullet list"><List size={15} /></ToolbarButton>
+            <ToolbarButton active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()} label="Numbered list"><ListOrdered size={15} /></ToolbarButton>
+            <ToolbarButton active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()} label="Quote"><Quote size={15} /></ToolbarButton>
+            <ToolbarButton active={editor.isActive("codeBlock")} onClick={() => editor.chain().focus().toggleCodeBlock().run()} label="Code block"><Code size={15} /></ToolbarButton>
+            {onCreateComment ? <ToolbarButton buttonRef={commentButtonRef} onClick={openCommentComposer} label="Add comment"><MessageSquarePlus size={15} /></ToolbarButton> : null}
+            <ToolbarDivider />
+            <ToolbarButton active={editor.isActive("link")} onClick={setLink} label="Link"><LinkIcon size={15} /></ToolbarButton>
+            <ToolbarButton onClick={() => editor.chain().focus().unsetLink().run()} label="Remove link"><Unlink size={15} /></ToolbarButton>
+            <ToolbarDivider />
+            <ToolbarButton onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} label="Insert table"><TableIcon size={15} /></ToolbarButton>
+            <ToolbarButton onClick={() => editor.chain().focus().deleteRow().run()} label="Delete row"><TableActionIcon kind="row" action="delete" /></ToolbarButton>
+            <ToolbarButton onClick={() => editor.chain().focus().addRowAfter().run()} label="Add row below"><TableActionIcon kind="row" action="add" /></ToolbarButton>
+            <ToolbarButton onClick={() => editor.chain().focus().deleteColumn().run()} label="Delete column"><TableActionIcon kind="column" action="delete" /></ToolbarButton>
+            <ToolbarButton onClick={() => editor.chain().focus().addColumnAfter().run()} label="Add column right"><TableActionIcon kind="column" action="add" /></ToolbarButton>
+            <ToolbarButton onClick={() => editor.chain().focus().deleteTable().run()} label="Delete table"><TableActionIcon kind="table" action="delete" /></ToolbarButton>
+            <ToolbarDivider />
+            <ToolbarButton onClick={() => void insertInlineFile("image", imageAccept)} label="Insert image"><FileImage size={15} /></ToolbarButton>
+            <ToolbarButton onClick={() => void insertInlineFile("sheet", spreadsheetAccept)} label="Insert spreadsheet"><FileSpreadsheet size={15} /></ToolbarButton>
+            <ToolbarButton onClick={() => void insertInlineFile("slides", presentationAccept)} label="Insert presentation"><Presentation size={15} /></ToolbarButton>
+            <ToolbarButton onClick={() => void insertInlineFile("file", "")} label="Insert file"><Plus size={15} /></ToolbarButton>
+            <ToolbarDivider />
+            <ToolbarButton onClick={() => editor.chain().focus().undo().run()} label="Undo"><Undo2 size={15} /></ToolbarButton>
+            <ToolbarButton onClick={() => editor.chain().focus().redo().run()} label="Redo"><Redo2 size={15} /></ToolbarButton>
+          </>
+        ) : null}
+        {onPrint || onExportPdf || onExportArchive ? (
+          <>
+            {!readOnly ? <ToolbarDivider /> : null}
+            {onPrint ? <ToolbarButton onClick={() => onPrint(getPrintSelection(editor))} label="Print page"><Printer size={15} /></ToolbarButton> : null}
+            {onExportPdf || onExportArchive ? <ExportMenu onExportPdf={onExportPdf} onExportArchive={onExportArchive} exporting={exporting} /> : null}
+          </>
+        ) : null}
       </div> : null}
       <div className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden scroll-contained p-4" onDragOverCapture={readOnly ? undefined : handleEditorDragOver} onDropCapture={readOnly ? undefined : handleEditorDrop}>
         <EditorContent editor={editor} />
       </div>
+      {commentDraftOpen ? (
+        <CommentComposer
+          anchorRef={commentButtonRef}
+          value={commentDraft}
+          error={commentError}
+          blockMessage={commentBlockMessage}
+          submitting={commentSubmitting}
+          onChange={setCommentDraft}
+          onCancel={() => {
+            clearCommentDraftSelectionHighlight(editor);
+            setCommentDraftOpen(false);
+            setCommentDraft("");
+            setCommentSelection(null);
+            setCommentError("");
+            setCommentBlockMessage("");
+          }}
+          onSubmit={() => void submitCommentDraft()}
+        />
+      ) : null}
     </div>
   );
+}
+
+function getPrintSelection(editor: Editor) {
+  if (editor.state.selection.empty) return undefined;
+  const selectionJson = editor.state.selection.content().content.toJSON();
+  if (!Array.isArray(selectionJson) || selectionJson.length === 0) return undefined;
+  return { content: selectionJson as JSONContent[] };
+}
+
+function setCommentDraftSelectionHighlight(editor: Editor, range: { from: number; to: number }) {
+  editor.view.dispatch(editor.state.tr.setMeta(commentDraftSelectionKey, range));
+}
+
+function clearCommentDraftSelectionHighlight(editor: Editor) {
+  editor.view.dispatch(editor.state.tr.setMeta(commentDraftSelectionKey, null));
+}
+
+function selectionHasCommentMark(editor: Editor, from: number, to: number) {
+  const commentMarkType = editor.state.schema.marks.comment;
+  if (!commentMarkType) return false;
+  let found = false;
+  editor.state.doc.nodesBetween(from, to, (node) => {
+    if (found) return false;
+    if (!node.isText || !node.marks.length) return;
+    found = node.marks.some((mark) => mark.type === commentMarkType);
+    return !found;
+  });
+  return found;
+}
+
+function removeCommentMarkByThreadId(editor: Editor, threadId: string) {
+  const commentMarkType = editor.state.schema.marks.comment;
+  if (!commentMarkType) return false;
+  let transaction = editor.state.tr;
+  let removed = false;
+
+  editor.state.doc.descendants((node, position) => {
+    if (!node.isText || !node.marks.length) return;
+    const matchingMarks = node.marks.filter((mark: ProseMirrorMark) => mark.type === commentMarkType && String(mark.attrs.threadId ?? "") === threadId);
+    for (const mark of matchingMarks) {
+      transaction = transaction.removeMark(position, position + node.nodeSize, mark);
+      removed = true;
+    }
+  });
+
+  if (!removed) return false;
+  editor.view.dispatch(transaction);
+  return true;
 }
 
 function createAttachmentCardExtension(actions: { openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; readOnly: boolean }) {
@@ -368,7 +648,7 @@ function parseInlineAttachmentDrag(dataTransfer: DataTransfer): InlineAttachment
 function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet, openPresentation, readOnly }: NodeViewProps & { openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; readOnly: boolean }) {
   const attrs = node.attrs as InlineAttachmentAttrs;
   const kind = normalizeKind(attrs.kind);
-  const canEdit = kind === "sheet" && !readOnly;
+  const canViewSheet = kind === "sheet";
   const canPreview = kind === "slides";
   const dragHandlers = readOnly ? {} : { onDragStart: startInlineAttachmentDrag, onDragEnd: clearInlineAttachmentDragState };
   const updatedAt = attrs.updatedAt || attrs.createdAt;
@@ -379,6 +659,11 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
   const downloadUrl = `/api/attachments/${attrs.attachmentId}/download`;
   const [sheetPreview, setSheetPreview] = useState<SpreadsheetPreview | null>(null);
   const [sheetPreviewStatus, setSheetPreviewStatus] = useState("");
+  const [annotationDocument, setAnnotationDocument] = useState<AnnotationDocument>({ items: [] });
+  const [annotationOpen, setAnnotationOpen] = useState(false);
+  const [annotationStatus, setAnnotationStatus] = useState("");
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageLoadError, setImageLoadError] = useState("");
 
   useEffect(() => {
     if (kind !== "sheet") return;
@@ -406,18 +691,43 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
     };
   }, [attrs.attachmentId, attrs.size, attrs.updatedAt, kind]);
 
-  function handleSpreadsheetSaved(attachment: InlineAttachmentAttrs) {
-    updateAttributes({
-      filename: attachment.filename,
-      mimeType: attachment.mimeType,
-      size: attachment.size,
-      createdAt: attachment.createdAt,
-      updatedAt: attachment.updatedAt,
+  useEffect(() => {
+    if (kind !== "image") return;
+    let active = true;
+    setImageLoaded(false);
+    setImageLoadError("");
+    async function loadAnnotation() {
+      try {
+        const response = await fetch(`/api/attachments/${attrs.attachmentId}/annotation`, { cache: "no-store" });
+        const body = (await response.json().catch(() => null)) as { annotation?: { data?: unknown }; error?: string } | null;
+        if (!response.ok) throw new Error(body?.error || `Annotation load failed (${response.status})`);
+        if (active) setAnnotationDocument(normalizeAnnotationDocument(body?.annotation?.data));
+      } catch (error) {
+        if (active) setAnnotationStatus(error instanceof Error ? error.message : "Unable to load annotations");
+      }
+    }
+    void loadAnnotation();
+    return () => {
+      active = false;
+    };
+  }, [attrs.attachmentId, attrs.mimeType, attrs.updatedAt, kind]);
+
+  async function saveAnnotationDocument(data: AnnotationDocument) {
+    const response = await fetch(`/api/attachments/${attrs.attachmentId}/annotation`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data }),
     });
+    const body = (await response.json().catch(() => null)) as { annotation?: { data?: unknown }; error?: string } | null;
+    if (!response.ok) throw new Error(body?.error || `Annotation save failed (${response.status})`);
+    const nextDocument = normalizeAnnotationDocument(body?.annotation?.data ?? data);
+    setAnnotationStatus("");
+    return nextDocument;
   }
 
   if (kind === "image") {
     const displayWidth = normalizeDisplayWidth(attrs.displayWidth);
+    const imageUrl = isBrowserRenderableImage(attrs.mimeType) ? viewUrl : `/api/attachments/${attrs.attachmentId}/preview/image`;
 
     function startImageResize(event: ReactPointerEvent<HTMLButtonElement>) {
       const wrapper = imageWrapperRef.current;
@@ -436,16 +746,44 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
       <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
         <div
           ref={imageWrapperRef}
-          className={`group/inline-image relative inline-block max-w-full align-top ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
+          className={`group/inline-image relative inline-block max-w-full overflow-hidden border border-slate-300 bg-slate-50 align-top text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
           style={displayWidth ? { width: `${displayWidth}px` } : undefined}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={viewUrl}
-            alt={attrs.filename}
-            className="block h-auto max-h-[640px] max-w-full object-contain"
-            draggable={false}
-          />
+          <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
+            {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move image" aria-label="Move image">
+              <GripVertical size={16} />
+            </button> : null}
+            <FileImage size={17} className="shrink-0 text-cyan-700" />
+            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
+            <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
+            {!readOnly ? <button type="button" tabIndex={-1} onClick={() => setAnnotationOpen(true)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Pencil size={13} />Annotate</button> : null}
+          </div>
+          <div className="relative block min-h-28 w-full max-w-full bg-white">
+            {!imageLoaded && !imageLoadError ? (
+              <div className="flex min-h-28 w-full items-center justify-center gap-2 px-4 py-8 text-xs text-slate-500">
+                <Loader2 size={14} className="animate-spin" />
+                Loading image...
+              </div>
+            ) : null}
+            {imageLoadError ? <div className="w-full px-4 py-8 text-xs text-rose-700">{imageLoadError}</div> : null}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageUrl}
+              alt={attrs.filename}
+              className={`${imageLoaded && !imageLoadError ? "block" : "absolute left-0 top-0 size-px opacity-0"} h-auto max-h-[640px] max-w-full object-contain`}
+              draggable={false}
+              onLoad={() => {
+                setImageLoaded(true);
+                setImageLoadError("");
+              }}
+              onError={() => {
+                setImageLoaded(true);
+                setImageLoadError("Unable to load image preview.");
+              }}
+            />
+            {imageLoaded && !imageLoadError ? <AnnotationOverlay document={annotationDocument} /> : null}
+          </div>
+          {annotationStatus ? <div className="border-t border-slate-200 bg-white px-3 py-1.5 text-xs text-rose-700">{annotationStatus}</div> : null}
           {!readOnly ? <button
             type="button"
             onPointerDown={startImageResize}
@@ -462,6 +800,16 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
             title="Resize image"
             aria-label="Resize image"
           /> : null}
+          {annotationOpen ? (
+            <ImageAnnotationModal
+              filename={attrs.filename}
+              imageUrl={imageUrl}
+              initialDocument={annotationDocument}
+              onClose={() => setAnnotationOpen(false)}
+              onSaved={setAnnotationDocument}
+              saveDocument={saveAnnotationDocument}
+            />
+          ) : null}
         </div>
       </NodeViewWrapper>
     );
@@ -538,7 +886,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
             <FileSpreadsheet size={17} className="shrink-0 text-emerald-700" />
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
-            {canEdit ? <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs, handleSpreadsheetSaved)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Edit3 size={13} />Edit</button> : null}
+            <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Eye size={13} />View</button>
             <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Download size={13} />Download</a>
           </div>
           {sheetPreview ? (
@@ -555,8 +903,14 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
                   <tbody>
                     {sheetPreview.rows.map((row, rowIndex) => (
                       <tr key={rowIndex}>
-                        {row.map((cell, columnIndex) => (
-                          <td key={columnIndex} className={`max-w-56 border border-slate-200 px-2 py-1 align-top text-slate-800 ${rowIndex === 0 ? "bg-slate-100 font-medium text-slate-950" : "bg-white"}`}>
+                        {row.map((cell, columnIndex) => cell.hidden ? null : (
+                          <td
+                            key={columnIndex}
+                            colSpan={cell.colSpan}
+                            rowSpan={cell.rowSpan}
+                            className={`max-w-56 border border-slate-200 px-2 py-1 align-top text-slate-800 ${rowIndex === 0 && !cell.backgroundColor ? "bg-slate-100 font-medium text-slate-950" : "bg-white"}`}
+                            style={spreadsheetCellStyle(cell)}
+                          >
                             <div className="max-h-20 overflow-hidden whitespace-pre-wrap break-words">{formatSpreadsheetCell(cell)}</div>
                           </td>
                         ))}
@@ -608,7 +962,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
               {updatedAt ? <AttachmentMeta icon={<CalendarClock size={12} />} label="Updated" value={formatDateTime(updatedAt)} /> : null}
             </dl>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {canEdit ? <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs, handleSpreadsheetSaved)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Edit3 size={13} />Edit</button> : null}
+              {canViewSheet ? <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Eye size={13} />View</button> : null}
               {canPreview ? <button type="button" tabIndex={-1} onClick={() => openPresentation(attrs)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Eye size={13} />Preview</button> : null}
               <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Download size={13} />Download</a>
             </div>
@@ -617,6 +971,385 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
       </div>
     </NodeViewWrapper>
   );
+}
+
+function ImageAnnotationModal({ filename, imageUrl, initialDocument, onClose, onSaved, saveDocument }: { filename: string; imageUrl: string; initialDocument: AnnotationDocument; onClose: () => void; onSaved: (document: AnnotationDocument) => void; saveDocument: (document: AnnotationDocument) => Promise<AnnotationDocument> }) {
+  const [draft, setDraft] = useState<AnnotationDocument>(() => normalizeAnnotationDocument(initialDocument));
+  const [tool, setTool] = useState<AnnotationTool>("pen");
+  const [color, setColor] = useState<string>(ANNOTATION_COLORS[0]);
+  const [currentItem, setCurrentItem] = useState<AnnotationItem | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
+  const [error, setError] = useState("");
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageError, setImageError] = useState("");
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftRef = useRef(draft);
+  const queuedSaveDocument = useRef<AnnotationDocument | null>(null);
+  const saveInFlight = useRef(false);
+  const saveWaiters = useRef<Array<(ok: boolean) => void>>([]);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    setImageLoaded(false);
+    setImageError("");
+  }, [imageUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
+
+  function queueSave(nextDocument: AnnotationDocument) {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSaveState("idle");
+    saveTimer.current = setTimeout(() => {
+      void flushSave(nextDocument);
+    }, 700);
+  }
+
+  async function flushSave(document = draftRef.current) {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    queuedSaveDocument.current = document;
+    return drainSaveQueue();
+  }
+
+  async function drainSaveQueue(): Promise<boolean> {
+    if (saveInFlight.current) {
+      return new Promise<boolean>((resolve) => {
+        saveWaiters.current.push(resolve);
+      });
+    }
+    saveInFlight.current = true;
+    let ok = true;
+    setSaveState("saving");
+    setError("");
+    try {
+      while (queuedSaveDocument.current) {
+        const document = queuedSaveDocument.current;
+        const requestedKey = annotationDocumentKey(document);
+        queuedSaveDocument.current = null;
+        try {
+          const saved = await saveDocument(document);
+          if (annotationDocumentKey(draftRef.current) === requestedKey) {
+            draftRef.current = saved;
+            setDraft(saved);
+            onSaved(saved);
+          }
+        } catch (saveError) {
+          ok = false;
+          setSaveState("failed");
+          setError(saveError instanceof Error ? saveError.message : "Annotation save failed");
+          break;
+        }
+      }
+      if (ok) {
+        setSaveState("saved");
+        window.setTimeout(() => setSaveState((state) => state === "saved" ? "idle" : state), 1500);
+      }
+    } finally {
+      saveInFlight.current = false;
+      if (queuedSaveDocument.current && ok) ok = await drainSaveQueue();
+      const waiters = saveWaiters.current.splice(0);
+      for (const resolve of waiters) resolve(ok);
+    }
+    return ok;
+  }
+
+  function commit(nextDocument: AnnotationDocument) {
+    const normalizedDocument = normalizeAnnotationDocument(nextDocument);
+    draftRef.current = normalizedDocument;
+    setDraft(normalizedDocument);
+    onSaved(normalizedDocument);
+    queueSave(normalizedDocument);
+  }
+
+  function pointFromEvent(event: ReactPointerEvent<HTMLElement>): AnnotationPoint | null {
+    const surface = surfaceRef.current;
+    if (!surface) return null;
+    const rect = surface.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+      x: clamp((event.clientX - rect.left) / rect.width, 0, 1),
+      y: clamp((event.clientY - rect.top) / rect.height, 0, 1),
+    };
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (!imageLoaded || imageError) return;
+    const point = pointFromEvent(event);
+    if (!point) return;
+    if (tool === "erase") {
+      const itemId = findAnnotationItemNearPoint(draftRef.current.items, point);
+      if (!itemId) return;
+      commit({ items: draftRef.current.items.filter((item) => item.id !== itemId) });
+      return;
+    }
+    const nextItem: AnnotationItem = tool === "arrow"
+      ? { id: randomClientId(), type: "arrow", color, width: 3, from: point, to: point }
+      : { id: randomClientId(), type: "pen", color, width: 3, points: [point] };
+    setCurrentItem(nextItem);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!currentItem) return;
+    const point = pointFromEvent(event);
+    if (!point) return;
+    if (currentItem.type === "arrow") setCurrentItem({ ...currentItem, to: point });
+    if (currentItem.type === "pen") setCurrentItem({ ...currentItem, points: [...currentItem.points, point] });
+  }
+
+  function handlePointerUp() {
+    if (!currentItem) return;
+    const item = currentItem;
+    setCurrentItem(null);
+    if (item.type === "pen" && item.points.length < 2) return;
+    if (item.type === "arrow" && annotationDistance(item.from, item.to) < 0.01) return;
+    commit({ items: [...draftRef.current.items, item] });
+  }
+
+  function undo() {
+    if (!draft.items.length) return;
+    commit({ items: draft.items.slice(0, -1) });
+  }
+
+  function clear() {
+    if (!draft.items.length || !window.confirm("Clear all annotations on this image?")) return;
+    commit({ items: [] });
+  }
+
+  async function closeAfterSave() {
+    if (await flushSave()) onClose();
+  }
+
+  const visibleDocument = currentItem ? { items: [...draft.items, currentItem] } : draft;
+
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/75 p-5" role="dialog" aria-modal="true" aria-label={`Annotate ${filename}`}>
+      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden border border-slate-700 bg-white shadow-2xl">
+        <div className="flex min-w-0 items-center gap-3 border-b border-slate-200 bg-slate-950 px-4 py-3 text-white">
+          <FileImage size={20} className="shrink-0 text-cyan-300" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-base font-semibold">Annotate image</div>
+            <div className="truncate text-xs text-slate-300">{filename}</div>
+          </div>
+          <div className="text-xs text-slate-300">{saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : saveState === "failed" ? "Save failed" : ""}</div>
+          <button type="button" onClick={closeAfterSave} className="grid size-9 place-items-center border border-slate-600 text-slate-200 hover:bg-slate-800" aria-label="Close annotation editor"><X size={16} /></button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2">
+          <AnnotationToolButton active={tool === "pen"} onClick={() => setTool("pen")} label="Freehand"><Pencil size={15} /></AnnotationToolButton>
+          <AnnotationToolButton active={tool === "arrow"} onClick={() => setTool("arrow")} label="Arrow"><ArrowUpRight size={15} /></AnnotationToolButton>
+          <AnnotationToolButton active={tool === "erase"} onClick={() => setTool("erase")} label="Erase object"><Eraser size={15} /></AnnotationToolButton>
+          <div className="mx-1 h-6 w-px bg-slate-300" />
+          {ANNOTATION_COLORS.map((swatch) => (
+            <button
+              key={swatch}
+              type="button"
+              onClick={() => setColor(swatch)}
+              className={`size-7 border ${color === swatch ? "border-cyan-600 ring-2 ring-cyan-200" : "border-slate-300"}`}
+              style={{ backgroundColor: swatch }}
+              aria-label={`Use ${swatch}`}
+            />
+          ))}
+          <div className="mx-1 h-6 w-px bg-slate-300" />
+          <button type="button" onClick={undo} disabled={!draft.items.length} className="inline-flex h-8 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400"><Undo2 size={14} />Undo</button>
+          <button type="button" onClick={clear} disabled={!draft.items.length} className="inline-flex h-8 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400"><Trash2 size={14} />Clear</button>
+          {tool === "erase" ? <div className="ml-auto text-xs text-slate-500">Click a stroke or arrow to remove it.</div> : null}
+        </div>
+        {error ? <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">{error}</div> : null}
+        <div className="min-h-0 flex-1 overflow-auto bg-slate-100 p-4">
+          <div
+            ref={surfaceRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={() => setCurrentItem(null)}
+            className={`relative mx-auto inline-block min-h-48 min-w-80 max-w-full select-none bg-white shadow-lg ${imageLoaded && !imageError ? "cursor-crosshair" : "cursor-default"}`}
+          >
+            {!imageLoaded && !imageError ? (
+              <div className="flex min-h-48 min-w-80 items-center justify-center gap-2 px-5 py-12 text-sm text-slate-500">
+                <Loader2 size={16} className="animate-spin" />
+                Loading image...
+              </div>
+            ) : null}
+            {imageError ? <div className="px-5 py-12 text-sm text-rose-700">{imageError}</div> : null}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageUrl}
+              alt={filename}
+              className={`${imageLoaded && !imageError ? "block" : "absolute left-0 top-0 size-px opacity-0"} max-h-[72vh] max-w-full object-contain`}
+              draggable={false}
+              onLoad={() => {
+                setImageLoaded(true);
+                setImageError("");
+              }}
+              onError={() => {
+                setImageLoaded(true);
+                setImageError("Unable to load image preview.");
+              }}
+            />
+            {imageLoaded && !imageError ? <AnnotationOverlay document={visibleDocument} interactive /> : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnnotationToolButton({ active, onClick, label, children }: { active: boolean; onClick: () => void; label: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`grid size-8 place-items-center border text-sm ${active ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function AnnotationOverlay({ document, interactive = false }: { document: AnnotationDocument; interactive?: boolean }) {
+  if (!document.items.length) return null;
+  return (
+    <svg
+      className={`absolute inset-0 size-full ${interactive ? "" : "pointer-events-none"}`}
+      viewBox={`0 0 ${ANNOTATION_CANVAS_SIZE} ${ANNOTATION_CANVAS_SIZE}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <defs>
+        {ANNOTATION_COLORS.map((color) => (
+          <marker key={color} id={`annotation-arrow-${color.slice(1)}`} markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill={color} />
+          </marker>
+        ))}
+      </defs>
+      {document.items.map((item) => {
+        if (item.type === "pen") {
+          const pathData = item.points.map((point, index) => `${index === 0 ? "M" : "L"} ${scaleAnnotationValue(point.x)} ${scaleAnnotationValue(point.y)}`).join(" ");
+          return <path key={item.id} d={pathData} fill="none" stroke={item.color} strokeLinecap="round" strokeLinejoin="round" strokeWidth={item.width} vectorEffect="non-scaling-stroke" />;
+        }
+        if (item.type === "arrow") {
+          return (
+            <line
+              key={item.id}
+              x1={scaleAnnotationValue(item.from.x)}
+              y1={scaleAnnotationValue(item.from.y)}
+              x2={scaleAnnotationValue(item.to.x)}
+              y2={scaleAnnotationValue(item.to.y)}
+              stroke={item.color}
+              strokeLinecap="round"
+              strokeWidth={item.width}
+              vectorEffect="non-scaling-stroke"
+              markerEnd={`url(#annotation-arrow-${item.color.replace("#", "")})`}
+            />
+          );
+        }
+        return null;
+      })}
+    </svg>
+  );
+}
+
+function isBrowserRenderableImage(mimeType: string) {
+  return new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]).has(mimeType.toLowerCase());
+}
+
+function normalizeAnnotationDocument(value: unknown): AnnotationDocument {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { items: [] };
+  const items = (value as { items?: unknown }).items;
+  if (!Array.isArray(items)) return { items: [] };
+  return {
+    items: items.map(normalizeAnnotationItem).filter((item): item is AnnotationItem => Boolean(item)).slice(0, 1000),
+  };
+}
+
+function normalizeAnnotationItem(value: unknown): AnnotationItem | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  const id = typeof item.id === "string" && item.id ? item.id : randomClientId();
+  const color = normalizeAnnotationColor(item.color);
+  const width = clamp(Number(item.width || 3), 1, 12);
+  if (item.type === "pen") {
+    const points = Array.isArray(item.points) ? item.points.map(normalizeAnnotationPoint).filter((point): point is AnnotationPoint => Boolean(point)).slice(0, 5000) : [];
+    return points.length ? { id, type: "pen", color, width, points } : null;
+  }
+  if (item.type === "arrow") {
+    const from = normalizeAnnotationPoint(item.from);
+    const to = normalizeAnnotationPoint(item.to);
+    return from && to ? { id, type: "arrow", color, width, from, to } : null;
+  }
+  return null;
+}
+
+function annotationDocumentKey(document: AnnotationDocument) {
+  return JSON.stringify(document);
+}
+
+function normalizeAnnotationPoint(value: unknown): AnnotationPoint | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const point = value as { x?: unknown; y?: unknown };
+  const x = Number(point.x);
+  const y = Number(point.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x: clamp(x, 0, 1), y: clamp(y, 0, 1) };
+}
+
+function normalizeAnnotationColor(value: unknown) {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : ANNOTATION_COLORS[0];
+}
+
+function scaleAnnotationValue(value: number) {
+  return Math.round(clamp(value, 0, 1) * ANNOTATION_CANVAS_SIZE);
+}
+
+function randomClientId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `annotation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function findAnnotationItemNearPoint(items: AnnotationItem[], point: AnnotationPoint) {
+  let nearest: { id: string; distance: number } | null = null;
+  for (const item of items) {
+    const distance = distanceToAnnotationItem(item, point);
+    if (distance > 0.035) continue;
+    if (!nearest || distance < nearest.distance) nearest = { id: item.id, distance };
+  }
+  return nearest?.id ?? "";
+}
+
+function distanceToAnnotationItem(item: AnnotationItem, point: AnnotationPoint) {
+  if (item.type === "arrow") return distanceToSegment(point, item.from, item.to);
+  if (item.points.length === 1) return annotationDistance(item.points[0], point);
+  let minimum = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < item.points.length; index += 1) {
+    minimum = Math.min(minimum, distanceToSegment(point, item.points[index - 1], item.points[index]));
+  }
+  return minimum;
+}
+
+function distanceToSegment(point: AnnotationPoint, start: AnnotationPoint, end: AnnotationPoint) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return annotationDistance(point, start);
+  const t = clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared, 0, 1);
+  return annotationDistance(point, { x: start.x + t * dx, y: start.y + t * dy });
+}
+
+function annotationDistance(a: AnnotationPoint, b: AnnotationPoint) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function handleEditorTab(editor: Editor, outdent: boolean) {
@@ -719,9 +1452,220 @@ function clearEditorDropCursor(editorDom: HTMLElement) {
   editorDom.dispatchEvent(dragEndEvent);
 }
 
-function ToolbarButton({ active = false, label, onClick, children }: { active?: boolean; label: string; onClick: () => void; children: ReactNode }) {
+function TextColorMenu({ editor }: { editor: Editor }) {
+  const [open, setOpen] = useState(false);
+  const currentColor = normalizeTextColor(editor.getAttributes("textStyle").color);
+  const activeOption = TEXT_COLOR_OPTIONS.find((option) => option.value === currentColor) ?? TEXT_COLOR_OPTIONS[0];
+
+  function applyTextColor(color: string) {
+    if (color) editor.chain().focus().setColor(color).run();
+    else editor.chain().focus().unsetColor().run();
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => setOpen((value) => !value)}
+        title="Text color"
+        aria-label="Text color"
+        aria-expanded={open}
+        className={`grid size-8 place-items-center border text-slate-700 hover:bg-white ${currentColor ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-transparent"}`}
+      >
+        <span className="relative grid size-5 place-items-center">
+          <Palette size={15} />
+          <span className="absolute -bottom-0.5 left-1/2 h-1 w-4 -translate-x-1/2 border border-white" style={{ backgroundColor: activeOption.swatch }} />
+        </span>
+      </button>
+      {open ? (
+        <div
+          className="absolute left-0 top-full z-50 mt-1 w-44 border border-slate-300 bg-white p-1 shadow-lg"
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          {TEXT_COLOR_OPTIONS.map((option) => (
+            <button
+              key={option.label}
+              type="button"
+              onClick={() => applyTextColor(option.value)}
+              className={`flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 ${option.value === currentColor ? "bg-cyan-50 text-cyan-900" : ""}`}
+            >
+              <span className="size-3 shrink-0 rounded-full border border-slate-300" style={{ backgroundColor: option.swatch }} />
+              <span className="min-w-0 flex-1">{option.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ExportMenu({ onExportPdf, onExportArchive, exporting }: { onExportPdf?: () => void; onExportArchive?: () => void; exporting?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function positionMenu() {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const menuWidth = 176;
+      const viewportPadding = 8;
+      setMenuPosition({
+        top: rect.bottom + 4,
+        left: Math.max(viewportPadding, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - viewportPadding)),
+      });
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    positionMenu();
+    window.addEventListener("resize", positionMenu);
+    window.addEventListener("scroll", positionMenu, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("resize", positionMenu);
+      window.removeEventListener("scroll", positionMenu, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  function exportPdf() {
+    if (exporting) return;
+    setOpen(false);
+    onExportPdf?.();
+  }
+
+  function exportArchive() {
+    if (exporting) return;
+    setOpen(false);
+    onExportArchive?.();
+  }
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => !exporting && setOpen((value) => !value)}
+        disabled={exporting}
+        title={exporting ? "Exporting" : "Export"}
+        aria-label={exporting ? "Exporting" : "Export"}
+        aria-expanded={open}
+        className={`inline-flex size-8 items-center justify-center border text-sm text-slate-700 hover:bg-white disabled:cursor-wait disabled:text-slate-400 ${open ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-transparent"}`}
+      >
+        {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+      </button>
+      {open && menuPosition ? createPortal(
+        <div
+          className="fixed z-[1000] w-44 border border-slate-300 bg-white p-1 shadow-lg"
+          style={{ top: menuPosition.top, left: menuPosition.left }}
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          <div className="px-2 pb-1 pt-1 text-xs font-semibold text-slate-500">Export</div>
+          {onExportPdf ? (
+            <button
+              type="button"
+              onClick={exportPdf}
+              disabled={exporting}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:text-slate-400"
+            >
+              <FileText size={14} />
+              <span>PDF</span>
+            </button>
+          ) : null}
+          {onExportArchive ? (
+            <button
+              type="button"
+              onClick={exportArchive}
+              disabled={exporting}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:text-slate-400"
+            >
+              <FileArchive size={14} />
+              <span>ZIP archive</span>
+            </button>
+          ) : null}
+        </div>,
+        document.body,
+      ) : null}
+    </div>
+  );
+}
+
+function CommentComposer({ anchorRef, value, error, blockMessage, submitting, onChange, onCancel, onSubmit }: { anchorRef: RefObject<HTMLButtonElement | null>; value: string; error: string; blockMessage: string; submitting: boolean; onChange: (value: string) => void; onCancel: () => void; onSubmit: () => void }) {
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    function positionComposer() {
+      const rect = anchorRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = 320;
+      const padding = 8;
+      setPosition({
+        top: rect.bottom + 8,
+        left: Math.max(padding, Math.min(rect.left, window.innerWidth - width - padding)),
+      });
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") onCancel();
+    }
+
+    positionComposer();
+    window.addEventListener("resize", positionComposer);
+    window.addEventListener("scroll", positionComposer, true);
+    document.addEventListener("keydown", closeOnEscape);
+    if (!blockMessage) textAreaRef.current?.focus();
+    return () => {
+      window.removeEventListener("resize", positionComposer);
+      window.removeEventListener("scroll", positionComposer, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [anchorRef, blockMessage, onCancel]);
+
+  if (!position) return null;
+  return createPortal(
+    <div className="fixed z-[1000] w-80 border border-slate-300 bg-white p-3 shadow-xl" style={{ top: position.top, left: position.left }}>
+      <label className="text-xs font-semibold text-slate-700" htmlFor="comment-draft">Comment</label>
+      {blockMessage ? (
+        <p className="mt-2 border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-900">{blockMessage}</p>
+      ) : (
+        <textarea
+          ref={textAreaRef}
+          id="comment-draft"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          rows={4}
+          className="mt-2 w-full resize-none border border-slate-300 px-2 py-1.5 text-sm text-slate-900 outline-none focus:border-cyan-500"
+          placeholder="Add a comment..."
+        />
+      )}
+      {error ? <p className="mt-2 text-xs text-rose-700">{error}</p> : null}
+      <div className="mt-3 flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="h-8 border border-slate-300 bg-white px-3 text-xs text-slate-700 hover:bg-slate-100">{blockMessage ? "Close" : "Cancel"}</button>
+        {!blockMessage ? (
+          <button type="button" onClick={onSubmit} disabled={submitting || !value.trim()} className="inline-flex h-8 items-center gap-1.5 bg-slate-950 px-3 text-xs font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+            {submitting ? <Loader2 size={13} className="animate-spin" /> : null}
+            Comment
+          </button>
+        ) : null}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ToolbarButton({ active = false, label, onClick, children, buttonRef }: { active?: boolean; label: string; onClick: () => void; children: ReactNode; buttonRef?: RefObject<HTMLButtonElement | null> }) {
   return (
     <button
+      ref={buttonRef}
       type="button"
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
@@ -732,6 +1676,24 @@ function ToolbarButton({ active = false, label, onClick, children }: { active?: 
       {children}
     </button>
   );
+}
+
+function TableActionIcon({ kind, action }: { kind: "row" | "column" | "table"; action: "add" | "delete" }) {
+  const BaseIcon = kind === "row" ? Rows3 : kind === "column" ? Columns3 : TableIcon;
+  const BadgeIcon = action === "add" ? Plus : kind === "table" ? Trash2 : Minus;
+  return (
+    <span className="relative inline-grid size-5 place-items-center" aria-hidden="true">
+      <BaseIcon size={16} />
+      <span className="absolute -bottom-0.5 -right-0.5 grid size-3 place-items-center bg-slate-50 text-slate-700">
+        <BadgeIcon size={8} strokeWidth={2.7} />
+      </span>
+    </span>
+  );
+}
+
+function normalizeTextColor(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value.trim().toLowerCase();
 }
 
 function ToolbarDivider() {
@@ -781,10 +1743,23 @@ function formatBytes(value: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function formatSpreadsheetCell(value: string | number | boolean | null) {
+function formatSpreadsheetCell(cell: SpreadsheetPreviewCell) {
+  const value = cell.value;
   if (value === null) return "";
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   return String(value);
+}
+
+function spreadsheetCellStyle(cell: SpreadsheetPreviewCell): CSSProperties | undefined {
+  const style: CSSProperties = {};
+  if (cell.backgroundColor) style.backgroundColor = cell.backgroundColor;
+  if (cell.color) style.color = cell.color;
+  if (cell.bold) style.fontWeight = 700;
+  if (cell.italic) style.fontStyle = "italic";
+  if (cell.horizontalAlign) style.textAlign = cell.horizontalAlign;
+  if (cell.verticalAlign) style.verticalAlign = cell.verticalAlign;
+  if (cell.wrapText) style.whiteSpace = "pre-wrap";
+  return Object.keys(style).length ? style : undefined;
 }
 
 function normalizeDisplayWidth(value: unknown) {
@@ -802,7 +1777,8 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  const parsed = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
+  if (Number.isNaN(parsed)) return value;
+  const date = new Date(parsed);
   return date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }

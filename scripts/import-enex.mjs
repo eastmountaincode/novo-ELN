@@ -394,13 +394,13 @@ async function writeImportedResource(pageId, resource) {
 function buildAttachment({ pageId, resource, storageKey, createdAt }) {
   const id = crypto.randomUUID();
   const blockType = inferBlockType(resource.fileName, resource.mimeType);
-  return { id, pageId, originalName: resource.fileName, mimeType: resource.mimeType, size: resource.data.length, storageKey, blockType, createdAt, updatedAt: createdAt };
+  return { id, pageId, originalName: resource.fileName, mimeType: resource.mimeType, size: resource.data.length, storageKey, blockType, evernoteHash: resource.hash, createdAt, updatedAt: createdAt };
 }
 
 function insertImportedNote({ job, notebookId, pageId, note, body, plainText, attachments, createdAt, updatedAt }) {
   const attachmentSql = attachments.map((attachment) => `
-    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, created_at)
-    VALUES (${sql(attachment.id)}, ${sql(pageId)}, ${sql(attachment.originalName)}, ${sql(attachment.mimeType)}, ${attachment.size}, ${sql(attachment.storageKey)}, ${sql(attachment.blockType)}, ${sql(createdAt)});
+    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, evernote_hash, created_at)
+    VALUES (${sql(attachment.id)}, ${sql(pageId)}, ${sql(attachment.originalName)}, ${sql(attachment.mimeType)}, ${attachment.size}, ${sql(attachment.storageKey)}, ${sql(attachment.blockType)}, ${sql(attachment.evernoteHash || "")}, ${sql(createdAt)});
   `).join("\n");
   const tagSql = note.tags.map((tag) => `INSERT OR IGNORE INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n");
   execSql(`
@@ -503,7 +503,7 @@ function nodesToBlocks(nodes, attachmentsByHash, marks) {
     }
     if (tag === "ul" || tag === "ol") {
       flushParagraph();
-      const items = children.filter((child) => getNodeTag(child) === "li").map((child) => listItemNode(getNodeChildren(child), attachmentsByHash, marks));
+      const items = listItemsFromChildren(children, attachmentsByHash, marks);
       if (items.length) blocks.push({ type: tag === "ul" ? "bulletList" : "orderedList", content: items });
       continue;
     }
@@ -518,6 +518,29 @@ function nodesToBlocks(nodes, attachmentsByHash, marks) {
 
   flushParagraph();
   return blocks;
+}
+
+function listItemsFromChildren(nodes, attachmentsByHash, marks) {
+  const items = [];
+  for (const node of nodes) {
+    const tag = getNodeTag(node);
+    if (tag === "li") {
+      items.push(listItemNode(getNodeChildren(node), attachmentsByHash, marks));
+      continue;
+    }
+    if (tag === "ul" || tag === "ol") {
+      const nestedItems = listItemsFromChildren(getNodeChildren(node), attachmentsByHash, marks);
+      if (!nestedItems.length) continue;
+      const nestedList = { type: tag === "ul" ? "bulletList" : "orderedList", content: nestedItems };
+      const previousItem = items[items.length - 1];
+      if (previousItem) {
+        previousItem.content = [...(previousItem.content || []), nestedList];
+      } else {
+        items.push({ type: "listItem", content: [{ type: "paragraph" }, nestedList] });
+      }
+    }
+  }
+  return items;
 }
 
 function nodesToInline(nodes, attachmentsByHash, marks) {

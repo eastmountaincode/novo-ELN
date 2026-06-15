@@ -43,6 +43,18 @@ export function removeAttachmentCardsFromBody(body: string, attachmentId: string
   return editorDocumentToBody(removeAttachmentCards(parsed, attachmentId) ?? emptyEditorDocument);
 }
 
+export function remapAttachmentCardsInBody(body: string, attachmentIdMap: Record<string, string>) {
+  const parsed = parseEditorDocument(body);
+  if (!parsed) return body;
+  return editorDocumentToBody(remapAttachmentCards(parsed, attachmentIdMap));
+}
+
+export function removeCommentMarksFromBody(body: string, threadId: string) {
+  const parsed = parseEditorDocument(body);
+  if (!parsed) return body;
+  return editorDocumentToBody(removeCommentMarks(parsed, threadId));
+}
+
 function parseEditorDocument(body: string): JSONContent | null {
   if (!body.trim().startsWith("{")) return null;
   try {
@@ -120,4 +132,28 @@ function removeAttachmentCards(node: JSONContent, attachmentId: string): JSONCon
     .map((child) => removeAttachmentCards(child, attachmentId))
     .filter((child): child is JSONContent => Boolean(child));
   return { ...node, content };
+}
+
+function remapAttachmentCards(node: JSONContent, attachmentIdMap: Record<string, string>): JSONContent {
+  const attrs = node.attrs ? { ...node.attrs } : undefined;
+  if (node.type === "attachmentCard" && attrs) {
+    const attachmentId = String(attrs.attachmentId ?? "");
+    if (attachmentIdMap[attachmentId]) attrs.attachmentId = attachmentIdMap[attachmentId];
+  }
+  return {
+    ...node,
+    ...(attrs ? { attrs } : {}),
+    ...(node.content ? { content: node.content.map((child) => remapAttachmentCards(child, attachmentIdMap)) } : {}),
+  };
+}
+
+function removeCommentMarks(node: JSONContent, threadId: string): JSONContent {
+  const next: JSONContent = { ...node };
+  if (node.marks?.length) {
+    const marks = node.marks.filter((mark) => mark.type !== "comment" || String(mark.attrs?.threadId ?? "") !== threadId);
+    if (marks.length) next.marks = marks;
+    else delete next.marks;
+  }
+  if (node.content?.length) next.content = node.content.map((child) => removeCommentMarks(child, threadId));
+  return next;
 }

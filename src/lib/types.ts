@@ -13,6 +13,8 @@ export type AppUser = {
 
 export type AdminUser = AppUser & {
   createdAt: string;
+  lastLoginAt: string;
+  lastActivityAt: string;
   notebookCount: number;
 };
 
@@ -26,7 +28,6 @@ export type AdminDataFile = {
   createdAt: string;
   notebookName: string;
   pageTitle: string;
-  ownerEmail: string;
 };
 
 export type AdminDataOverview = {
@@ -58,6 +59,8 @@ export type ShareMember = {
   firstName: string;
   lastName: string;
   role: AccessRole;
+  appRole: UserRole;
+  implicitAdmin: boolean;
 };
 
 export type Attachment = {
@@ -68,8 +71,42 @@ export type Attachment = {
   size: number;
   storageKey: string;
   blockType: BlockType;
+  evernoteHash: string;
   createdAt: string;
   updatedAt: string;
+  annotation?: AttachmentAnnotation | null;
+};
+
+export type AttachmentAnnotation = {
+  dataJson: string;
+  updatedAt: string;
+  updatedBy: string;
+};
+
+export type PageComment = {
+  id: string;
+  threadId: string;
+  userId: string;
+  userFirstName: string;
+  userLastName: string;
+  userEmail: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PageCommentThread = {
+  id: string;
+  pageId: string;
+  createdBy: string;
+  createdByFirstName: string;
+  createdByLastName: string;
+  createdByEmail: string;
+  selectedText: string;
+  resolvedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  comments: PageComment[];
 };
 
 export type AuditEvent = {
@@ -88,6 +125,21 @@ export type AuditEvent = {
   eventCount: number;
   createdAt: string;
   updatedAt: string;
+  pageTitle?: string;
+  notebookName?: string;
+};
+
+export type AdminActivityOverview = {
+  events: AuditEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
+export type AdminAppSettings = {
+  prependDateToNewPages: boolean;
+  suggestTagsGlobally: boolean;
 };
 
 export type PageEntry = {
@@ -117,6 +169,8 @@ export type Notebook = {
   id: string;
   name: string;
   color: string;
+  pageTitleTemplate: string;
+  pageTitleTemplateEnabled: boolean;
   ownerId: string;
   createdAt: string;
   updatedAt: string;
@@ -141,6 +195,7 @@ export type Project = {
 
 export type Workspace = {
   user: AppUser;
+  appSettings: AdminAppSettings;
   members: AppUser[];
   notebooks: Notebook[];
   projects: Project[];

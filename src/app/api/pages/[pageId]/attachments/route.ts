@@ -63,6 +63,7 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
     size: bytes.length,
     storageKey,
     blockType,
+    evernoteHash: "",
     createdAt,
     updatedAt: createdAt,
   };

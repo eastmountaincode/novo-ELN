@@ -3,6 +3,17 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+FROM deps AS dev
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    fontconfig \
+    fonts-dejavu-core \
+    libreoffice \
+    poppler-utils \
+    sqlite3 \
+  && rm -rf /var/lib/apt/lists/*
+
 FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules

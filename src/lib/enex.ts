@@ -176,6 +176,7 @@ export async function importEnexFile(input: {
           size: resource.data.length,
           storageKey,
           blockType,
+          evernoteHash: resource.hash,
           createdAt: note.createdAt,
         });
         attachmentsByHash.set(resource.hash, attachment);
@@ -262,14 +263,13 @@ function enmlToEditorBody(enml: string, attachmentsByHash: Map<string, Attachmen
   return editorDocumentToBody(enmlToEditorDocument(enml, attachmentsByHash));
 }
 
-function enmlToEditorDocument(enml: string, attachmentsByHash: Map<string, Attachment>): JSONContent {
+export function enmlToEditorDocument(enml: string, attachmentsByHash: Map<string, Attachment>): JSONContent {
   try {
     const rootNodes = parseEnmlNodes(enml);
     const content = normalizeBlocks(nodesToBlocks(rootNodes, attachmentsByHash, []));
     return { type: "doc", content: content.length ? content : [{ type: "paragraph" }] };
   } catch {
-    const fallback = decodeXmlEntities(stripTags(cleanEnml(enml))).replace(/\s+/g, " ").trim();
-    return { type: "doc", content: fallback ? [{ type: "paragraph", content: [{ type: "text", text: fallback }] }] : [{ type: "paragraph" }] };
+    return fallbackDocumentFromEnml(enml);
   }
 }
 
@@ -328,6 +328,7 @@ function nodesToBlocks(nodes: EnmlNode[], attachmentsByHash: Map<string, Attachm
       }
       const content = normalizeInline(nodesToInline(children, attachmentsByHash, marks));
       if (content.length) blocks.push({ type: "paragraph", content });
+      else if (isBlankBlockElement(children)) blocks.push({ type: "paragraph" });
       continue;
     }
     if (/^h[1-6]$/.test(tag)) {
@@ -344,7 +345,7 @@ function nodesToBlocks(nodes: EnmlNode[], attachmentsByHash: Map<string, Attachm
     }
     if (tag === "ul" || tag === "ol") {
       flushParagraph();
-      const items = children.filter((child) => getNodeTag(child) === "li").map((child) => listItemNode(getNodeChildren(child), attachmentsByHash, marks));
+      const items = listItemsFromChildren(children, attachmentsByHash, marks);
       if (items.length) blocks.push({ type: tag === "ul" ? "bulletList" : "orderedList", content: items });
       continue;
     }
@@ -359,6 +360,29 @@ function nodesToBlocks(nodes: EnmlNode[], attachmentsByHash: Map<string, Attachm
 
   flushParagraph();
   return blocks;
+}
+
+function listItemsFromChildren(nodes: EnmlNode[], attachmentsByHash: Map<string, Attachment>, marks: Mark[]): JSONContent[] {
+  const items: JSONContent[] = [];
+  for (const node of nodes) {
+    const tag = getNodeTag(node);
+    if (tag === "li") {
+      items.push(listItemNode(getNodeChildren(node), attachmentsByHash, marks));
+      continue;
+    }
+    if (tag === "ul" || tag === "ol") {
+      const nestedItems = listItemsFromChildren(getNodeChildren(node), attachmentsByHash, marks);
+      if (!nestedItems.length) continue;
+      const nestedList: JSONContent = { type: tag === "ul" ? "bulletList" : "orderedList", content: nestedItems };
+      const previousItem = items[items.length - 1];
+      if (previousItem) {
+        previousItem.content = [...(previousItem.content ?? []), nestedList];
+      } else {
+        items.push({ type: "listItem", content: [{ type: "paragraph" }, nestedList] });
+      }
+    }
+  }
+  return items;
 }
 
 function nodesToInline(nodes: EnmlNode[], attachmentsByHash: Map<string, Attachment>, marks: Mark[]): JSONContent[] {
@@ -473,7 +497,7 @@ function dedupeMarks(marks: Mark[]) {
 }
 
 function normalizeBlocks(blocks: JSONContent[]) {
-  return blocks.filter((block) => block.type === "attachmentCard" || block.type === "table" || block.type === "bulletList" || block.type === "orderedList" || block.type === "blockquote" || block.content?.length);
+  return blocks.filter((block) => block.type === "attachmentCard" || block.type === "table" || block.type === "bulletList" || block.type === "orderedList" || block.type === "blockquote" || block.type === "paragraph" || block.content?.length);
 }
 
 function ensureParagraphBlocks(blocks: JSONContent[]) {
@@ -525,6 +549,18 @@ function getNodeAttrs(node: EnmlNode): Record<string, string> {
 
 function isInlineTag(tag: string) {
   return ["a", "b", "strong", "i", "em", "u", "s", "strike", "del", "code", "span", "font"].includes(tag);
+}
+
+function isBlankBlockElement(nodes: EnmlNode[]): boolean {
+  if (!nodes.length) return true;
+  return nodes.every((node) => {
+    const tag = getNodeTag(node);
+    if (tag === ":@") return true;
+    if (tag === "#text" || tag === "__cdata") return !textValue(node[tag]).trim();
+    if (tag === "br") return true;
+    if (isInlineTag(tag)) return isBlankBlockElement(getNodeChildren(node));
+    return false;
+  });
 }
 
 function hasBlockChildren(nodes: EnmlNode[]) {
@@ -697,6 +733,30 @@ function unwrapCdata(value: string) {
 
 function stripTags(value: string) {
   return value.replace(/<[^>]+>/g, "");
+}
+
+function fallbackDocumentFromEnml(enml: string): JSONContent {
+  const lines = fallbackTextLinesFromEnml(enml);
+  return {
+    type: "doc",
+    content: lines.length
+      ? lines.map((line) => ({ type: "paragraph", content: [{ type: "text", text: line }] }))
+      : [{ type: "paragraph" }],
+  };
+}
+
+function fallbackTextLinesFromEnml(enml: string) {
+  const withBreaks = cleanEnml(enml)
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "\n- ")
+    .replace(/<\/(li|div|p|h[1-6]|blockquote|tr)>/gi, "\n")
+    .replace(/<\/(ul|ol|table|thead|tbody|tfoot)>/gi, "\n")
+    .replace(/<\/t[dh]>/gi, "\t")
+    .replace(/<en-media\b[^>]*>/gi, "\n[attachment]\n");
+  return decodeXmlEntities(stripTags(withBreaks))
+    .split(/\n+/)
+    .map((line) => line.replace(/[ \t\r\f]+/g, " ").trim())
+    .filter(Boolean);
 }
 
 function allTagText(xml: string, tag: string) {

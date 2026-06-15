@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { PageStatus } from "@/lib/types";
 import { currentUser } from "@/lib/auth";
-import { deletePage, getPage, setPageLocked, updatePage } from "@/lib/store";
+import { deletePage, getPage, movePage, setPageLocked, updatePage } from "@/lib/store";
 
 export async function GET(_request: Request, context: { params: Promise<{ pageId: string }> }) {
   const user = await currentUser();
@@ -19,7 +19,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ pageI
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { pageId } = await context.params;
-  const body = (await request.json().catch(() => null)) as { title?: string; body?: string; status?: PageStatus; locked?: boolean } | null;
+  const body = (await request.json().catch(() => null)) as { title?: string; body?: string; status?: PageStatus; locked?: boolean; notebookId?: string } | null;
   if (!body) return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   try {
     let changed = false;
@@ -34,6 +34,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ pageI
       changed = true;
     }
     if (hasContentPatch) changed = updatePage(user.id, pageId, contentPatch) || changed;
+    if (body.notebookId !== undefined) changed = movePage(user.id, pageId, body.notebookId) || changed;
     if (typeof body.locked === "boolean" && body.locked) {
       setPageLocked(user.id, pageId, true);
       changed = true;
@@ -41,7 +42,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ pageI
     return NextResponse.json({ ok: true, changed });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not update page";
-    const status = message === "Forbidden" || message === "Only owners can lock pages." ? 403 : message === "Page is locked." ? 423 : 400;
+    const status = message === "Forbidden" || message === "Only editors and owners can lock pages." ? 403 : message === "Page is locked." ? 423 : 400;
     return NextResponse.json({ error: message }, { status });
   }
 }

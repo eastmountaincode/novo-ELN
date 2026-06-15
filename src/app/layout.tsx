@@ -12,9 +12,20 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const appTitle = process.env.NODE_ENV === "development" ? "novo-dev" : "novo";
+
 export const metadata: Metadata = {
-  title: "MGH ELN Workspace",
-  description: "A focused Evernote replacement for lab notebooks, pages, and inline attachments.",
+  title: appTitle,
+  description: "Electronic lab notebook.",
+  openGraph: {
+    title: appTitle,
+    description: "Electronic lab notebook.",
+  },
+  twitter: {
+    card: "summary",
+    title: appTitle,
+    description: "Electronic lab notebook.",
+  },
   icons: {
     icon: [
       { url: "/favicon.ico" },

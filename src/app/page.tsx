@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Crown,
   Database,
   Download,
@@ -26,7 +27,9 @@ import {
   KeyRound,
   Lock,
   Loader2,
+  MessageSquare,
   MoreHorizontal,
+  MoveRight,
   Notebook as NotebookIcon,
   Palette,
   Paperclip,
@@ -44,12 +47,15 @@ import {
   X,
   UserCircle,
 } from "lucide-react";
+import type { JSONContent } from "@tiptap/react";
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PresentationModal } from "@/components/PresentationModal";
+import { PrintPageDocument } from "@/components/PrintPageDocument";
 import { INLINE_ATTACHMENT_DRAG_TYPE, RichTextEditor, attachmentToInlineAttrs, type InlineAttachmentAttrs } from "@/components/RichTextEditor";
 import { SpreadsheetModal } from "@/components/SpreadsheetModal";
 import { bodyToEditorText } from "@/lib/editor";
-import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageEntry, PageStatus, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
+import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageCommentThread, PageEntry, PageStatus, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
 
 const blockIcons: Record<BlockType, typeof ImageIcon> = {
   image: ImageIcon,
@@ -79,6 +85,7 @@ type DragState = {
 };
 
 type PageSortKey = "updated" | "created" | "title";
+type NotebookSortKey = "updated" | "created" | "title";
 
 const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
   { key: "updated", label: "Date updated" },
@@ -86,8 +93,19 @@ const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
   { key: "title", label: "Title" },
 ];
 
+const NOTEBOOK_SORT_OPTIONS: Array<{ key: NotebookSortKey; label: string }> = [
+  { key: "updated", label: "Date updated" },
+  { key: "created", label: "Date created" },
+  { key: "title", label: "Title" },
+];
+
+const PAGE_SORT_STORAGE_KEY = "novo.pageSortKey";
+const NOTEBOOK_SORT_STORAGE_KEY = "novo.notebookSortKey";
+
 const PAGE_ACTIVITY_PAGE_SIZE = 25;
 const SUCCESS_STATUS_CLEAR_AFTER_MS = 4400;
+const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 1000;
+const WORDMARK_TEXT = process.env.NODE_ENV === "development" ? "novo-dev" : "novo";
 
 const PAGE_STATUS_OPTIONS: Array<{ value: PageStatus; label: string }> = [
   { value: "", label: "No status" },
@@ -110,6 +128,24 @@ type HydratedSearchResult = SearchResult & {
   project?: Project;
   notebook?: Notebook;
 };
+
+type SearchAdvancedFilters = {
+  include: string[];
+  exclude: string[];
+  tags: string[];
+  fields: SearchFieldKey[];
+};
+
+type SearchFieldKey = "title" | "body" | "tags" | "attachments";
+
+const DEFAULT_SEARCH_FIELDS: SearchFieldKey[] = ["title", "body", "tags", "attachments"];
+
+const SEARCH_FIELD_OPTIONS: Array<{ key: SearchFieldKey; label: string; icon: typeof FileText }> = [
+  { key: "title", label: "Page titles", icon: FileText },
+  { key: "body", label: "Page text", icon: FileText },
+  { key: "tags", label: "Tags", icon: Tag },
+  { key: "attachments", label: "Attachment names", icon: Paperclip },
+];
 
 type PageSelection = {
   project: Project;
@@ -181,10 +217,12 @@ export default function Home() {
   const [selectedNotebookId, setSelectedNotebookId] = useState("");
   const [selectedPageId, setSelectedPageId] = useState("");
   const [query, setQuery] = useState("");
+  const [searchFilters, setSearchFilters] = useState<SearchAdvancedFilters>(emptySearchAdvancedFilters);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchApproxLoading, setSearchApproxLoading] = useState(false);
+  const lastSearchKeyRef = useRef("");
   const [saving, setSaving] = useState("");
   const [loadingPageId, setLoadingPageId] = useState("");
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -195,9 +233,10 @@ export default function Home() {
   const [deletingPage, setDeletingPage] = useState(false);
   const [deletingNotebook, setDeletingNotebook] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
+  const [movingPage, setMovingPage] = useState(false);
+  const [duplicatingPageId, setDuplicatingPageId] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_MIN_WIDTH);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState(0);
   const [pagesWidth, setPagesWidth] = useState(340);
   const [pagesCollapsed, setPagesCollapsed] = useState(false);
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -209,11 +248,16 @@ export default function Home() {
   const [projectPendingDelete, setProjectPendingDelete] = useState<Project | null>(null);
   const [notebookPendingDelete, setNotebookPendingDelete] = useState<Notebook | null>(null);
   const [pagePendingDelete, setPagePendingDelete] = useState<PageEntry | null>(null);
+  const [pagePendingMove, setPagePendingMove] = useState<PageEntry | null>(null);
   const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null);
   const [spreadsheetModal, setSpreadsheetModal] = useState<InlineAttachmentAttrs | null>(null);
   const [presentationModal, setPresentationModal] = useState<InlineAttachmentAttrs | null>(null);
+  const [previewKeys, setPreviewKeys] = useState<Set<string>>(new Set());
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const spreadsheetSavedRef = useRef<((attachment: InlineAttachmentAttrs) => void) | null>(null);
+  const loadedVersionRef = useRef("");
 
   const applyPageSelection = useCallback((selection: PageSelection, urlMode: "none" | "push" | "replace" = "none") => {
     setPageMenuId(null);
@@ -256,6 +300,12 @@ export default function Home() {
   }, []);
 
   const selectFirstAvailable = useCallback((data: Workspace) => {
+    if (readAccountViewFromUrl()) {
+      setActiveView("account");
+      setPageMenuId(null);
+      return;
+    }
+
     const linkedSettingsNotebook = findNotebookSelection(data, readNotebookSettingsIdFromUrl());
     if (linkedSettingsNotebook) {
       applyNotebookSettingsSelection(linkedSettingsNotebook, "replace");
@@ -291,13 +341,43 @@ export default function Home() {
   }, [applyNotebookSelection, applyNotebookSettingsSelection, applyPageSelection, applyProjectSelection]);
 
   useEffect(() => {
-    function updateViewportWidth() {
-      setViewportWidth(window.innerWidth);
-    }
-    updateViewportWidth();
-    window.addEventListener("resize", updateViewportWidth);
-    return () => window.removeEventListener("resize", updateViewportWidth);
+    setPreviewKeys(readPreviewKeysFromUrl());
+    cleanupUpdateCacheBusterFromUrl();
   }, []);
+
+  useEffect(() => {
+    if (previewKeys.has("update-banner")) return;
+    let active = true;
+
+    async function checkVersion() {
+      try {
+        const response = await fetch("/api/version", { cache: "no-store" });
+        if (!response.ok) return;
+        const body = (await response.json().catch(() => null)) as { version?: string } | null;
+        if (!active || !body?.version) return;
+        if (!loadedVersionRef.current) {
+          loadedVersionRef.current = body.version;
+          return;
+        }
+        if (body.version !== loadedVersionRef.current) setUpdateAvailable(true);
+      } catch {
+        // Version checks should never interrupt editing.
+      }
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") void checkVersion();
+    }
+
+    void checkVersion();
+    const timer = window.setInterval(checkVersion, UPDATE_CHECK_INTERVAL_MS);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [previewKeys]);
 
   useEffect(() => {
     let active = true;
@@ -325,6 +405,13 @@ export default function Home() {
     const currentWorkspace = workspace;
 
     function onPopState() {
+      if (readAccountViewFromUrl()) {
+        setActiveView("account");
+        setPageMenuId(null);
+        setAccountOpen(false);
+        return;
+      }
+
       const notebookSettingsSelection = findNotebookSelection(currentWorkspace, readNotebookSettingsIdFromUrl());
       if (notebookSettingsSelection) {
         applyNotebookSettingsSelection(notebookSettingsSelection);
@@ -412,7 +499,18 @@ export default function Home() {
   selectedPageIdRef.current = selectedPage?.id ?? "";
   const selectedNotebookCanEdit = canEditNotebook(workspace?.user, selectedNotebook);
   const selectedPageCanEdit = selectedNotebookCanEdit && !selectedPage?.lockedAt;
-  const selectedPageCanManageLock = selectedNotebook?.accessRole === "owner";
+  const selectedPageCanManageLock = selectedNotebookCanEdit;
+  const selectedNotebookTagSuggestions = useMemo(
+    () => normalizeTagList(selectedNotebook?.pages.flatMap((page) => page.tags) ?? []).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+    [selectedNotebook],
+  );
+  const globalSearchTagSuggestions = useMemo(
+    () => normalizeTagList(workspace?.projects.flatMap((project) => project.notebooks.flatMap((notebook) => notebook.pages.flatMap((page) => page.tags))) ?? []).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+    [workspace],
+  );
+  const editorTagSuggestions =
+    workspace?.appSettings?.suggestTagsGlobally !== false ? globalSearchTagSuggestions : selectedNotebookTagSuggestions;
+  const searchTagSuggestions = editorTagSuggestions;
 
   const recentPages = useMemo(() => {
     return (
@@ -443,8 +541,6 @@ export default function Home() {
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
-    setQuery("");
-    setSearchResults([]);
     setSearchLoading(false);
     setSearchApproxLoading(false);
   }, []);
@@ -452,21 +548,29 @@ export default function Home() {
   useEffect(() => {
     if (!searchOpen) return;
     const trimmed = query.trim();
+    const filterActive = hasSearchResultCriteria(searchFilters);
+    const searchKey = searchCacheKey({ query: trimmed, filters: searchFilters });
+    if (lastSearchKeyRef.current === searchKey) {
+      setSearchLoading(false);
+      setSearchApproxLoading(false);
+      return;
+    }
     let active = true;
     const fastController = new AbortController();
     const approxController = new AbortController();
     const timeout = window.setTimeout(async () => {
-      if (!trimmed) {
+      if (!trimmed && !filterActive) {
         setSearchResults([]);
         setSearchLoading(false);
         setSearchApproxLoading(false);
+        lastSearchKeyRef.current = searchKey;
         return;
       }
 
       setSearchLoading(true);
       setSearchApproxLoading(false);
       try {
-        const response = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}&limit=30&mode=fast`, { signal: fastController.signal });
+        const response = await fetch(searchApiUrl({ query: trimmed, limit: 30, mode: "fast", filters: searchFilters }), { signal: fastController.signal });
         if (!active) return;
         if (!response.ok) {
           setSearchResults([]);
@@ -474,6 +578,7 @@ export default function Home() {
         }
         const body = (await response.json()) as { results: SearchResult[] };
         setSearchResults(body.results);
+        lastSearchKeyRef.current = searchKey;
       } catch (error) {
         if (!fastController.signal.aborted) setSearchResults([]);
         return;
@@ -482,9 +587,10 @@ export default function Home() {
       }
 
       if (!active) return;
+      if (!hasApproximateSearchBasis(trimmed, searchFilters)) return;
       setSearchApproxLoading(true);
       try {
-        const response = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}&limit=30&mode=approx`, { signal: approxController.signal });
+        const response = await fetch(searchApiUrl({ query: trimmed, limit: 30, mode: "approx", filters: searchFilters }), { signal: approxController.signal });
         if (!active || !response.ok) return;
         const body = (await response.json()) as { results: SearchResult[] };
         setSearchResults((current) => mergeSearchResultLists(current, body.results).slice(0, 30));
@@ -501,7 +607,7 @@ export default function Home() {
       approxController.abort();
       window.clearTimeout(timeout);
     };
-  }, [query, searchOpen]);
+  }, [query, searchFilters, searchOpen]);
 
   useEffect(() => {
     if (!searchOpen) return;
@@ -801,7 +907,7 @@ export default function Home() {
     setProjectMenuId(null);
     setNotebookMenuId(null);
     setPageMenuId(null);
-    writePageUrl(null, "push");
+    writeAccountUrl("push");
   }
 
   function renameExistingProject(project: Project) {
@@ -893,6 +999,14 @@ export default function Home() {
     setPagePendingDelete(page);
   }
 
+  function requestPageMove(page: PageEntry) {
+    setProjectMenuId(null);
+    setNotebookMenuId(null);
+    setPageMenuId(null);
+    setAccountOpen(false);
+    setPagePendingMove(page);
+  }
+
   async function confirmPageDelete() {
     if (!pagePendingDelete || !selectedNotebook || !selectedNotebookCanEdit || pagePendingDelete.lockedAt || deletingPage) return;
     const remainingPages = selectedNotebook.pages.filter((page) => page.id !== pagePendingDelete.id);
@@ -909,6 +1023,42 @@ export default function Home() {
       await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: nextPageId });
     } finally {
       setDeletingPage(false);
+    }
+  }
+
+  async function confirmPageMove(targetNotebookId: string) {
+    if (!pagePendingMove || !selectedNotebook || !selectedNotebookCanEdit || pagePendingMove.lockedAt || movingPage) return;
+    setMovingPage(true);
+    try {
+      const response = await fetch(`/api/pages/${pagePendingMove.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notebookId: targetNotebookId }),
+      });
+      if (!response.ok) return;
+      setPagePendingMove(null);
+      writePageUrl(pagePendingMove.id, "replace");
+      await refreshWorkspace({ projectId: selectedProject?.id, notebookId: targetNotebookId, pageId: pagePendingMove.id });
+    } finally {
+      setMovingPage(false);
+    }
+  }
+
+  async function duplicateExistingPage(page: PageEntry) {
+    if (!selectedNotebook || !selectedNotebookCanEdit || page.lockedAt || duplicatingPageId) return;
+    setProjectMenuId(null);
+    setNotebookMenuId(null);
+    setPageMenuId(null);
+    setAccountOpen(false);
+    setDuplicatingPageId(page.id);
+    try {
+      const response = await fetch(`/api/pages/${page.id}/duplicate`, { method: "POST" });
+      if (!response.ok) return;
+      const body = (await response.json()) as { pageId: string; notebookId: string };
+      writePageUrl(body.pageId, "replace");
+      await refreshWorkspace({ projectId: selectedProject?.id, notebookId: body.notebookId, pageId: body.pageId });
+    } finally {
+      setDuplicatingPageId("");
     }
   }
 
@@ -1122,7 +1272,7 @@ export default function Home() {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-50 text-slate-600">
         <div className="flex flex-col items-center gap-4">
-          <div className="novo-wordmark select-none text-7xl leading-none tracking-normal text-slate-950">novo</div>
+          <div className="novo-wordmark select-none text-7xl leading-none tracking-normal text-slate-950">{WORDMARK_TEXT}</div>
           <span className="inline-flex items-center gap-2 text-sm"><Loader2 size={16} className="animate-spin" />Loading...</span>
         </div>
       </main>
@@ -1139,7 +1289,7 @@ export default function Home() {
               </div>
               <div>
                 <p className="text-xs font-semibold text-slate-500">Novo</p>
-                <h1 className="text-xl font-semibold">{authMode === "register" ? "Create an account" : "Welcome back"}</h1>
+                {authMode === "register" ? <h1 className="text-xl font-semibold">Create an account</h1> : null}
               </div>
             </div>
             <div className="grid grid-cols-2 border border-slate-200 p-1 text-sm font-medium">
@@ -1214,14 +1364,15 @@ export default function Home() {
   }
 
   const effectivePagesWidth = pagesCollapsed ? SIDEBAR_COLLAPSED_WIDTH : pagesWidth;
-  const expandedLayoutWidth = activeView === "project" ? sidebarWidth + 1 + effectivePagesWidth + 1 + 560 : sidebarWidth + 1 + 560;
-  const sidebarAutoCollapsed = viewportWidth > 0 && viewportWidth < expandedLayoutWidth;
-  const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed;
+  const effectiveSidebarCollapsed = sidebarCollapsed;
   const effectiveSidebarWidth = effectiveSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
   return (
     <main className="app-scroll-root overflow-x-auto bg-white text-slate-950">
       <input ref={fileInputRef} type="file" className="hidden" onChange={(event) => void uploadAttachment(event.target.files?.[0])} />
+      {(updateAvailable || previewKeys.has("update-banner")) && !updateBannerDismissed ? (
+        <UpdateAvailableBanner preview={previewKeys.has("update-banner")} onDismiss={() => setUpdateBannerDismissed(true)} />
+      ) : null}
 
       <div className="grid h-dvh min-w-[980px]" style={{ gridTemplateColumns: activeView === "project" ? `${effectiveSidebarWidth}px 1px minmax(0,${effectivePagesWidth}px) 1px minmax(560px, 1fr)` : `${effectiveSidebarWidth}px 1px minmax(560px, 1fr)` } as React.CSSProperties}>
         <UnifiedSidebar
@@ -1261,7 +1412,7 @@ export default function Home() {
         {activeView === "home" || activeView === "projectHome" ? (
           <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} importEnexNotebook={() => createNewNotebook(undefined, "import")} />
         ) : activeView === "account" ? (
-          <AccountView user={workspace.user} notebooks={workspace.notebooks} />
+          <AccountView user={workspace.user} notebooks={workspace.notebooks} onChanged={() => refreshWorkspace()} />
         ) : activeView === "notebookSettings" ? (
           selectedNotebook ? (
             <NotebookSettingsView
@@ -1288,6 +1439,10 @@ export default function Home() {
               creatingPage={creatingPage}
               canEdit={selectedNotebookCanEdit}
               deletePage={requestPageDelete}
+              movePage={requestPageMove}
+              duplicatePage={duplicateExistingPage}
+              duplicatingPageId={duplicatingPageId}
+              searchTagSuggestions={searchTagSuggestions}
               collapsed={pagesCollapsed}
               toggleCollapsed={() => setPagesCollapsed((current) => !current)}
             />
@@ -1313,6 +1468,7 @@ export default function Home() {
                 savePage={savePage}
                 markUnsaved={(body) => markBodyUnsaved(selectedPage.id, body)}
                 setPageTags={setSelectedPageTags}
+                tagSuggestions={editorTagSuggestions}
                 setPageLocked={setSelectedPageLocked}
                 openFilePicker={() => fileInputRef.current?.click()}
               />
@@ -1346,6 +1502,17 @@ export default function Home() {
             deleting={deletingPage}
             onCancel={() => setPagePendingDelete(null)}
             onConfirm={confirmPageDelete}
+          />
+        ) : null}
+
+        {pagePendingMove && workspace ? (
+          <PageMoveModal
+            page={pagePendingMove}
+            currentNotebookId={selectedNotebook?.id ?? ""}
+            notebooks={workspace.notebooks}
+            moving={movingPage}
+            onCancel={() => setPagePendingMove(null)}
+            onConfirm={confirmPageMove}
           />
         ) : null}
 
@@ -1389,6 +1556,9 @@ export default function Home() {
           <SearchOverlay
             query={query}
             setQuery={setQuery}
+            advancedFilters={searchFilters}
+            setAdvancedFilters={setSearchFilters}
+            availableTags={searchTagSuggestions}
             loading={searchLoading}
             approxLoading={searchApproxLoading}
             results={hydratedSearchResults}
@@ -1397,6 +1567,29 @@ export default function Home() {
           />
         ) : null}
     </main>
+  );
+}
+
+function UpdateAvailableBanner({ preview, onDismiss }: { preview: boolean; onDismiss: () => void }) {
+  return (
+    <div className="fixed right-5 top-5 z-[70] w-[min(380px,calc(100vw-2.5rem))] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-950/15">
+      <div className="flex items-start gap-3">
+        <RefreshCw size={18} className="mt-0.5 shrink-0 text-slate-600" />
+        <div className="min-w-0 flex-1 pr-6">
+          <p className="text-sm font-semibold text-slate-950">A new version of Novo is available.</p>
+          {preview ? <p className="mt-1 text-xs text-slate-400">Preview mode</p> : null}
+        </div>
+        <button type="button" onClick={onDismiss} className="grid size-7 shrink-0 place-items-center border border-transparent text-slate-400 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700" aria-label="Dismiss update notice">
+          <X size={15} />
+        </button>
+      </div>
+      <div className="mt-4 flex justify-end">
+        <button type="button" onClick={() => void performAppUpdate()} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800">
+          <RefreshCw size={15} />
+          Update now
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1754,15 +1947,29 @@ function getNameModalDescription(dialog: NameDialogState) {
 }
 
 function NotebookDeleteModal({ notebook, deleting, onCancel, onConfirm }: { notebook: Notebook; deleting: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const [confirmationName, setConfirmationName] = useState("");
+  const canDelete = confirmationName.trim() === notebook.name && !deleting;
+
   return (
     <ModalFrame>
       <h2 className="text-lg font-semibold text-white">Delete notebook?</h2>
       <p className="mt-3 text-sm leading-6 text-slate-400">
         This will delete <span className="font-semibold text-white">{notebook.name}</span>, including its pages and attachment records. This cannot be undone.
       </p>
+      <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="delete-notebook-confirmation">
+        Type the notebook name to confirm
+      </label>
+      <input
+        id="delete-notebook-confirmation"
+        value={confirmationName}
+        onChange={(event) => setConfirmationName(event.target.value)}
+        disabled={deleting}
+        className="mt-2 h-10 w-full border border-white/15 bg-slate-950 px-3 text-sm text-white outline-none focus:border-cyan-400 disabled:opacity-60"
+        placeholder={notebook.name}
+      />
       <div className="mt-5 flex justify-end gap-2">
         <button onClick={onCancel} disabled={deleting} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
-        <button onClick={onConfirm} disabled={deleting} className="inline-flex h-9 items-center gap-2 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200">
+        <button onClick={onConfirm} disabled={!canDelete} className="inline-flex h-9 items-center gap-2 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200">
           {deleting ? <Loader2 size={15} className="animate-spin" /> : null}
           {deleting ? "Deleting..." : "Delete notebook"}
         </button>
@@ -1783,6 +1990,56 @@ function PageDeleteModal({ page, deleting, onCancel, onConfirm }: { page: PageEn
         <button onClick={onConfirm} disabled={deleting} className="inline-flex h-9 items-center gap-2 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200">
           {deleting ? <Loader2 size={15} className="animate-spin" /> : null}
           {deleting ? "Deleting..." : "Delete page"}
+        </button>
+      </div>
+    </ModalFrame>
+  );
+}
+
+function PageMoveModal({ page, currentNotebookId, notebooks, moving, onCancel, onConfirm }: { page: PageEntry; currentNotebookId: string; notebooks: Notebook[]; moving: boolean; onCancel: () => void; onConfirm: (notebookId: string) => void }) {
+  const destinationNotebooks = useMemo(
+    () => notebooks
+      .filter((notebook) => notebook.id !== currentNotebookId && (notebook.accessRole === "owner" || notebook.accessRole === "editor"))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
+    [currentNotebookId, notebooks],
+  );
+  const [targetNotebookId, setTargetNotebookId] = useState(destinationNotebooks[0]?.id ?? "");
+
+  useEffect(() => {
+    if (targetNotebookId && destinationNotebooks.some((notebook) => notebook.id === targetNotebookId)) return;
+    setTargetNotebookId(destinationNotebooks[0]?.id ?? "");
+  }, [destinationNotebooks, targetNotebookId]);
+
+  const canMove = Boolean(targetNotebookId) && !moving;
+
+  return (
+    <ModalFrame>
+      <h2 className="text-lg font-semibold text-white">Move page</h2>
+      <p className="mt-3 text-sm leading-6 text-slate-400">
+        Choose the notebook that should contain <span className="font-semibold text-white">{page.title || "Untitled page"}</span>.
+      </p>
+      {destinationNotebooks.length ? (
+        <label className="mt-4 block text-sm font-medium text-slate-200">
+          Destination notebook
+          <select
+            value={targetNotebookId}
+            onChange={(event) => setTargetNotebookId(event.target.value)}
+            disabled={moving}
+            className="mt-2 h-10 w-full cursor-pointer border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {destinationNotebooks.map((notebook) => (
+              <option key={notebook.id} value={notebook.id}>{notebook.name}</option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <p className="mt-4 border border-white/10 bg-white/5 p-3 text-sm text-slate-300">No editable destination notebooks are available.</p>
+      )}
+      <div className="mt-5 flex justify-end gap-2">
+        <button onClick={onCancel} disabled={moving} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
+        <button onClick={() => onConfirm(targetNotebookId)} disabled={!canMove} className="inline-flex h-9 items-center gap-2 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-400">
+          {moving ? <Loader2 size={15} className="animate-spin" /> : null}
+          {moving ? "Moving..." : "Move page"}
         </button>
       </div>
     </ModalFrame>
@@ -1819,10 +2076,50 @@ function ModalFrame({ children }: { children: React.ReactNode }) {
 
 function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollapsed, accountOpen, notebookMenuId, openSearch, toggleSidebarCollapsed, setAccountOpen, setProjectMenuId, setNotebookMenuId, openHome, openAccount, selectNotebook, renameNotebook, deleteNotebook, updateNotebookColor, openNotebookSettings, createNewNotebook, handleLogout }: { workspace: Workspace; activeView: "home" | "projectHome" | "project" | "notebookSettings" | "account"; selectedProject?: Project; selectedNotebook?: Notebook; sidebarCollapsed: boolean; accountOpen: boolean; projectMenuId: string | null; notebookMenuId: string | null; expandedProjectIds: Set<string>; openSearch: () => void; toggleSidebarCollapsed: () => void; setAccountOpen: (value: boolean) => void; setProjectMenuId: (value: string | null) => void; setNotebookMenuId: (value: string | null) => void; openHome: () => void; openAccount: () => void; selectProject: (project: Project) => void; toggleProject: (project: Project) => void; selectNotebook: (project: Project, notebook: Notebook) => void; createNewProject: () => void; renameProject: (project: Project) => void; updateProjectColor: (project: Project, color: string) => void; deleteProject: (project: Project) => void; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; updateNotebookColor: (notebook: Notebook, color: string) => void; openNotebookSettings: (notebook: Notebook) => void; createNewNotebook: (projectId?: string) => void; handleLogout: () => void }) {
   const workspaceProject = workspace.projects[0];
-  const ownNotebooks = workspace.notebooks.filter((notebook) => notebook.accessRole === "owner");
-  const sharedNotebooks = workspace.notebooks.filter((notebook) => notebook.accessRole !== "owner");
   const [myNotebooksCollapsed, setMyNotebooksCollapsed] = useState(false);
   const [sharedNotebooksCollapsed, setSharedNotebooksCollapsed] = useState(false);
+  const [notebookSortKey, setNotebookSortKey] = useState<NotebookSortKey>(readStoredNotebookSortKey);
+  const [notebookSortOpen, setNotebookSortOpen] = useState(false);
+  const notebookSortRef = useRef<HTMLDivElement>(null);
+  const sortedOwnNotebooks = useMemo(() => sortNotebooks(workspace.notebooks.filter((notebook) => notebook.accessRole === "owner"), notebookSortKey), [workspace.notebooks, notebookSortKey]);
+  const sortedSharedNotebooks = useMemo(() => sortNotebooks(workspace.notebooks.filter((notebook) => notebook.accessRole !== "owner"), notebookSortKey), [workspace.notebooks, notebookSortKey]);
+
+  useEffect(() => {
+    writeStoredSortKey(NOTEBOOK_SORT_STORAGE_KEY, notebookSortKey);
+  }, [notebookSortKey]);
+
+  useEffect(() => {
+    if (!notebookSortOpen) return;
+
+    function isInsideNotebookSort(target: EventTarget | null) {
+      return target instanceof Element && Boolean(notebookSortRef.current?.contains(target));
+    }
+
+    function closeNotebookSort() {
+      setNotebookSortOpen(false);
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      if (!isInsideNotebookSort(event.target)) closeNotebookSort();
+    }
+
+    function onFocusIn(event: FocusEvent) {
+      if (!isInsideNotebookSort(event.target)) closeNotebookSort();
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeNotebookSort();
+    }
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [notebookSortOpen]);
 
   function renderNotebook(notebook: Notebook) {
     const selected = (activeView === "project" || activeView === "notebookSettings") && selectedNotebook?.id === notebook.id;
@@ -1885,6 +2182,50 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
     );
   }
 
+  const notebookSortControl = (
+    <div ref={notebookSortRef} data-transient-menu="true" className="relative">
+      <button
+        type="button"
+        onClick={() => setNotebookSortOpen((open) => !open)}
+        className="grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white"
+        aria-label="Sort notebooks"
+        aria-haspopup="dialog"
+        aria-expanded={notebookSortOpen}
+        title={`Sort notebooks: ${NOTEBOOK_SORT_OPTIONS.find((option) => option.key === notebookSortKey)?.label}`}
+      >
+        <SlidersHorizontal size={14} />
+      </button>
+      {notebookSortOpen ? (
+        <section
+          role="dialog"
+          aria-label="Sort notebooks"
+          className="absolute right-0 top-7 z-30 w-52 border border-white/10 bg-slate-900 p-1 text-slate-100 shadow-2xl shadow-slate-950/30"
+        >
+          <p className="px-3 pb-1.5 pt-2 text-xs font-semibold text-slate-500">Sort by</p>
+          <div className="space-y-1">
+            {NOTEBOOK_SORT_OPTIONS.map((option) => {
+              const selected = option.key === notebookSortKey;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => {
+                    setNotebookSortKey(option.key);
+                    setNotebookSortOpen(false);
+                  }}
+                  className={`flex h-9 w-full items-center justify-between gap-3 px-3 text-left text-sm font-medium ${selected ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
+                >
+                  <span>{option.label}</span>
+                  {selected ? <Check size={14} className="text-cyan-300" /> : null}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+
   return (
     <aside className={`relative z-30 grid min-h-screen grid-rows-[auto_1fr_auto] bg-slate-950 text-slate-200 ${sidebarCollapsed ? "sidebar-collapsed overflow-visible" : "overflow-hidden"}`}>
       <div className="space-y-2 border-b border-white/10 py-4">
@@ -1900,11 +2241,11 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
                   openHome();
                 }
               }}
-              className="novo-wordmark sidebar-wide min-w-0 cursor-pointer select-none px-1 py-1 text-6xl leading-none tracking-normal text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+              className={`novo-wordmark sidebar-wide min-w-0 cursor-pointer select-none px-1 py-1 leading-none tracking-normal text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 ${WORDMARK_TEXT === "novo-dev" ? "text-5xl" : "text-6xl"}`}
               aria-label="Go to home"
               title="Overview"
             >
-              novo
+              {WORDMARK_TEXT}
             </div>
             <button
               type="button"
@@ -1938,11 +2279,11 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
             <span className="sidebar-wide min-w-0 truncate font-medium">Overview</span>
           </button>
         </div>
-        <SidebarSection label="My Notebooks" collapsed={myNotebooksCollapsed} onToggle={() => setMyNotebooksCollapsed((current) => !current)} onAdd={() => createNewNotebook(workspaceProject?.id)} />
+        <SidebarSection label="My Notebooks" collapsed={myNotebooksCollapsed} onToggle={() => setMyNotebooksCollapsed((current) => !current)} action={notebookSortControl} onAdd={() => createNewNotebook(workspaceProject?.id)} />
         {!myNotebooksCollapsed ? (
           <div className="mt-2 space-y-1">
-            {ownNotebooks.map(renderNotebook)}
-            {ownNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
+            {sortedOwnNotebooks.map(renderNotebook)}
+            {sortedOwnNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
           </div>
         ) : null}
         <div className="mt-5">
@@ -1950,8 +2291,8 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
         </div>
         {!sharedNotebooksCollapsed ? (
           <div className="mt-2 space-y-1">
-            {sharedNotebooks.map(renderNotebook)}
-            {sharedNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
+            {sortedSharedNotebooks.map(renderNotebook)}
+            {sortedSharedNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
           </div>
         ) : null}
       </div>
@@ -1990,15 +2331,22 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
   );
 }
 
-function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, creatingPage, canEdit, deletePage, collapsed, toggleCollapsed }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; creatingPage: boolean; canEdit: boolean; deletePage: (page: PageEntry) => void; collapsed: boolean; toggleCollapsed: () => void }) {
+function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMenuId, setPageMenuId, selectPage, createNewPage, creatingPage, canEdit, deletePage, movePage, duplicatePage, duplicatingPageId, searchTagSuggestions, collapsed, toggleCollapsed }: { selectedProject?: Project; selectedNotebook?: Notebook; selectedPage?: PageEntry; pageMenuId: string | null; setPageMenuId: (id: string | null) => void; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; createNewPage: () => void; creatingPage: boolean; canEdit: boolean; deletePage: (page: PageEntry) => void; movePage: (page: PageEntry) => void; duplicatePage: (page: PageEntry) => void; duplicatingPageId: string; searchTagSuggestions: string[]; collapsed: boolean; toggleCollapsed: () => void }) {
   const pages = useMemo(() => selectedNotebook?.pages ?? [], [selectedNotebook]);
-  const [sortKey, setSortKey] = useState<PageSortKey>("created");
+  const [sortKey, setSortKey] = useState<PageSortKey>(readStoredPageSortKey);
   const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
   const [filterOptionsOpen, setFilterOptionsOpen] = useState(false);
   const [activeFilterPanel, setActiveFilterPanel] = useState<"tags" | "status">("tags");
   const [tagQuery, setTagQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<PageStatus[]>([]);
+  const [notebookQuery, setNotebookQuery] = useState("");
+  const [notebookSearchFilters, setNotebookSearchFilters] = useState<SearchAdvancedFilters>(emptySearchAdvancedFilters);
+  const [notebookSearchResults, setNotebookSearchResults] = useState<SearchResult[]>([]);
+  const [notebookSearchLoading, setNotebookSearchLoading] = useState(false);
+  const [notebookSearchApproxLoading, setNotebookSearchApproxLoading] = useState(false);
+  const [notebookSearchOpen, setNotebookSearchOpen] = useState(false);
+  const lastNotebookSearchKeyRef = useRef("");
   const sortOptionsRef = useRef<HTMLDivElement>(null);
   const filterOptionsRef = useRef<HTMLDivElement>(null);
   const pageListRef = useRef<HTMLDivElement>(null);
@@ -2016,6 +2364,20 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
     return query ? availableTags.filter((tag) => tag.toLowerCase().includes(query)) : availableTags;
   }, [availableTags, tagQuery]);
   const color = projectColor(selectedNotebook ?? selectedProject);
+  const notebookPageLookup = useMemo(() => {
+    const lookup = new Map<string, { page: PageEntry; project: Project; notebook: Notebook }>();
+    if (selectedProject && selectedNotebook) {
+      selectedNotebook.pages.forEach((page) => lookup.set(page.id, { page, project: selectedProject, notebook: selectedNotebook }));
+    }
+    return lookup;
+  }, [selectedNotebook, selectedProject]);
+  const hydratedNotebookSearchResults = useMemo<HydratedSearchResult[]>(() => {
+    return notebookSearchResults.map((result) => ({ ...result, ...notebookPageLookup.get(result.pageId) }));
+  }, [notebookPageLookup, notebookSearchResults]);
+
+  useEffect(() => {
+    writeStoredSortKey(PAGE_SORT_STORAGE_KEY, sortKey);
+  }, [sortKey]);
 
   useEffect(() => {
     if (!sortOptionsOpen) return;
@@ -2084,6 +2446,81 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   }, [filterOptionsOpen]);
 
   useEffect(() => {
+    setNotebookQuery("");
+    setNotebookSearchFilters(emptySearchAdvancedFilters());
+    setNotebookSearchResults([]);
+    setNotebookSearchLoading(false);
+    setNotebookSearchApproxLoading(false);
+    setNotebookSearchOpen(false);
+    lastNotebookSearchKeyRef.current = "";
+  }, [selectedNotebook?.id]);
+
+  useEffect(() => {
+    if (!notebookSearchOpen) return;
+    const notebookId = selectedNotebook?.id;
+    const trimmed = notebookQuery.trim();
+    const filterActive = hasSearchResultCriteria(notebookSearchFilters);
+    const searchKey = searchCacheKey({ query: trimmed, filters: notebookSearchFilters, notebookId });
+    if (lastNotebookSearchKeyRef.current === searchKey) {
+      setNotebookSearchLoading(false);
+      setNotebookSearchApproxLoading(false);
+      return;
+    }
+    let active = true;
+    const fastController = new AbortController();
+    const approxController = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      if (!notebookId || (!trimmed && !filterActive)) {
+        setNotebookSearchResults([]);
+        setNotebookSearchLoading(false);
+        setNotebookSearchApproxLoading(false);
+        lastNotebookSearchKeyRef.current = searchKey;
+        return;
+      }
+
+      setNotebookSearchLoading(true);
+      setNotebookSearchApproxLoading(false);
+      try {
+        const response = await fetch(searchApiUrl({ query: trimmed, limit: 20, mode: "fast", notebookId, filters: notebookSearchFilters }), { signal: fastController.signal });
+        if (!active) return;
+        if (!response.ok) {
+          setNotebookSearchResults([]);
+          return;
+        }
+        const body = (await response.json()) as { results: SearchResult[] };
+        setNotebookSearchResults(body.results);
+        lastNotebookSearchKeyRef.current = searchKey;
+      } catch {
+        if (!fastController.signal.aborted) setNotebookSearchResults([]);
+        return;
+      } finally {
+        if (active) setNotebookSearchLoading(false);
+      }
+
+      if (!active) return;
+      if (!hasApproximateSearchBasis(trimmed, notebookSearchFilters)) return;
+      setNotebookSearchApproxLoading(true);
+      try {
+        const response = await fetch(searchApiUrl({ query: trimmed, limit: 20, mode: "approx", notebookId, filters: notebookSearchFilters }), { signal: approxController.signal });
+        if (!active || !response.ok) return;
+        const body = (await response.json()) as { results: SearchResult[] };
+        setNotebookSearchResults((current) => mergeSearchResultLists(current, body.results).slice(0, 20));
+      } catch {
+        // Approximate search is best-effort; keep the fast indexed results visible.
+      } finally {
+        if (active) setNotebookSearchApproxLoading(false);
+      }
+    }, 180);
+
+    return () => {
+      active = false;
+      fastController.abort();
+      approxController.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [notebookQuery, notebookSearchFilters, notebookSearchOpen, selectedNotebook?.id]);
+
+  useEffect(() => {
     if (collapsed || !selectedPage?.id) return;
     const list = pageListRef.current;
     if (!list) return;
@@ -2109,6 +2546,18 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
     setTagQuery("");
   }
 
+  function selectNotebookSearchResult(result: HydratedSearchResult) {
+    if (!result.project || !result.notebook || !result.page) return;
+    selectPage(result.project, result.notebook, result.page);
+    closeNotebookSearch();
+  }
+
+  function closeNotebookSearch() {
+    setNotebookSearchOpen(false);
+    setNotebookSearchLoading(false);
+    setNotebookSearchApproxLoading(false);
+  }
+
   if (collapsed) {
     return (
       <aside className="flex min-h-screen justify-center overflow-hidden bg-slate-50 px-0 py-4 text-slate-900">
@@ -2126,6 +2575,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
   }
 
   return (
+    <>
     <aside className="relative z-30 grid min-h-screen min-w-0 grid-rows-[auto_1fr] overflow-visible bg-slate-50 text-slate-900">
       <div className="min-w-0 border-b border-slate-200 px-4 py-4">
         <div className="mb-3 min-w-0">
@@ -2144,10 +2594,23 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
           <p className="mt-1 text-sm text-slate-500">{pageCountLabel}</p>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <button onClick={createNewPage} disabled={creatingPage || !selectedNotebook || !canEdit} className="inline-flex h-8 items-center gap-1.5 border bg-white px-2.5 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60" style={{ borderColor: color, color }} title={canEdit ? "Create page" : "Viewer access cannot create pages"}>
-            {creatingPage ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            {creatingPage ? "Creating" : "Page"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={createNewPage} disabled={creatingPage || !selectedNotebook || !canEdit} className="inline-flex h-8 items-center gap-1.5 border bg-white px-2.5 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60" style={{ borderColor: color, color }} title={canEdit ? "Create page" : "Viewer access cannot create pages"}>
+              {creatingPage ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+              {creatingPage ? "Creating" : "Page"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setNotebookSearchOpen(true)}
+              disabled={!selectedNotebook}
+              className="grid h-8 w-8 place-items-center border bg-white hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              style={{ borderColor: color, color }}
+              aria-label="Search pages in this notebook"
+              title="Search pages"
+            >
+              <Search size={15} />
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             <div ref={sortOptionsRef} data-transient-menu="true" className="relative">
               <button
@@ -2322,7 +2785,7 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
       </div>
 
       <div ref={pageListRef} className="min-w-0 max-w-full overflow-y-auto overflow-x-hidden scroll-contained py-3">
-        <div className="min-w-0 max-w-full space-y-2 overflow-hidden px-4">
+        <div className="min-w-0 max-w-full space-y-2 overflow-visible px-4">
           {sortedPages.map((page) => (
             <PageCard
               key={page.id}
@@ -2332,6 +2795,9 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
               menuOpen={pageMenuId === page.id}
               setMenuOpen={(open) => setPageMenuId(open ? page.id : null)}
               onClick={() => selectedProject && selectedNotebook && selectPage(selectedProject, selectedNotebook, page)}
+              onDuplicate={canEdit && !page.lockedAt ? () => duplicatePage(page) : undefined}
+              duplicating={duplicatingPageId === page.id}
+              onMove={canEdit && !page.lockedAt ? () => movePage(page) : undefined}
               onDelete={canEdit && !page.lockedAt ? () => deletePage(page) : undefined}
             />
           ))}
@@ -2339,34 +2805,151 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
         </div>
       </div>
     </aside>
+    {notebookSearchOpen ? (
+      <SearchOverlay
+        query={notebookQuery}
+        setQuery={setNotebookQuery}
+        advancedFilters={notebookSearchFilters}
+        setAdvancedFilters={setNotebookSearchFilters}
+        availableTags={searchTagSuggestions}
+        loading={notebookSearchLoading}
+        approxLoading={notebookSearchApproxLoading}
+        results={hydratedNotebookSearchResults}
+        scopeNotebook={selectedNotebook}
+        onClose={closeNotebookSearch}
+        selectResult={selectNotebookSearchResult}
+      />
+    ) : null}
+    </>
   );
 }
 
-function SearchOverlay({ query, setQuery, loading, approxLoading, results, onClose, selectResult }: { query: string; setQuery: (value: string) => void; loading: boolean; approxLoading: boolean; results: HydratedSearchResult[]; onClose: () => void; selectResult: (result: HydratedSearchResult) => void }) {
+function AdvancedTermInput({ label, terms, value, setValue, addTerm, removeTerm }: { label: string; terms: string[]; value: string; setValue: (value: string) => void; addTerm: (value: string) => void; removeTerm: (value: string) => void }) {
+  function addPendingTerm() {
+    addTerm(value);
+  }
+
+  return (
+    <label className="grid gap-1.5 text-sm font-medium text-slate-200">
+      <span>{label}</span>
+      <div className="min-h-9 border border-white/10 bg-slate-900 px-2 py-1.5 focus-within:border-cyan-400">
+        {terms.length ? (
+          <div className="mb-1.5 flex flex-wrap gap-1.5">
+            {terms.map((term) => (
+              <button
+                key={term}
+                type="button"
+                onClick={() => removeTerm(term)}
+                className="inline-flex h-6 max-w-full items-center gap-1 border border-white/10 bg-white/10 px-2 text-xs font-medium text-slate-200 hover:border-white/25"
+              >
+                <span className="truncate">{term}</span>
+                <X size={12} />
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <input
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          onBlur={addPendingTerm}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              addPendingTerm();
+            }
+          }}
+          className="h-6 w-full bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
+        />
+      </div>
+    </label>
+  );
+}
+
+function SearchOverlay({ query, setQuery, advancedFilters, setAdvancedFilters, availableTags, loading, approxLoading, results, scopeNotebook, onClose, selectResult }: { query: string; setQuery: (value: string) => void; advancedFilters: SearchAdvancedFilters; setAdvancedFilters: (value: SearchAdvancedFilters | ((current: SearchAdvancedFilters) => SearchAdvancedFilters)) => void; availableTags: string[]; loading: boolean; approxLoading: boolean; results: HydratedSearchResult[]; scopeNotebook?: Notebook; onClose: () => void; selectResult: (result: HydratedSearchResult) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [tagQuery, setTagQuery] = useState("");
+  const [includeInput, setIncludeInput] = useState("");
+  const [excludeInput, setExcludeInput] = useState("");
   const trimmedQuery = query.trim();
+  const filtersActive = hasSearchAdvancedFilters(advancedFilters);
+  const searchActive = Boolean(trimmedQuery || hasSearchResultCriteria(advancedFilters));
+  const scopeColor = scopeNotebook ? projectColor(scopeNotebook) : undefined;
+  const placeholder = scopeNotebook ? `Search pages and attachments within ${scopeNotebook.name}` : "Search pages and attachments";
+  const emptyStateText = scopeNotebook ? `Start typing to search page titles, page text, tags, and attachment names within ${scopeNotebook.name}.` : "Start typing to search page titles, page text, tags, and attachment names.";
+  const visibleTags = useMemo(() => {
+    const normalizedQuery = tagQuery.trim().toLowerCase();
+    return normalizedQuery ? availableTags.filter((tag) => tag.toLowerCase().includes(normalizedQuery)) : availableTags;
+  }, [availableTags, tagQuery]);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  function addAdvancedTerm(key: "include" | "exclude", value: string) {
+    const term = value.trim().replace(/\s+/g, " ");
+    if (!term) return;
+    setAdvancedFilters((current) => {
+      if (current[key].some((candidate) => candidate.toLowerCase() === term.toLowerCase())) return current;
+      return { ...current, [key]: [...current[key], term] };
+    });
+    if (key === "include") setIncludeInput("");
+    else setExcludeInput("");
+  }
+
+  function removeAdvancedTerm(key: "include" | "exclude", value: string) {
+    setAdvancedFilters((current) => ({
+      ...current,
+      [key]: current[key].filter((candidate) => candidate.toLowerCase() !== value.toLowerCase()),
+    }));
+  }
+
+  function toggleSearchTag(tag: string) {
+    setAdvancedFilters((current) => ({
+      ...current,
+      tags: current.tags.some((selected) => selected.toLowerCase() === tag.toLowerCase())
+        ? current.tags.filter((selected) => selected.toLowerCase() !== tag.toLowerCase())
+        : [...current.tags, tag],
+    }));
+  }
+
+  function toggleSearchField(field: SearchFieldKey) {
+    setAdvancedFilters((current) => {
+      const currentFields = current.fields ?? DEFAULT_SEARCH_FIELDS;
+      const selected = currentFields.includes(field);
+      if (selected && currentFields.length === 1) return current;
+      return {
+        ...current,
+        fields: selected ? currentFields.filter((candidate) => candidate !== field) : [...currentFields, field],
+      };
+    });
+  }
 
   return (
     <div className="fixed inset-0 z-40 bg-slate-950/55 p-6" onMouseDown={onClose}>
       <section
         role="dialog"
         aria-modal="true"
-        aria-label="Search pages"
+        aria-label={scopeNotebook ? `Search ${scopeNotebook.name}` : "Search pages"}
         onMouseDown={(event) => event.stopPropagation()}
         className="mx-auto mt-12 grid max-h-[78vh] w-full max-w-4xl grid-rows-[auto_1fr] border border-white/10 bg-slate-950 text-slate-100 shadow-2xl shadow-slate-950/50"
+        style={scopeColor ? { borderColor: colorWithAlpha(scopeColor, 0.65) } : undefined}
       >
         <div className="border-b border-white/10 px-5 py-4">
+          {scopeNotebook ? (
+            <div className="mb-2 flex min-w-0 items-center gap-2 text-sm text-slate-300">
+              <span className="size-2.5 shrink-0" style={{ backgroundColor: scopeColor }} />
+              <span className="shrink-0 text-slate-500">Searching notebook:</span>
+              <span className="min-w-0 truncate font-medium text-slate-100">{scopeNotebook.name}</span>
+            </div>
+          ) : null}
           <div className="flex items-center gap-3">
-            <Search className="shrink-0 text-slate-400" size={18} />
+            <Search className="shrink-0 text-slate-400" size={18} style={scopeColor ? { color: scopeColor } : undefined} />
             <input
               ref={inputRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search pages and attachments"
+              placeholder={placeholder}
               className="h-9 min-w-0 flex-1 bg-transparent text-base text-white outline-none placeholder:text-slate-500"
             />
             {query ? (
@@ -2375,19 +2958,176 @@ function SearchOverlay({ query, setQuery, loading, approxLoading, results, onClo
               </button>
             ) : null}
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((open) => !open)}
+              className={`inline-flex h-8 items-center gap-2 border px-3 text-sm font-medium ${advancedOpen || filtersActive ? "border-cyan-400/70 bg-cyan-400/10 text-cyan-100" : "border-white/10 text-slate-300 hover:border-white/20 hover:bg-white/5 hover:text-white"}`}
+              aria-expanded={advancedOpen}
+            >
+              <SlidersHorizontal size={14} />
+              Advanced
+              {filtersActive ? <span className="bg-white/10 px-1.5 text-xs">{searchFilterCount(advancedFilters)}</span> : null}
+            </button>
+            {filtersActive ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAdvancedFilters(emptySearchAdvancedFilters());
+                  setTagQuery("");
+                }}
+                className="h-8 px-2 text-sm font-medium text-slate-400 hover:bg-white/5 hover:text-white"
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+          {advancedOpen ? (
+            <div className="mt-3 grid gap-3 border border-white/10 bg-white/[0.03] p-3">
+              <div className="grid gap-2">
+                <div className="text-sm font-medium text-slate-200">Search in</div>
+                <div className="flex flex-wrap gap-2">
+                  {SEARCH_FIELD_OPTIONS.map(({ key, label }) => {
+                    const selected = (advancedFilters.fields ?? DEFAULT_SEARCH_FIELDS).includes(key);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => toggleSearchField(key)}
+                        className={`inline-flex h-7 items-center gap-1.5 border px-2 text-left text-[11px] font-medium ${selected ? "border-cyan-400/70 bg-cyan-400/10 text-cyan-100" : "border-white/10 text-slate-400 hover:border-white/20 hover:bg-white/5 hover:text-white"}`}
+                        aria-pressed={selected}
+                      >
+                        <span className={`grid size-3.5 shrink-0 place-items-center border ${selected ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-white/20"}`}>{selected ? <Check size={10} /> : null}</span>
+                        <span>{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <AdvancedTermInput
+                  label="Must include"
+                  terms={advancedFilters.include}
+                  value={includeInput}
+                  setValue={setIncludeInput}
+                  addTerm={(value) => addAdvancedTerm("include", value)}
+                  removeTerm={(value) => removeAdvancedTerm("include", value)}
+                />
+                <AdvancedTermInput
+                  label="Exclude"
+                  terms={advancedFilters.exclude}
+                  value={excludeInput}
+                  setValue={setExcludeInput}
+                  addTerm={(value) => addAdvancedTerm("exclude", value)}
+                  removeTerm={(value) => removeAdvancedTerm("exclude", value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                  <Tag size={14} style={scopeColor ? { color: scopeColor } : undefined} />
+                  Tags
+                </div>
+                {advancedFilters.tags.length ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {advancedFilters.tags.map((tag) => (
+                      <button key={tag} type="button" onClick={() => toggleSearchTag(tag)} className="inline-flex h-7 max-w-full items-center gap-1 border border-white/10 bg-white/10 px-2 text-xs font-medium text-slate-200 hover:border-white/25">
+                        <span className="truncate">{tag}</span>
+                        <X size={12} />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <input
+                  value={tagQuery}
+                  onChange={(event) => setTagQuery(event.target.value)}
+                  className="h-9 border border-white/10 bg-slate-900 px-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
+                  placeholder="Filter by tags..."
+                />
+                <div className="max-h-28 overflow-y-auto scroll-contained border border-white/10">
+                  {visibleTags.slice(0, 80).map((tag) => {
+                    const selected = advancedFilters.tags.some((candidate) => candidate.toLowerCase() === tag.toLowerCase());
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => toggleSearchTag(tag)}
+                        className={`flex h-8 w-full items-center gap-2 px-2 text-left text-sm ${selected ? "bg-cyan-400/15 text-cyan-100" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
+                      >
+                        <span className={`grid size-4 shrink-0 place-items-center border ${selected ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-white/20"}`}>{selected ? <Check size={11} /> : null}</span>
+                        <span className="truncate">{tag}</span>
+                      </button>
+                    );
+                  })}
+                  {visibleTags.length === 0 ? <p className="px-2 py-2 text-sm text-slate-500">No matching tags.</p> : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="overflow-y-auto scroll-contained p-5">
-          {trimmedQuery ? (
+          {searchActive ? (
             <SearchResultList loading={loading} approxLoading={approxLoading} results={results} selectResult={selectResult} />
           ) : (
             <div className="border border-white/10 bg-white/[0.03] p-5 text-sm text-slate-400">
-              Start typing to search page titles, page text, and attachment names.
+              {emptyStateText}
             </div>
           )}
         </div>
       </section>
     </div>
   );
+}
+
+function emptySearchAdvancedFilters(): SearchAdvancedFilters {
+  return { include: [], exclude: [], tags: [], fields: DEFAULT_SEARCH_FIELDS };
+}
+
+function hasSearchAdvancedFilters(filters: SearchAdvancedFilters) {
+  return Boolean(filters.include.length || filters.exclude.length || filters.tags.length || !searchFieldListsEqual(filters.fields ?? DEFAULT_SEARCH_FIELDS, DEFAULT_SEARCH_FIELDS));
+}
+
+function hasSearchResultCriteria(filters: SearchAdvancedFilters) {
+  return Boolean(filters.include.length || filters.exclude.length || filters.tags.length);
+}
+
+function hasApproximateSearchBasis(query: string, filters: SearchAdvancedFilters) {
+  return Boolean(query.trim() || filters.include.length);
+}
+
+function searchFilterCount(filters: SearchAdvancedFilters) {
+  return filters.include.length + filters.exclude.length + filters.tags.length + (searchFieldListsEqual(filters.fields ?? DEFAULT_SEARCH_FIELDS, DEFAULT_SEARCH_FIELDS) ? 0 : 1);
+}
+
+function searchApiUrl(input: { query: string; limit: number; mode: "fast" | "approx"; notebookId?: string; filters: SearchAdvancedFilters }) {
+  const params = new URLSearchParams();
+  params.set("q", input.query);
+  params.set("limit", String(input.limit));
+  params.set("mode", input.mode);
+  if (input.notebookId) params.set("notebookId", input.notebookId);
+  for (const term of input.filters.include) params.append("include", term);
+  for (const term of input.filters.exclude) params.append("exclude", term);
+  for (const tag of input.filters.tags) params.append("tag", tag);
+  for (const field of input.filters.fields ?? DEFAULT_SEARCH_FIELDS) params.append("field", field);
+  return `/api/search?${params.toString()}`;
+}
+
+function searchCacheKey(input: { query: string; notebookId?: string; filters: SearchAdvancedFilters }) {
+  const normalize = (values: string[]) => values.map((value) => value.trim().toLowerCase()).filter(Boolean).sort().join("\u001f");
+  const fields = [...(input.filters.fields ?? DEFAULT_SEARCH_FIELDS)].sort().join("\u001f");
+  return [
+    input.notebookId ?? "",
+    input.query.trim().toLowerCase(),
+    normalize(input.filters.include),
+    normalize(input.filters.exclude),
+    normalize(input.filters.tags),
+    fields,
+  ].join("\u001e");
+}
+
+function searchFieldListsEqual(left: SearchFieldKey[], right: SearchFieldKey[]) {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((field) => rightSet.has(field));
 }
 
 function mergeSearchResultLists(primary: SearchResult[], secondary: SearchResult[]) {
@@ -2422,7 +3162,7 @@ function SearchResultList({ loading, approxLoading, results, selectedPageId, sel
 
 function SearchResultButton({ result, active, compact, onClick }: { result: HydratedSearchResult; active: boolean; compact: boolean; onClick: () => void }) {
   const label = result.matchType === "title" ? "Title" : result.matchType === "attachment" ? "Attachment" : result.matchType === "fuzzy" ? "Approximate" : "Text";
-  const color = projectColor(result.project);
+  const color = projectColor(result.notebook ?? result.project);
   return (
     <button
       onClick={onClick}
@@ -2442,7 +3182,7 @@ function SearchResultButton({ result, active, compact, onClick }: { result: Hydr
   );
 }
 
-function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2", tinted = false, menuOpen = false, setMenuOpen, onClick, onDelete }: { page: PageEntry; active?: boolean; contextLabel?: string; accentColor?: string; tinted?: boolean; menuOpen?: boolean; setMenuOpen?: (open: boolean) => void; onClick: () => void; onDelete?: () => void }) {
+function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2", tinted = false, menuOpen = false, setMenuOpen, onClick, onDuplicate, duplicating = false, onMove, onDelete }: { page: PageEntry; active?: boolean; contextLabel?: string; accentColor?: string; tinted?: boolean; menuOpen?: boolean; setMenuOpen?: (open: boolean) => void; onClick: () => void; onDuplicate?: () => void; duplicating?: boolean; onMove?: () => void; onDelete?: () => void }) {
   const fileCount = page.attachmentCount ?? page.attachments.length;
   const fileLabel = fileCount ? `${fileCount} files` : "No files";
   const color = normalizeColor(accentColor);
@@ -2450,19 +3190,19 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   const visibleTags = page.tags.slice(0, 3);
   const previewText = useMemo(() => (page.bodyLoaded ? bodyToEditorText(page.body) : page.bodyPreview) || "Empty page", [page.body, page.bodyLoaded, page.bodyPreview]);
   return (
-    <div data-page-card-id={page.id} className="group relative w-full min-w-0 max-w-full overflow-hidden">
+    <div data-page-card-id={page.id} className="group relative w-full min-w-0 max-w-full overflow-visible">
       <button
         onClick={onClick}
         className={`block min-w-0 w-full max-w-full overflow-hidden border p-3 pr-10 text-left ${active ? "" : "border-slate-200 bg-white hover:border-slate-400"}`}
         style={cardStyle}
       >
-        <div className="flex min-w-0 items-start justify-between gap-3">
-          <h3 className="min-w-0 max-w-full break-words text-sm font-semibold leading-5 text-slate-900 [overflow-wrap:anywhere]">{page.title || "Untitled"}</h3>
-        </div>
+        <h3 className="min-w-0 max-w-full break-words text-sm font-semibold leading-5 text-slate-900 [overflow-wrap:anywhere]">
+          {page.lockedAt ? <Lock size={13} strokeWidth={2.2} className="mr-1 inline-block align-[-1px] text-slate-500" aria-label="Locked page" /> : null}
+          {page.title || "Untitled"}
+        </h3>
         <p className="mt-2 max-h-10 min-w-0 max-w-full overflow-hidden break-words text-sm leading-5 text-slate-500 [overflow-wrap:anywhere]">{previewText}</p>
-        {(page.lockedAt || page.status || visibleTags.length > 0) ? (
+        {(page.status || visibleTags.length > 0) ? (
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {page.lockedAt ? <span className="inline-flex h-6 items-center gap-1 border border-slate-300 bg-slate-100 px-2 text-[11px] font-medium text-slate-600"><Lock size={11} />Locked</span> : null}
             {page.status ? <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-2.5 text-[11px] font-medium text-slate-700"><StatusDot status={page.status} />{getPageStatusLabel(page.status)}</span> : null}
             {visibleTags.map((tag) => <span key={tag} className="inline-flex h-6 max-w-full items-center truncate border border-slate-200 bg-slate-100 px-2 text-[11px] font-medium text-slate-600">{tag}</span>)}
             {page.tags.length > visibleTags.length ? <span className="inline-flex h-6 items-center px-1 text-[11px] font-medium text-slate-400">+{page.tags.length - visibleTags.length} more</span> : null}
@@ -2486,7 +3226,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
           </div>
         </div>
       </button>
-      {setMenuOpen && onDelete ? (
+      {setMenuOpen && (onDuplicate || onMove || onDelete) ? (
         <div data-transient-menu className="absolute right-2 top-2">
           <button
             onClick={(event) => {
@@ -2499,18 +3239,46 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
             <MoreHorizontal size={16} />
           </button>
           {menuOpen ? (
-            <div className="absolute right-0 top-8 z-20 w-36 border border-slate-800 bg-slate-950 py-1 text-slate-100 shadow-xl">
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setMenuOpen(false);
-                  onDelete();
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10"
-              >
-                <Trash2 size={14} />
-                Delete page
-              </button>
+            <div className="absolute right-0 top-8 z-20 w-40 border border-slate-800 bg-slate-950 py-1 text-slate-100 shadow-xl">
+              {onDuplicate ? (
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDuplicate();
+                  }}
+                  disabled={duplicating}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+                >
+                  {duplicating ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
+                  {duplicating ? "Duplicating..." : "Duplicate"}
+                </button>
+              ) : null}
+              {onMove ? (
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuOpen(false);
+                    onMove();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-100 hover:bg-white/10"
+                >
+                  <MoveRight size={14} />
+                  Move page
+                </button>
+              ) : null}
+              {onDelete ? (
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuOpen(false);
+                    onDelete();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10"
+                >
+                  <Trash2 size={14} />
+                  Delete page
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -2523,8 +3291,12 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
   return (
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-8">
+        <div className="mb-8 flex items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold text-slate-950">Overview</h1>
+          <div className="flex shrink-0 items-center gap-2 text-sm">
+            <span className="font-medium text-slate-500">Group:</span>
+            <span className="font-semibold text-slate-950">CCIB Therapeutics</span>
+          </div>
         </div>
 
         <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -2573,9 +3345,12 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
               </div>
               <div className="space-y-2">
                 {members.map((member) => (
-                  <div key={member.id} className="border border-slate-100 px-3 py-2">
-                    <div className="text-sm font-medium text-slate-950">{userDisplayName(member)}</div>
-                    <div className="mt-1 truncate text-xs text-slate-500">{member.email}</div>
+                  <div key={member.id} className="grid grid-cols-[32px_minmax(0,1fr)] items-center gap-3 border border-slate-100 px-3 py-2">
+                    <div className="grid size-8 place-items-center rounded-full bg-slate-950 text-xs font-semibold text-white">{userInitials(member)}</div>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-slate-950">{userDisplayName(member)}</div>
+                      <div className="mt-1 truncate text-xs text-slate-500">{member.email}</div>
+                    </div>
                   </div>
                 ))}
                 {members.length === 0 ? <p className="text-sm text-slate-500">No group members yet.</p> : null}
@@ -2591,9 +3366,24 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
 function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteNotebook, onChanged }: { notebook: Notebook; user: AppUser; members: AppUser[]; renameNotebook: (notebook: Notebook) => void; deleteNotebook: (notebook: Notebook) => void; onChanged: () => Promise<void> }) {
   const canManage = notebook.accessRole === "owner";
   const canEdit = canManage || notebook.accessRole === "editor";
+  const effectiveRoleLabel = user.role === "admin" ? "Admin" : capitalizeLabel(notebook.accessRole);
+  const [memberPendingRemoval, setMemberPendingRemoval] = useState<ShareMember | null>(null);
+  const [removingMember, setRemovingMember] = useState(false);
+  const [pageTitleTemplate, setPageTitleTemplate] = useState(notebook.pageTitleTemplate ?? "");
+  const [pageTitleTemplateEnabled, setPageTitleTemplateEnabled] = useState(Boolean(notebook.pageTitleTemplateEnabled));
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [templateError, setTemplateError] = useState("");
   const attachmentCount = notebook.pages.reduce((total, page) => total + (page.attachmentCount ?? page.attachments.length), 0);
   const attachmentBytes = notebook.pages.reduce((total, page) => total + (page.attachmentBytes ?? page.attachments.reduce((sum, attachment) => sum + attachment.size, 0)), 0);
   const memberCount = notebook.members.length;
+  const templateDirty = pageTitleTemplate !== (notebook.pageTitleTemplate ?? "") || pageTitleTemplateEnabled !== Boolean(notebook.pageTitleTemplateEnabled);
+
+  useEffect(() => {
+    setPageTitleTemplate(notebook.pageTitleTemplate ?? "");
+    setPageTitleTemplateEnabled(Boolean(notebook.pageTitleTemplateEnabled));
+    setTemplateError("");
+    setTemplateSaving(false);
+  }, [notebook.id, notebook.pageTitleTemplate, notebook.pageTitleTemplateEnabled]);
 
   async function addNotebookMember(input: { email: string; role: AccessRole }) {
     await fetch(`/api/notebooks/${notebook.id}/members`, {
@@ -2613,6 +3403,48 @@ function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteN
     await onChanged();
   }
 
+  async function confirmMemberRemoval() {
+    if (!memberPendingRemoval || removingMember) return;
+    setRemovingMember(true);
+    try {
+      await removeMember(memberPendingRemoval);
+      setMemberPendingRemoval(null);
+    } finally {
+      setRemovingMember(false);
+    }
+  }
+
+  async function persistPageTitleTemplate(template: string, enabled: boolean) {
+    const trimmedTemplate = template.trim();
+    const nextEnabled = enabled && trimmedTemplate.length > 0;
+    setTemplateSaving(true);
+    setTemplateError("");
+    try {
+      await fetch(`/api/notebooks/${notebook.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pageTitleTemplate: trimmedTemplate, pageTitleTemplateEnabled: nextEnabled }),
+      }).then(assertOk);
+      await onChanged();
+    } catch (error) {
+      setTemplateError(error instanceof Error ? error.message : "Could not save title template.");
+    } finally {
+      setTemplateSaving(false);
+    }
+  }
+
+  async function savePageTitleTemplate() {
+    if (!templateDirty || templateSaving || !pageTitleTemplateEnabled) return;
+    await persistPageTitleTemplate(pageTitleTemplate, pageTitleTemplateEnabled);
+  }
+
+  async function changePageTitleTemplateEnabled(nextEnabled: boolean) {
+    setPageTitleTemplateEnabled(nextEnabled);
+    if (!nextEnabled || pageTitleTemplate.trim().length > 0) {
+      await persistPageTitleTemplate(pageTitleTemplate, nextEnabled);
+    }
+  }
+
   return (
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-5xl">
@@ -2630,54 +3462,172 @@ function NotebookSettingsView({ notebook, user, members, renameNotebook, deleteN
           </div>
         </div>
 
-        <section className="border border-slate-200 bg-white p-4">
-          <h2 className="text-base font-semibold text-slate-950">Notebook overview</h2>
-          <div className="mt-3 max-w-xl space-y-5">
-            <NotebookOverviewGroup
-              title="Contents"
-              rows={[
-                { label: "Pages", value: notebook.pages.length.toLocaleString() },
-                { label: "Attachments", value: attachmentCount.toLocaleString() },
-                { label: "Storage", value: formatBytes(attachmentBytes) },
-              ]}
-            />
-            <NotebookOverviewGroup
-              title="Access"
-              rows={[
-                { label: "Members", value: memberCount.toLocaleString() },
-                { label: "Your role", value: capitalizeLabel(notebook.accessRole) },
-              ]}
-            />
-            <NotebookOverviewGroup
-              title="Dates"
-              rows={[
-                { label: "Created", value: formatDateTime(notebook.createdAt) },
-                { label: "Updated", value: formatDateTime(notebook.updatedAt) },
-              ]}
-            />
-          </div>
-        </section>
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,680px)_320px] lg:items-start">
+          <div className="space-y-6">
+          <section className="border border-slate-200 bg-white p-4">
+            <div className="mb-4 flex items-center gap-2">
+              <NotebookIcon size={17} className="text-slate-500" />
+              <h2 className="text-base font-semibold text-slate-950">Notebook overview</h2>
+            </div>
+            <div className="space-y-5">
+              <NotebookOverviewGroup
+                title="Identity"
+                rows={[
+                  { label: "Notebook ID", value: notebook.id },
+                ]}
+              />
+              <NotebookOverviewGroup
+                title="Contents"
+                rows={[
+                  { label: "Pages", value: notebook.pages.length.toLocaleString() },
+                  { label: "Attachments", value: attachmentCount.toLocaleString() },
+                  { label: "Storage", value: formatBytes(attachmentBytes) },
+                ]}
+              />
+              <NotebookOverviewGroup
+                title="Access"
+                rows={[
+                  { label: "Members", value: memberCount.toLocaleString() },
+                  { label: "Your role", value: effectiveRoleLabel },
+                ]}
+              />
+              <NotebookOverviewGroup
+                title="Dates"
+                rows={[
+                  { label: "Created", value: formatDateTime(notebook.createdAt) },
+                  { label: "Updated", value: formatDateTime(notebook.updatedAt) },
+                ]}
+              />
+            </div>
+          </section>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <NotebookTitleTemplateSettings
+            value={pageTitleTemplate}
+            savedValue={notebook.pageTitleTemplate ?? ""}
+            enabled={pageTitleTemplateEnabled}
+            savedEnabled={Boolean(notebook.pageTitleTemplateEnabled)}
+            notebookColor={notebook.color}
+            canManage={canManage}
+            dirty={templateDirty}
+            error={templateError}
+            saving={templateSaving}
+            onChange={setPageTitleTemplate}
+            onEnabledChange={changePageTitleTemplateEnabled}
+            onSave={savePageTitleTemplate}
+          />
+
           <section className="border border-slate-200 bg-white p-4">
             <div className="mb-4 flex items-center gap-2">
               <Users size={17} className="text-slate-500" />
               <h2 className="text-base font-semibold text-slate-950">Notebook access</h2>
             </div>
-            <NotebookAccessList members={notebook.members} currentUserId={user.id} canManage={canManage} onRoleChange={updateNotebookMemberRole} onRemove={removeMember} />
+            <NotebookAccessList members={notebook.members} currentUserId={user.id} canManage={canManage} onRoleChange={updateNotebookMemberRole} onRemove={setMemberPendingRemoval} />
           </section>
+          </div>
 
-          <aside className="space-y-6">
-            <section className="border border-slate-200 bg-white p-4">
-              <h2 className="text-base font-semibold text-slate-950">Share notebook</h2>
-              <p className="mt-1 text-sm leading-6 text-slate-500">Add a group member and choose their notebook role.</p>
-              <div className="mt-4">
-                <ShareForm members={members} existingMembers={notebook.members} submitLabel="Share" disabled={!canManage} disabledReason={!canManage ? "Only notebook owners can share this notebook." : undefined} onSubmit={addNotebookMember} />
-              </div>
-            </section>
-
-          </aside>
+          <section className="border border-slate-200 bg-white p-4">
+            <h2 className="text-base font-semibold text-slate-950">Share notebook</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-500">Add a group member and choose their notebook role.</p>
+            <div className="mt-4">
+              <ShareForm members={members} existingMembers={notebook.members} submitLabel="Share" disabled={!canManage} disabledReason={!canManage ? "Only notebook owners and admins can share this notebook." : undefined} onSubmit={addNotebookMember} />
+            </div>
+          </section>
         </div>
+      </div>
+      {memberPendingRemoval ? (
+        <NotebookMemberRemovalModal
+          member={memberPendingRemoval}
+          isCurrentUser={memberPendingRemoval.userId === user.id}
+          removing={removingMember}
+          onCancel={() => setMemberPendingRemoval(null)}
+          onConfirm={confirmMemberRemoval}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function NotebookTitleTemplateSettings({
+  value,
+  savedValue,
+  enabled,
+  savedEnabled,
+  notebookColor,
+  canManage,
+  dirty,
+  error,
+  saving,
+  onChange,
+  onEnabledChange,
+  onSave,
+}: {
+  value: string;
+  savedValue: string;
+  enabled: boolean;
+  savedEnabled: boolean;
+  notebookColor: string;
+  canManage: boolean;
+  dirty: boolean;
+  error: string;
+  saving: boolean;
+  onChange: (value: string) => void;
+  onEnabledChange: (value: boolean) => void;
+  onSave: () => Promise<void>;
+}) {
+  if (!canManage) {
+    return (
+      <section className="border border-slate-200 bg-white p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <CalendarPlus size={17} className="text-slate-500" />
+          <h2 className="text-base font-semibold text-slate-950">New page title template</h2>
+        </div>
+        <dl className="space-y-2 text-sm">
+          <NotebookOverviewRow label="Status" value={savedEnabled ? "On" : "Off"} />
+          <NotebookOverviewRow label="Template" value={savedValue || "Untitled"} />
+        </dl>
+      </section>
+    );
+  }
+
+  const saveDisabled = !enabled || !dirty || saving;
+  const saveButtonStyle = saveDisabled ? undefined : { borderColor: notebookColor, color: notebookColor };
+  const checkboxStyle = { accentColor: notebookColor };
+
+  return (
+    <section className="border border-slate-200 bg-white p-4">
+      <div className="mb-4 flex items-center gap-2">
+        <CalendarPlus size={17} className="text-slate-500" />
+        <h2 className="text-base font-semibold text-slate-950">New page title template</h2>
+      </div>
+      <div className="space-y-3 text-sm">
+        <div className="flex items-center gap-2 font-medium text-slate-800">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => onEnabledChange(event.target.checked)}
+            aria-label="Use title template for new pages"
+            style={checkboxStyle}
+            className="size-4 cursor-pointer border-slate-300"
+          />
+          <span>Use this template for new pages</span>
+        </div>
+        <div className="mt-2 flex flex-wrap items-start gap-2">
+          <input
+            id="page-title-template"
+            aria-label="New page title template"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="Example: ChordBrach-Expt{number}"
+            disabled={!enabled}
+            className="min-w-[280px] flex-1 border border-slate-300 px-3 py-2 text-slate-950 outline-none focus:border-slate-500 disabled:bg-slate-50 disabled:text-slate-400"
+          />
+          <button type="button" onClick={onSave} disabled={saveDisabled} style={saveButtonStyle} className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 font-medium text-slate-700 disabled:border-slate-300 disabled:text-slate-400">
+            {saving ? <Loader2 size={16} className="animate-spin" /> : null}
+            Save template
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">Use {"{number}"} where Novo should insert the next number. Leave blank to use Untitled.</p>
+        {error ? <p className="mt-2 text-xs font-medium text-red-600">{error}</p> : null}
       </div>
     </section>
   );
@@ -2696,28 +3646,32 @@ function NotebookOverviewGroup({ title, rows }: { title: string; rows: Array<{ l
 
 function NotebookOverviewRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_minmax(96px,auto)] gap-4 py-2">
+    <div className="grid grid-cols-[150px_minmax(0,1fr)] gap-4 py-2">
       <dt className="text-slate-500">{label}</dt>
-      <dd className="text-left font-medium tabular-nums text-slate-950">{value}</dd>
+      <dd className="select-text break-words text-left font-medium tabular-nums text-slate-950">{value}</dd>
     </div>
   );
 }
 
-function NotebookAccessList({ members, currentUserId, canManage, onRoleChange, onRemove }: { members: ShareMember[]; currentUserId: string; canManage: boolean; onRoleChange: (member: ShareMember, role: AccessRole) => Promise<void>; onRemove: (member: ShareMember) => Promise<void> }) {
+function NotebookAccessList({ members, currentUserId, canManage, onRoleChange, onRemove }: { members: ShareMember[]; currentUserId: string; canManage: boolean; onRoleChange: (member: ShareMember, role: AccessRole) => Promise<void>; onRemove: (member: ShareMember) => void }) {
   if (!members.length) return <p className="text-sm text-slate-500">No members have access yet.</p>;
   return (
     <div className="space-y-2">
       {members.map((member) => {
         const isCurrentUser = member.userId === currentUserId;
-        const RoleIcon = accessRoleIcons[member.role];
-        const roleIconClass = member.role === "owner" ? "text-amber-600" : "text-slate-500";
+        const isAppAdmin = member.appRole === "admin";
+        const RoleIcon = isAppAdmin ? Shield : accessRoleIcons[member.role];
+        const roleIconClass = isAppAdmin ? "text-cyan-700" : member.role === "owner" ? "text-amber-600" : "text-slate-500";
+        const roleLabel = isAppAdmin ? "Admin" : member.role;
+        const roleCanBeChanged = canManage && !isCurrentUser && !isAppAdmin;
+        const roleCanBeRemoved = (canManage || isCurrentUser) && !isAppAdmin;
         return (
         <div key={member.userId} className="grid gap-3 border border-slate-200 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_170px_36px] sm:items-center">
           <div className="min-w-0">
             <p className="truncate text-sm font-medium text-slate-950">{userDisplayName(member)}{isCurrentUser ? <span className="ml-1 font-normal text-slate-500">(you)</span> : null}</p>
             <p className="truncate text-xs text-slate-500">{member.email}</p>
           </div>
-          {canManage && !isCurrentUser ? (
+          {roleCanBeChanged ? (
             <div className="flex min-w-0 items-center gap-2">
               <RoleIcon size={15} className={`shrink-0 ${roleIconClass}`} />
               <select value={member.role} onChange={(event) => void onRoleChange(member, event.target.value as AccessRole)} className="h-9 min-w-0 flex-1 cursor-pointer border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none focus:border-cyan-600">
@@ -2729,11 +3683,11 @@ function NotebookAccessList({ members, currentUserId, canManage, onRoleChange, o
           ) : (
             <span className="inline-flex items-center gap-2 text-sm capitalize text-slate-600">
               <RoleIcon size={15} className={`shrink-0 ${roleIconClass}`} />
-              {member.role}
+              {roleLabel}
             </span>
           )}
-          {canManage && !isCurrentUser ? (
-            <button type="button" onClick={() => void onRemove(member)} className="grid size-9 place-items-center border border-slate-200 text-slate-500 hover:bg-slate-100" title="Remove access">
+          {roleCanBeRemoved ? (
+            <button type="button" onClick={() => onRemove(member)} className="grid size-9 place-items-center border border-slate-200 text-slate-500 hover:bg-slate-100" title={isCurrentUser ? "Leave notebook" : "Remove access"}>
               <X size={14} />
             </button>
           ) : null}
@@ -2741,6 +3695,30 @@ function NotebookAccessList({ members, currentUserId, canManage, onRoleChange, o
         );
       })}
     </div>
+  );
+}
+
+function NotebookMemberRemovalModal({ member, isCurrentUser, removing, onCancel, onConfirm }: { member: ShareMember; isCurrentUser: boolean; removing: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const title = isCurrentUser ? "Leave notebook?" : "Remove notebook access?";
+  const action = isCurrentUser ? "Leave notebook" : "Remove access";
+  return (
+    <ModalFrame>
+      <h2 className="text-lg font-semibold text-white">{title}</h2>
+      <p className="mt-3 text-sm leading-6 text-slate-400">
+        {isCurrentUser ? (
+          <>You will lose access to this notebook unless another owner shares it with you again.</>
+        ) : (
+          <>This will remove <span className="font-semibold text-white">{userDisplayName(member)}</span> from this notebook.</>
+        )}
+      </p>
+      <div className="mt-5 flex justify-end gap-2">
+        <button onClick={onCancel} disabled={removing} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
+        <button onClick={onConfirm} disabled={removing} className="inline-flex h-9 items-center gap-2 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200">
+          {removing ? <Loader2 size={15} className="animate-spin" /> : null}
+          {removing ? "Working..." : action}
+        </button>
+      </div>
+    </ModalFrame>
   );
 }
 
@@ -2858,24 +3836,25 @@ async function assertOk(response: Response) {
   throw new Error(body?.error ?? "Request failed.");
 }
 
-type AccountTab = "profile" | "notebooks" | "security" | "users" | "data";
+type AccountTab = "profile" | "notebooks" | "security" | "app" | "users" | "activity" | "data";
 
-function AccountView({ user, notebooks }: { user: AppUser; notebooks: Notebook[] }) {
+function AccountView({ user, notebooks, onChanged }: { user: AppUser; notebooks: Notebook[]; onChanged: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<AccountTab>("profile");
   const tabs: Array<{ id: AccountTab; label: string; icon: typeof UserCircle }> = [
     { id: "profile", label: "Profile", icon: UserCircle },
     { id: "notebooks", label: "Notebooks", icon: NotebookIcon },
     { id: "security", label: "Security", icon: KeyRound },
     ...(user.role === "admin" ? [{ id: "users" as AccountTab, label: "Users", icon: Users }] : []),
+    ...(user.role === "admin" ? [{ id: "activity" as AccountTab, label: "Activity", icon: History }] : []),
     ...(user.role === "admin" ? [{ id: "data" as AccountTab, label: "Data", icon: Database }] : []),
+    ...(user.role === "admin" ? [{ id: "app" as AccountTab, label: "App Settings", icon: Settings }] : []),
   ];
 
   return (
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8">
-          <p className="text-xs font-semibold text-slate-500">Account</p>
-          <h1 className="mt-1 text-2xl font-semibold text-slate-950">Settings</h1>
+          <h1 className="text-2xl font-semibold text-slate-950">Account Settings</h1>
         </div>
 
         <div className="mb-6 flex flex-wrap gap-2 border-b border-slate-200">
@@ -2895,46 +3874,116 @@ function AccountView({ user, notebooks }: { user: AppUser; notebooks: Notebook[]
           })}
         </div>
 
-        {activeTab === "profile" ? <AccountProfile user={user} /> : null}
+        {activeTab === "profile" ? <AccountProfile user={user} onChanged={onChanged} /> : null}
         {activeTab === "notebooks" ? <AccountNotebooks notebooks={notebooks} /> : null}
         {activeTab === "security" ? <PasswordPanel /> : null}
+        {activeTab === "app" && user.role === "admin" ? <AppSettingsPanel onChanged={onChanged} /> : null}
         {activeTab === "users" && user.role === "admin" ? <UsersAdminPanel currentUserId={user.id} /> : null}
+        {activeTab === "activity" && user.role === "admin" ? <AdminActivityPanel /> : null}
         {activeTab === "data" && user.role === "admin" ? <DataAdminPanel /> : null}
       </div>
     </section>
   );
 }
 
-function AccountProfile({ user }: { user: AppUser }) {
+function AccountProfile({ user, onChanged }: { user: AppUser; onChanged: () => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [firstName, setFirstName] = useState(user.firstName);
+  const [lastName, setLastName] = useState(user.lastName);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (editing) return;
+    setFirstName(user.firstName);
+    setLastName(user.lastName);
+  }, [editing, user.firstName, user.lastName]);
+
+  function cancelEditing() {
+    setFirstName(user.firstName);
+    setLastName(user.lastName);
+    setError("");
+    setEditing(false);
+  }
+
+  async function submitProfile(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting) return;
+    setError("");
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/account/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firstName, lastName }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setError(body?.error ?? "Profile update failed.");
+        return;
+      }
+      setEditing(false);
+      await onChanged();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <section className="max-w-2xl border border-slate-200 bg-white p-5">
       <div className="mb-5 flex items-start gap-3">
         <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
           <UserCircle size={22} />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="text-lg font-semibold text-slate-950">{userDisplayName(user)}</h2>
           <p className="mt-1 truncate text-sm text-slate-500">{user.email}</p>
         </div>
+        {!editing ? (
+          <button type="button" onClick={() => setEditing(true)} className="grid size-9 shrink-0 place-items-center border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-950" title="Edit profile" aria-label="Edit profile">
+            <Pencil size={15} />
+          </button>
+        ) : null}
       </div>
-      <dl className="grid gap-3 text-sm">
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
-          <dt className="text-slate-500">First name</dt>
-          <dd className="text-slate-950">{user.firstName || "Not set"}</dd>
-        </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
-          <dt className="text-slate-500">Last name</dt>
-          <dd className="text-slate-950">{user.lastName || "Not set"}</dd>
-        </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
-          <dt className="text-slate-500">Role</dt>
-          <dd className="capitalize text-slate-950">{user.role}</dd>
-        </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
-          <dt className="text-slate-500">User ID</dt>
-          <dd className="truncate font-mono text-xs text-slate-600">{user.id}</dd>
-        </div>
-      </dl>
+      {editing ? (
+        <form onSubmit={(event) => void submitProfile(event)} className="grid gap-4 border-t border-slate-100 pt-4">
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium text-slate-700">First name</span>
+            <input value={firstName} onChange={(event) => setFirstName(event.target.value)} className="h-10 border border-slate-300 bg-white px-3 text-slate-950 outline-none focus:border-cyan-600" autoComplete="given-name" />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium text-slate-700">Last name</span>
+            <input value={lastName} onChange={(event) => setLastName(event.target.value)} className="h-10 border border-slate-300 bg-white px-3 text-slate-950 outline-none focus:border-cyan-600" autoComplete="family-name" />
+          </label>
+          {error ? <p className="border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={cancelEditing} disabled={submitting} className="h-9 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60">Cancel</button>
+            <button type="submit" disabled={submitting || !firstName.trim()} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:bg-slate-300">
+              {submitting ? <Loader2 size={15} className="animate-spin" /> : null}
+              {submitting ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <dl className="grid gap-3 text-sm">
+          <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
+            <dt className="text-slate-500">First name</dt>
+            <dd className="text-slate-950">{user.firstName || "Not set"}</dd>
+          </div>
+          <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
+            <dt className="text-slate-500">Last name</dt>
+            <dd className="text-slate-950">{user.lastName || "Not set"}</dd>
+          </div>
+          <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
+            <dt className="text-slate-500">Role</dt>
+            <dd className="capitalize text-slate-950">{user.role}</dd>
+          </div>
+          <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
+            <dt className="text-slate-500">User ID</dt>
+            <dd className="truncate font-mono text-xs text-slate-600">{user.id}</dd>
+          </div>
+        </dl>
+      )}
     </section>
   );
 }
@@ -3080,6 +4129,108 @@ function PasswordField({ label, value, onChange, autoComplete }: { label: string
   );
 }
 
+function AppSettingsPanel({ onChanged }: { onChanged: () => Promise<void> }) {
+  const [settings, setSettings] = useState<AdminAppSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/admin/settings")
+      .then(async (response) => {
+        const body = (await response.json().catch(() => null)) as { settings?: AdminAppSettings; error?: string } | null;
+        if (!active) return;
+        setLoading(false);
+        if (!response.ok) {
+          setError(body?.error ?? "Unable to load app settings.");
+          return;
+        }
+        setSettings(body?.settings ?? null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setLoading(false);
+        setError("Unable to load app settings.");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function updateAppSettings(patch: Partial<AdminAppSettings>) {
+    if (!settings || saving) return;
+    const previous = settings;
+    const optimistic = { ...settings, ...patch };
+    setError("");
+    setSaving(true);
+    setSettings(optimistic);
+    const response = await fetch("/api/admin/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const body = (await response.json().catch(() => null)) as { settings?: AdminAppSettings; error?: string } | null;
+    setSaving(false);
+    if (!response.ok) {
+      setSettings(previous);
+      setError(body?.error ?? "Unable to update app settings.");
+      return;
+    }
+    setSettings(body?.settings ?? optimistic);
+    await onChanged();
+  }
+
+  return (
+    <section className="max-w-2xl border border-slate-200 bg-white">
+      <div className="flex items-start gap-3 border-b border-slate-200 p-5">
+        <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
+          <CalendarPlus size={21} />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">App Settings</h2>
+          <p className="mt-1 text-sm text-slate-500">Defaults for this Novo instance.</p>
+        </div>
+      </div>
+      {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+      {loading ? (
+        <p className="flex items-center gap-2 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Loading settings...</p>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          <label className="flex cursor-pointer items-start gap-3 p-5">
+            <input
+              type="checkbox"
+              checked={Boolean(settings?.prependDateToNewPages)}
+              onChange={(event) => void updateAppSettings({ prependDateToNewPages: event.target.checked })}
+              disabled={saving || !settings}
+              className="mt-1 size-4 cursor-pointer border-slate-300 disabled:cursor-wait"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-950">Add today&apos;s date to new pages</span>
+              <span className="mt-1 block text-sm text-slate-500">New pages start with a first line like "May 28, 2026".</span>
+            </span>
+            {saving ? <Loader2 size={16} className="mt-1 shrink-0 animate-spin text-slate-400" /> : null}
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 p-5">
+            <input
+              type="checkbox"
+              checked={Boolean(settings?.suggestTagsGlobally)}
+              onChange={(event) => void updateAppSettings({ suggestTagsGlobally: event.target.checked })}
+              disabled={saving || !settings}
+              className="mt-1 size-4 cursor-pointer border-slate-300 disabled:cursor-wait"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-950">Suggest tags from all notebooks</span>
+              <span className="mt-1 block text-sm text-slate-500">Page tag suggestions use tags from every notebook the user can access instead of only the current notebook.</span>
+            </span>
+            {saving ? <Loader2 size={16} className="mt-1 shrink-0 animate-spin text-slate-400" /> : null}
+          </label>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3131,7 +4282,6 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
           </div>
           <div>
             <h2 className="text-lg font-semibold text-slate-950">Users</h2>
-            <p className="mt-1 text-sm text-slate-500">Admin-only account management.</p>
           </div>
         </div>
         <button onClick={() => void loadUsers()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
@@ -3141,30 +4291,43 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
         <p className="p-5 text-sm text-slate-500">Loading users...</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.12em] text-slate-500">
+          <table className="w-full table-fixed border-collapse text-left text-sm">
+            <colgroup>
+              <col className="w-[22%]" />
+              <col className="w-[9%]" />
+              <col className="w-[9%]" />
+              <col className="w-[15%]" />
+              <col className="w-[15%]" />
+              <col className="w-[15%]" />
+              <col className="w-[15%]" />
+            </colgroup>
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
               <tr>
-                <th className="px-4 py-3 font-semibold">User</th>
-                <th className="px-4 py-3 font-semibold">Role</th>
-                <th className="px-4 py-3 font-semibold">Notebooks</th>
-                <th className="px-4 py-3 font-semibold">Created</th>
-                <th className="px-4 py-3 text-right font-semibold">Actions</th>
+                <th className="px-3 py-3 font-semibold">User</th>
+                <th className="px-3 py-3 font-semibold">Role</th>
+                <th className="px-3 py-3 font-semibold">Notebooks</th>
+                <th className="px-3 py-3 font-semibold">Last login</th>
+                <th className="px-3 py-3 font-semibold">Last activity</th>
+                <th className="px-3 py-3 font-semibold">Created</th>
+                <th className="px-3 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {users.map((user) => (
                 <tr key={user.id}>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-slate-950">{userDisplayName(user)}</div>
-                    <div className="mt-1 text-xs text-slate-500">{user.email}</div>
+                  <td className="px-3 py-3">
+                    <div className="truncate font-medium text-slate-950">{userDisplayName(user)}</div>
+                    <div className="mt-1 truncate text-xs text-slate-500">{user.email}</div>
                   </td>
-                  <td className="px-4 py-3 capitalize text-slate-700">{user.role}</td>
-                  <td className="px-4 py-3 text-slate-700">{user.notebookCount}</td>
-                  <td className="px-4 py-3 text-slate-500">{formatDateTime(user.createdAt)}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-3 py-3 capitalize text-slate-700">{user.role}</td>
+                  <td className="px-3 py-3 text-slate-700">{user.notebookCount}</td>
+                  <td className="px-3 py-3 text-xs leading-5 text-slate-500">{user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "Never"}</td>
+                  <td className="px-3 py-3 text-xs leading-5 text-slate-500">{user.lastActivityAt ? formatDateTime(user.lastActivityAt) : "None"}</td>
+                  <td className="px-3 py-3 text-xs leading-5 text-slate-500">{formatDateTime(user.createdAt)}</td>
+                  <td className="px-3 py-3">
                     <button
                       onClick={() => setResetUser(user)}
-                      className="h-8 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="min-h-8 border border-slate-300 px-3 py-1 text-sm leading-5 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={user.id === currentUserId}
                       title={user.id === currentUserId ? "Use Security to change your own password" : "Set temporary password"}
                     >
@@ -3187,6 +4350,104 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
             void loadUsers();
           }}
         />
+      ) : null}
+    </section>
+  );
+}
+
+const ADMIN_ACTIVITY_PAGE_SIZE = 30;
+
+function AdminActivityPanel() {
+  const [activity, setActivity] = useState<AdminActivityOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadActivity(offset = 0) {
+    const append = offset > 0;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    setError("");
+    const response = await fetch(`/api/admin/activity?limit=${ADMIN_ACTIVITY_PAGE_SIZE}&offset=${offset}`);
+    const body = (await response.json().catch(() => null)) as { activity?: AdminActivityOverview; error?: string } | null;
+    if (append) setLoadingMore(false);
+    else setLoading(false);
+    if (!response.ok) {
+      setError(body?.error ?? "Unable to load activity.");
+      return;
+    }
+    const nextActivity = body?.activity ?? null;
+    if (!nextActivity) {
+      setActivity(null);
+      return;
+    }
+    setActivity((current) => append && current
+      ? { ...nextActivity, events: [...current.events, ...nextActivity.events] }
+      : nextActivity);
+  }
+
+  useEffect(() => {
+    void loadActivity(0);
+  }, []);
+
+  const events = activity?.events ?? [];
+
+  return (
+    <section className="max-w-5xl border border-slate-200 bg-white">
+      <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
+        <div className="flex items-start gap-3">
+          <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
+            <History size={21} />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-950">Activity</h2>
+          </div>
+        </div>
+        <button
+          onClick={() => void loadActivity(0)}
+          disabled={loading}
+          className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:text-slate-400"
+        >
+          {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+          Refresh
+        </button>
+      </div>
+      {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+      {loading && !events.length ? (
+        <p className="flex items-center gap-2 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Loading activity...</p>
+      ) : null}
+      {!loading && !events.length && !error ? <p className="p-5 text-sm text-slate-500">No activity recorded yet.</p> : null}
+      {events.length ? (
+        <div className="divide-y divide-slate-100">
+          {events.map((event) => (
+            <div key={event.id} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 px-5 py-4">
+              <div className="grid size-8 place-items-center rounded-full bg-slate-950 text-xs font-semibold text-white">{auditInitials(event)}</div>
+              <div className="min-w-0">
+                <p className="whitespace-normal break-words text-sm leading-5 text-slate-700 [overflow-wrap:anywhere]">
+                  <span className="font-semibold text-slate-950">{auditActorName(event)}</span>{" "}
+                  {adminActivitySummary(event)}
+                </p>
+                <p className="mt-1 whitespace-normal break-words text-xs text-slate-500 [overflow-wrap:anywhere]">
+                  <AdminActivityContext event={event} />
+                </p>
+                <p className="mt-1 text-xs font-medium text-blue-700">{formatDateTime(event.updatedAt)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {activity?.hasMore ? (
+        <div className="border-t border-slate-100 p-5">
+          <button
+            type="button"
+            onClick={() => void loadActivity(events.length)}
+            disabled={loading || loadingMore}
+            className="inline-flex h-9 w-full items-center justify-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:text-slate-400"
+          >
+            {loadingMore ? <Loader2 size={14} className="animate-spin" /> : null}
+            {loadingMore ? "Loading..." : "Load more activity"}
+          </button>
+        </div>
       ) : null}
     </section>
   );
@@ -3279,7 +4540,6 @@ function DataAdminPanel() {
           </div>
           <div>
             <h2 className="text-lg font-semibold text-slate-950">Data</h2>
-            <p className="mt-1 text-sm text-slate-500">Database totals, attachment inventory, and upload storage use.</p>
           </div>
         </div>
         <button onClick={() => void loadData()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
@@ -3344,7 +4604,6 @@ function DataAdminPanel() {
                       </td>
                     <td className="px-4 py-3">
                       <div className="text-slate-700">{file.notebookName}</div>
-                      <div className="mt-1 text-xs text-slate-500">{file.ownerEmail}</div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="capitalize text-slate-700">{file.blockType}</div>
@@ -3451,7 +4710,27 @@ function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCa
   );
 }
 
-function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoading, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; pageLoading: boolean; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: (body: string) => void; setPageTags: (tags: string[]) => Promise<void>; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
+function filenameFromContentDisposition(disposition: string | null) {
+  if (!disposition) return "";
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+  const quotedMatch = disposition.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) return quotedMatch[1];
+  const bareMatch = disposition.match(/filename=([^;]+)/i);
+  return bareMatch?.[1]?.trim() ?? "";
+}
+
+function safeDownloadName(value: string) {
+  return value.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 90) || "page";
+}
+
+function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoading, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, tagSuggestions, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; pageLoading: boolean; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: (body: string) => void; setPageTags: (tags: string[]) => Promise<void>; tagSuggestions: string[]; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityEvents, setActivityEvents] = useState<AuditEvent[]>([]);
@@ -3459,6 +4738,15 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
   const [activityLoadingMore, setActivityLoadingMore] = useState(false);
   const [activityHasMore, setActivityHasMore] = useState(false);
   const [activityError, setActivityError] = useState("");
+  const [commentThreads, setCommentThreads] = useState<PageCommentThread[]>([]);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState("");
+  const [selectedCommentThreadId, setSelectedCommentThreadId] = useState("");
+  const [commentThreadToRemove, setCommentThreadToRemove] = useState("");
+  const [printPage, setPrintPage] = useState<PageEntry | null>(null);
+  const [printContent, setPrintContent] = useState<JSONContent[] | undefined>(undefined);
+  const [exportingPage, setExportingPage] = useState<"pdf" | "archive" | null>(null);
   const attachmentCount = page.attachmentCount ?? page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
   const color = projectColor(selectedNotebook ?? selectedProject);
@@ -3474,6 +4762,29 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
   useEffect(() => {
     resizeTitleField(titleFieldRef.current);
   }, [page.id, page.title]);
+
+  useEffect(() => {
+    setCommentThreads([]);
+    setCommentsError("");
+    setSelectedCommentThreadId("");
+    void loadComments();
+  }, [page.id]);
+
+  useEffect(() => {
+    if (!printPage) return;
+
+    function clearPrintPage() {
+      setPrintPage(null);
+      setPrintContent(undefined);
+    }
+
+    document.body.classList.add("novo-printing");
+    window.addEventListener("afterprint", clearPrintPage);
+    return () => {
+      document.body.classList.remove("novo-printing");
+      window.removeEventListener("afterprint", clearPrintPage);
+    };
+  }, [printPage]);
 
   useEffect(() => {
     const element = titleFieldRef.current;
@@ -3517,30 +4828,134 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
     await loadActivity(0);
   }
 
+  async function loadComments() {
+    setCommentsLoading(true);
+    setCommentsError("");
+    const response = await fetch(`/api/pages/${page.id}/comments`);
+    const body = (await response.json().catch(() => null)) as { threads?: PageCommentThread[]; error?: string } | null;
+    setCommentsLoading(false);
+    if (!response.ok) {
+      setCommentsError(body?.error ?? "Could not load comments.");
+      return;
+    }
+    setCommentThreads(body?.threads ?? []);
+  }
+
+  function replaceCommentThread(thread: PageCommentThread) {
+    setCommentThreads((current) => {
+      const exists = current.some((candidate) => candidate.id === thread.id);
+      const next = exists ? current.map((candidate) => candidate.id === thread.id ? thread : candidate) : [thread, ...current];
+      return next.sort(compareCommentThreads);
+    });
+    setSelectedCommentThreadId(thread.id);
+    setCommentsOpen(true);
+  }
+
+  async function createComment(input: { selectedText: string; body: string }) {
+    const response = await fetch(`/api/pages/${page.id}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const body = (await response.json().catch(() => null)) as { thread?: PageCommentThread; error?: string } | null;
+    if (!response.ok || !body?.thread) {
+      throw new Error(body?.error ?? "Could not add comment.");
+    }
+    replaceCommentThread(body.thread);
+    return body.thread;
+  }
+
+  async function addCommentReply(threadId: string, reply: string) {
+    const response = await fetch(`/api/comments/${threadId}/replies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: reply }),
+    });
+    const body = (await response.json().catch(() => null)) as { thread?: PageCommentThread; error?: string } | null;
+    if (!response.ok || !body?.thread) throw new Error(body?.error ?? "Could not add reply.");
+    replaceCommentThread(body.thread);
+  }
+
+  async function deleteCommentThread(threadId: string) {
+    const response = await fetch(`/api/comments/${threadId}`, { method: "DELETE" });
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) throw new Error(body?.error ?? "Could not delete comment.");
+    setCommentThreads((current) => current.filter((thread) => thread.id !== threadId));
+    setSelectedCommentThreadId("");
+    setCommentsOpen(false);
+    setCommentThreadToRemove(threadId);
+  }
+
+  function printCurrentPage(selection?: { content: JSONContent[] }) {
+    openPagePrintDialog(selection);
+  }
+
+  async function downloadPageExport(format: "pdf" | "archive") {
+    if (exportingPage) return;
+    setExportingPage(format);
+    try {
+      const response = await fetch(`/api/pages/${page.id}/export/${format}`);
+      if (!response.ok) throw new Error(`Export failed with ${response.status}`);
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition");
+      const fallbackName = `${safeDownloadName(page.title || "page")}.${format === "pdf" ? "pdf" : "zip"}`;
+      const filename = filenameFromContentDisposition(disposition) || fallbackName;
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error(error);
+      window.alert("Export failed. Please try again.");
+    } finally {
+      setExportingPage(null);
+    }
+  }
+
+  function openPagePrintDialog(selection?: { content: JSONContent[] }) {
+    document.body.classList.add("novo-printing");
+    setPrintContent(selection?.content);
+    setPrintPage({
+      ...page,
+      attachments: [...page.attachments],
+      tags: [...page.tags],
+    });
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => window.print());
+    });
+  }
+
   return (
     <>
       <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-white">
         <header className="border-b border-slate-200 px-6 py-4">
           <div className="flex min-w-0 items-start gap-3">
-            <textarea
-              ref={titleFieldRef}
-              rows={1}
-              value={page.title}
-              readOnly={!canEdit}
-              onChange={(event) => {
-                if (!canEdit) return;
-                const title = event.target.value.replace(/\s*\n+\s*/g, " ");
-                patchSelectedPage({ title });
-                resizeTitleField(event.currentTarget);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                event.currentTarget.blur();
-              }}
-              onBlur={(event) => canEdit && void savePage({ title: event.target.value })}
-              className={`min-w-0 flex-1 resize-none overflow-hidden break-words bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none [overflow-wrap:anywhere] ${canEdit ? "" : "cursor-default"}`}
-            />
+            <div className="flex min-w-0 flex-1 items-start gap-1.5">
+              {locked ? <Lock size={16} strokeWidth={2.2} className="mt-1.5 shrink-0 text-slate-500" aria-label="Locked page" /> : null}
+              <textarea
+                ref={titleFieldRef}
+                rows={1}
+                value={page.title}
+                readOnly={!canEdit}
+                onChange={(event) => {
+                  if (!canEdit) return;
+                  const title = event.target.value.replace(/\s*\n+\s*/g, " ");
+                  patchSelectedPage({ title });
+                  resizeTitleField(event.currentTarget);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  event.currentTarget.blur();
+                }}
+                onBlur={(event) => canEdit && void savePage({ title: event.target.value })}
+                className={`min-w-0 flex-1 resize-none overflow-hidden break-words bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none [overflow-wrap:anywhere] ${canEdit ? "" : "cursor-default"}`}
+              />
+            </div>
             {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
             <button
               type="button"
@@ -3552,7 +4967,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
               <History size={16} />
             </button>
           </div>
-          <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} />
+          <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} tagSuggestions={tagSuggestions} />
           <div className="flex items-end justify-between gap-3">
             <PageStatusRow
               status={page.status}
@@ -3585,6 +5000,20 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
               openSpreadsheet={openSpreadsheet}
               openPresentation={openPresentation}
               readOnly={!canEdit}
+              onPrint={printCurrentPage}
+              exporting={Boolean(exportingPage)}
+              onExportPdf={() => downloadPageExport("pdf")}
+              onExportArchive={() => downloadPageExport("archive")}
+              onCreateComment={canEdit ? createComment : undefined}
+              onSelectCommentThread={(threadId) => {
+                setSelectedCommentThreadId(threadId);
+                setCommentsOpen(true);
+              }}
+              commentThreadToRemove={commentThreadToRemove}
+              onCommentThreadRemoved={(body) => {
+                setCommentThreadToRemove("");
+                if (body) void savePage({ body });
+              }}
             />
           )}
           <div className="mt-4 border border-slate-200 bg-slate-50 p-2">
@@ -3628,13 +5057,29 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
           onClose={() => setActivityOpen(false)}
         />
       ) : null}
+      {commentsOpen ? (
+        <PageCommentPopover
+          threads={commentThreads}
+          loading={commentsLoading}
+          error={commentsError}
+          selectedThreadId={selectedCommentThreadId}
+          canEdit={canEdit}
+          onRefresh={loadComments}
+          onReply={addCommentReply}
+          onDelete={deleteCommentThread}
+          onClose={() => setCommentsOpen(false)}
+        />
+      ) : null}
+      {printPage && typeof document !== "undefined"
+        ? createPortal(<PrintPageDocument page={printPage} notebook={selectedNotebook} content={printContent} />, document.body)
+        : null}
     </>
   );
 }
 
 function PageActivityDrawer({ events, loading, loadingMore, hasMore, error, onRefresh, onLoadMore, onClose }: { events: AuditEvent[]; loading: boolean; loadingMore: boolean; hasMore: boolean; error: string; onRefresh: () => Promise<void>; onLoadMore: () => Promise<void>; onClose: () => void }) {
   return (
-    <aside className="fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[calc(100vw-32px)] flex-col border-l border-slate-200 bg-white shadow-2xl">
+    <aside className="fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[calc(100vw-32px)] flex-col overflow-x-hidden border-l border-slate-200 bg-white shadow-2xl">
       <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
         <h2 className="text-lg font-semibold text-slate-950">Activity</h2>
         <div className="flex items-center gap-2">
@@ -3647,7 +5092,7 @@ function PageActivityDrawer({ events, loading, loadingMore, hasMore, error, onRe
           </button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-5">
         {error ? <p className="mb-4 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
         {loading && !events.length ? (
           <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Loading activity...</div>
@@ -3658,7 +5103,7 @@ function PageActivityDrawer({ events, loading, loadingMore, hasMore, error, onRe
             <div key={event.id} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3">
               <div className="grid size-8 place-items-center rounded-full bg-slate-950 text-xs font-semibold text-white">{auditInitials(event)}</div>
               <div className="min-w-0">
-                <p className="text-sm leading-5 text-slate-700">
+                <p className="whitespace-normal break-words text-sm leading-5 text-slate-700 [overflow-wrap:anywhere]">
                   <span className="font-semibold text-slate-950">{auditActorName(event)}</span>{" "}
                   {event.summary}
                 </p>
@@ -3683,6 +5128,180 @@ function PageActivityDrawer({ events, loading, loadingMore, hasMore, error, onRe
   );
 }
 
+function PageCommentPopover({ threads, loading, error, selectedThreadId, canEdit, onRefresh, onReply, onDelete, onClose }: { threads: PageCommentThread[]; loading: boolean; error: string; selectedThreadId: string; canEdit: boolean; onRefresh: () => Promise<void>; onReply: (threadId: string, reply: string) => Promise<void>; onDelete: (threadId: string) => Promise<void>; onClose: () => void }) {
+  const [reply, setReply] = useState("");
+  const [pending, setPending] = useState("");
+  const [localError, setLocalError] = useState("");
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
+
+  useEffect(() => {
+    if (!selectedThreadId) return;
+
+    function positionPopover() {
+      const width = 360;
+      const margin = 16;
+      const selector = `[data-comment-thread-id="${CSS.escape(selectedThreadId)}"]`;
+      const mark = document.querySelector<HTMLElement>(selector);
+      const rect = mark?.getBoundingClientRect();
+      const fallbackTop = 150;
+      const fallbackLeft = window.innerWidth - width - margin;
+      if (!rect) {
+        setPosition({
+          top: Math.max(margin, Math.min(fallbackTop, window.innerHeight - 180)),
+          left: Math.max(margin, fallbackLeft),
+        });
+        return;
+      }
+
+      const placeRight = rect.right + margin + width <= window.innerWidth - margin;
+      const left = placeRight ? rect.right + margin : Math.max(margin, rect.left - width - margin);
+      const top = Math.max(margin, Math.min(rect.top - 12, window.innerHeight - 260));
+      setPosition({ top, left });
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+
+    function closeOnOutsidePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (popoverRef.current?.contains(target)) return;
+      if (target.closest("[data-comment-thread-id]")) return;
+      onClose();
+    }
+
+    positionPopover();
+    window.addEventListener("resize", positionPopover);
+    window.addEventListener("scroll", positionPopover, true);
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("pointerdown", closeOnOutsidePointerDown);
+    return () => {
+      window.removeEventListener("resize", positionPopover);
+      window.removeEventListener("scroll", positionPopover, true);
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("pointerdown", closeOnOutsidePointerDown);
+    };
+  }, [onClose, selectedThreadId]);
+
+  useEffect(() => {
+    setReply("");
+    setLocalError("");
+  }, [selectedThreadId]);
+
+  async function submitReply() {
+    if (!selectedThread || pending) return;
+    const body = reply.trim();
+    if (!body) return;
+    setPending("reply");
+    setLocalError("");
+    try {
+      await onReply(selectedThread.id, body);
+      setReply("");
+    } catch (replyError) {
+      setLocalError(replyError instanceof Error ? replyError.message : "Could not add reply.");
+    } finally {
+      setPending("");
+    }
+  }
+
+  async function deleteSelectedThread() {
+    if (!selectedThread || pending) return;
+    setPending("delete");
+    setLocalError("");
+    try {
+      await onDelete(selectedThread.id);
+    } catch (deleteError) {
+      setLocalError(deleteError instanceof Error ? deleteError.message : "Could not delete comment.");
+    } finally {
+      setPending("");
+    }
+  }
+
+  if (!position) return null;
+
+  return (
+    createPortal(
+      <div ref={popoverRef} className="fixed z-[1000] w-[360px] max-w-[calc(100vw-32px)] border border-slate-200 bg-white shadow-2xl" style={{ top: position.top, left: position.left }}>
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <MessageSquare size={16} className="text-amber-600" />
+              <h2 className="text-sm font-semibold text-slate-950">Comment</h2>
+            </div>
+            {selectedThread ? <p className="mt-1 truncate text-xs text-slate-500">{selectedThread.selectedText || "Commented text was removed"}</p> : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" onClick={() => void onRefresh()} disabled={loading} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-wait disabled:text-slate-300" aria-label="Refresh comment">
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            </button>
+            {selectedThread && canEdit ? (
+              <button type="button" onClick={() => void deleteSelectedThread()} disabled={Boolean(pending)} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-wait disabled:text-slate-300" aria-label="Delete comment">
+                {pending === "delete" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={15} />}
+              </button>
+            ) : null}
+            <button type="button" onClick={onClose} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900" aria-label="Close comment">
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+        <div className="max-h-[420px] overflow-y-auto p-4">
+          {error ? <p className="mb-3 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+          {localError ? <p className="mb-3 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{localError}</p> : null}
+          {loading && !selectedThread ? <p className="inline-flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin" />Loading comment...</p> : null}
+          {!loading && !selectedThread ? <p className="text-sm text-slate-500">This comment could not be found.</p> : null}
+          {selectedThread ? (
+            <>
+              <div className="space-y-4">
+                {selectedThread.comments.map((comment) => (
+                  <div key={comment.id} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3">
+                    <div className="grid size-8 place-items-center rounded-full bg-slate-950 text-xs font-semibold text-white">{userInitials({ firstName: comment.userFirstName, lastName: comment.userLastName, email: comment.userEmail })}</div>
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                        <p className="text-sm font-semibold text-slate-950">{commentAuthorName(comment)}</p>
+                        <p className="text-xs font-medium text-blue-700">{formatDateTime(comment.createdAt)}</p>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-700">{comment.body}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 border-t border-slate-200 pt-3">
+                {canEdit ? (
+                  <>
+                    <textarea value={reply} onChange={(event) => setReply(event.target.value)} rows={2} placeholder="Reply..." className="w-full resize-none border border-slate-300 px-3 py-2 text-sm outline-none focus:border-cyan-500" />
+                    <div className="mt-2 flex justify-end">
+                      <button type="button" onClick={() => void submitReply()} disabled={Boolean(pending) || !reply.trim()} className="inline-flex h-8 items-center gap-1.5 bg-slate-950 px-3 text-xs font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+                        {pending === "reply" ? <Loader2 size={13} className="animate-spin" /> : null}
+                        Reply
+                      </button>
+                    </div>
+                  </>
+                ) : <p className="text-sm text-slate-500">You can view this comment, but you do not have edit access to reply.</p>}
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>,
+      document.body,
+    )
+  );
+}
+
+function compareCommentThreads(a: PageCommentThread, b: PageCommentThread) {
+  return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+}
+
+function commentThreadActor(thread: PageCommentThread) {
+  return [thread.createdByFirstName, thread.createdByLastName].filter(Boolean).join(" ") || thread.createdByEmail || "Unknown user";
+}
+
+function commentAuthorName(comment: PageCommentThread["comments"][number]) {
+  return [comment.userFirstName, comment.userLastName].filter(Boolean).join(" ") || comment.userEmail || "Unknown user";
+}
+
 function auditActorName(event: AuditEvent) {
   const firstName = event.actorFirstName.trim();
   const lastInitial = event.actorLastName.trim()[0];
@@ -3690,10 +5309,32 @@ function auditActorName(event: AuditEvent) {
   return firstName || event.actorLastName.trim() || event.actorEmail || "Unknown user";
 }
 
+function adminActivitySummary(event: AuditEvent) {
+  if (event.action === "notebook.deleted" && typeof event.metadata?.name === "string" && event.metadata.name.trim()) {
+    return `deleted notebook "${event.metadata.name.trim()}"`;
+  }
+  return event.summary;
+}
+
+function AdminActivityContext({ event }: { event: AuditEvent }) {
+  const pageTitle = event.pageTitle?.trim();
+  const notebookName = event.notebookName?.trim();
+  if (pageTitle) {
+    return (
+      <>
+        <a href={`/?page=${encodeURIComponent(event.pageId)}`} className="text-slate-600 underline-offset-2 hover:text-blue-700 hover:underline">
+          {pageTitle}
+        </a>
+        {notebookName ? <span> · {notebookName}</span> : null}
+      </>
+    );
+  }
+  if (notebookName) return <>{notebookName}</>;
+  return <>No longer attached to an active page or notebook</>;
+}
+
 function auditInitials(event: AuditEvent) {
-  const nameParts = [event.actorFirstName, event.actorLastName].filter(Boolean);
-  if (nameParts.length) return nameParts.map((part) => part[0]).join("").slice(0, 2).toUpperCase();
-  return (event.actorEmail || "?").slice(0, 2).toUpperCase();
+  return userInitials({ firstName: event.actorFirstName, lastName: event.actorLastName, email: event.actorEmail });
 }
 
 function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; canManage: boolean; setLocked: (locked: boolean) => Promise<void> }) {
@@ -3728,15 +5369,39 @@ function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; ca
   );
 }
 
-function PageTagsBar({ tags, canEdit, setPageTags }: { tags: string[]; canEdit: boolean; setPageTags: (tags: string[]) => Promise<void> }) {
+function PageTagsBar({ tags, canEdit, setPageTags, tagSuggestions }: { tags: string[]; canEdit: boolean; setPageTags: (tags: string[]) => Promise<void>; tagSuggestions: string[] }) {
   const [tagInput, setTagInput] = useState("");
+  const [inputFocused, setInputFocused] = useState(false);
+  const [highlightedSuggestion, setHighlightedSuggestion] = useState(0);
   const normalizedTags = useMemo(() => normalizeTagList(tags), [tags]);
+  const visibleSuggestions = useMemo(() => {
+    if (!canEdit) return [];
+    const query = tagInput.trim().toLowerCase();
+    const currentTagKeys = new Set(normalizedTags.map((tag) => tag.toLowerCase()));
+    return tagSuggestions
+      .filter((tag) => !currentTagKeys.has(tag.toLowerCase()))
+      .filter((tag) => !query || tag.toLowerCase().includes(query))
+      .slice(0, 12);
+  }, [canEdit, normalizedTags, tagInput, tagSuggestions]);
+  const suggestionsOpen = inputFocused && visibleSuggestions.length > 0;
 
-  function addTagInput() {
+  function addTag(value: string) {
     if (!canEdit) return;
-    const nextTags = normalizeTagList([...normalizedTags, tagInput]);
+    const trimmed = value.trim().replace(/\s+/g, " ");
+    if (!trimmed) return;
+    const canonicalTag = tagSuggestions.find((tag) => tag.toLowerCase() === trimmed.toLowerCase()) ?? trimmed;
+    const nextTags = normalizeTagList([...normalizedTags, canonicalTag]);
     setTagInput("");
     if (nextTags.length !== normalizedTags.length) void setPageTags(nextTags);
+  }
+
+  function addTagInput() {
+    addTag(tagInput);
+  }
+
+  function selectSuggestion(tag: string) {
+    addTag(tag);
+    setInputFocused(false);
   }
 
   function removeTag(tag: string) {
@@ -3745,13 +5410,29 @@ function PageTagsBar({ tags, canEdit, setPageTags }: { tags: string[]; canEdit: 
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown" && suggestionsOpen) {
+      event.preventDefault();
+      setHighlightedSuggestion((index) => (index + 1) % visibleSuggestions.length);
+      return;
+    }
+    if (event.key === "ArrowUp" && suggestionsOpen) {
+      event.preventDefault();
+      setHighlightedSuggestion((index) => (index - 1 + visibleSuggestions.length) % visibleSuggestions.length);
+      return;
+    }
+    if ((event.key === "Tab" || event.key === "Enter") && suggestionsOpen && visibleSuggestions[highlightedSuggestion]) {
+      event.preventDefault();
+      selectSuggestion(visibleSuggestions[highlightedSuggestion]);
+      return;
+    }
+    if (event.key === "Escape" && suggestionsOpen) {
+      event.preventDefault();
+      setInputFocused(false);
+      return;
+    }
     if (event.key === "Enter" || event.key === ",") {
       event.preventDefault();
       addTagInput();
-    }
-    if (event.key === "Backspace" && !tagInput && normalizedTags.length) {
-      event.preventDefault();
-      removeTag(normalizedTags[normalizedTags.length - 1]);
     }
   }
 
@@ -3766,14 +5447,50 @@ function PageTagsBar({ tags, canEdit, setPageTags }: { tags: string[]; canEdit: 
           </button> : null}
         </span>
       ))}
-      {canEdit ? <input
-        value={tagInput}
-        onChange={(event) => setTagInput(event.target.value)}
-        onKeyDown={handleKeyDown}
-        onBlur={addTagInput}
-        className="h-7 min-w-36 flex-1 border-0 bg-transparent px-1 text-sm text-slate-700 outline-none placeholder:text-slate-400"
-        placeholder="Type to add..."
-      /> : null}
+      {canEdit ? (
+        <div className="relative min-w-44 flex-1">
+          <input
+            value={tagInput}
+            onChange={(event) => {
+              setTagInput(event.target.value);
+              setInputFocused(true);
+              setHighlightedSuggestion(0);
+            }}
+            onFocus={() => {
+              setInputFocused(true);
+              setHighlightedSuggestion(0);
+            }}
+            onKeyDown={handleKeyDown}
+            onBlur={() => {
+              addTagInput();
+              setInputFocused(false);
+            }}
+            className="h-7 w-full border-0 bg-transparent px-1 text-sm text-slate-700 outline-none placeholder:text-slate-400"
+            placeholder="Type to add..."
+            role="combobox"
+            aria-expanded={suggestionsOpen}
+            aria-controls="page-tag-suggestions"
+          />
+          {suggestionsOpen ? (
+            <div id="page-tag-suggestions" role="listbox" className="absolute left-0 top-full z-30 mt-1 max-h-60 w-72 overflow-y-auto border border-slate-200 bg-white py-1 text-sm shadow-lg">
+              {visibleSuggestions.map((tag, index) => (
+                <button
+                  key={tag}
+                  type="button"
+                  role="option"
+                  aria-selected={index === highlightedSuggestion}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setHighlightedSuggestion(index)}
+                  onClick={() => selectSuggestion(tag)}
+                  className={`flex h-8 w-full cursor-pointer items-center px-3 text-left ${index === highlightedSuggestion ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}
+                >
+                  <span className="min-w-0 truncate">{tag}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3837,9 +5554,10 @@ function AttachmentRow({ attachment, index, canEdit, onDelete }: { attachment: A
 }
 
 function formatAttachmentDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const parsed = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
+  if (Number.isNaN(parsed)) return value;
+  const date = new Date(parsed);
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function formatBytes(value: number) {
@@ -3887,7 +5605,7 @@ function ResizeHandle({ onPointerDown, disabled = false }: { onPointerDown: (eve
   );
 }
 
-function SidebarSection({ label, onAdd, collapsed, onToggle }: { label: string; onAdd?: () => void; collapsed?: boolean; onToggle?: () => void }) {
+function SidebarSection({ label, onAdd, action, collapsed, onToggle }: { label: string; onAdd?: () => void; action?: React.ReactNode; collapsed?: boolean; onToggle?: () => void }) {
   return (
     <div className="sidebar-wide px-4">
       <div className="flex min-w-0 items-center justify-between gap-2 px-2 text-xs font-semibold text-slate-500">
@@ -3899,7 +5617,10 @@ function SidebarSection({ label, onAdd, collapsed, onToggle }: { label: string; 
         ) : (
           <span className="min-w-0 truncate">{label}</span>
         )}
-        {onAdd ? <button onClick={onAdd} className="grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white" title={`Create ${label.toLowerCase()}`}><Plus size={14} /></button> : null}
+        <span className="flex shrink-0 items-center gap-1">
+          {action}
+          {onAdd ? <button onClick={onAdd} className="grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white" title={`Create ${label.toLowerCase()}`}><Plus size={14} /></button> : null}
+        </span>
       </div>
     </div>
   );
@@ -3920,6 +5641,12 @@ function canEditNotebook(user: AppUser | undefined, notebook: Notebook | undefin
 
 function userDisplayName(user: Pick<AppUser | ShareMember, "firstName" | "lastName" | "email">) {
   return `${user.firstName} ${user.lastName}`.trim() || user.email;
+}
+
+function userInitials(user: Pick<AppUser | ShareMember, "firstName" | "lastName" | "email">) {
+  const nameParts = [user.firstName, user.lastName].filter(Boolean);
+  if (nameParts.length) return nameParts.map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  return (user.email || "?").slice(0, 2).toUpperCase();
 }
 
 const PAGE_CARD_TINT_ALPHA = 0.035;
@@ -3949,6 +5676,33 @@ function filterNotebookPages(pages: PageEntry[], selectedTags: string[], selecte
     const matchesStatus = selectedStatuses.length === 0 || selectedStatuses.includes(page.status);
     return matchesTags && matchesStatus;
   });
+}
+
+function readStoredPageSortKey() {
+  return readStoredSortKey(PAGE_SORT_STORAGE_KEY, PAGE_SORT_OPTIONS, "updated");
+}
+
+function readStoredNotebookSortKey() {
+  return readStoredSortKey(NOTEBOOK_SORT_STORAGE_KEY, NOTEBOOK_SORT_OPTIONS, "updated");
+}
+
+function readStoredSortKey<T extends string>(storageKey: string, options: Array<{ key: T }>, fallback: T) {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const storedValue = window.localStorage.getItem(storageKey);
+    return options.some((option) => option.key === storedValue) ? (storedValue as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredSortKey(storageKey: string, value: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(storageKey, value);
+  } catch {
+    // Ignore private browsing / storage quota failures; sorting still works for the current session.
+  }
 }
 
 function getPageStatusLabel(status: PageStatus) {
@@ -3981,6 +5735,22 @@ function sortNotebookPages(pages: PageEntry[], sortKey: PageSortKey) {
       return timestampCompare || left.index - right.index;
     })
     .map(({ page }) => page);
+}
+
+function sortNotebooks(notebooks: Notebook[], sortKey: NotebookSortKey) {
+  return notebooks
+    .map((notebook, index) => ({ notebook, index }))
+    .sort((left, right) => {
+      if (sortKey === "title") {
+        const titleCompare = left.notebook.name.localeCompare(right.notebook.name, undefined, { sensitivity: "base", numeric: true });
+        return titleCompare || left.index - right.index;
+      }
+
+      const field = sortKey === "created" ? "createdAt" : "updatedAt";
+      const timestampCompare = timestampForSort(right.notebook[field]) - timestampForSort(left.notebook[field]);
+      return timestampCompare || left.index - right.index;
+    })
+    .map(({ notebook }) => notebook);
 }
 
 function timestampForSort(value: string) {
@@ -4044,6 +5814,11 @@ function findProjectSelection(workspace: Workspace, projectId: string | null): P
   return project ? { project } : null;
 }
 
+function readAccountViewFromUrl() {
+  if (typeof window === "undefined") return false;
+  return new URL(window.location.href).pathname === "/settings";
+}
+
 function readNotebookSettingsIdFromUrl() {
   if (typeof window === "undefined") return null;
   return new URL(window.location.href).searchParams.get("notebookSettings");
@@ -4064,9 +5839,41 @@ function readProjectIdFromUrl() {
   return new URL(window.location.href).searchParams.get("project");
 }
 
+function readPreviewKeysFromUrl() {
+  if (typeof window === "undefined") return new Set<string>();
+  const url = new URL(window.location.href);
+  const values = url.searchParams.getAll("preview").flatMap((value) => value.split(","));
+  return new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean));
+}
+
+async function performAppUpdate() {
+  if (typeof window === "undefined") return;
+  if ("caches" in window) {
+    try {
+      const cacheNames = await window.caches.keys();
+      await Promise.all(cacheNames.map((cacheName) => window.caches.delete(cacheName)));
+    } catch {
+      // Cache cleanup is best-effort; the cache-busted navigation below is the important part.
+    }
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("_novoUpdate", Date.now().toString());
+  window.location.replace(url.toString());
+}
+
+function cleanupUpdateCacheBusterFromUrl() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("_novoUpdate")) return;
+  url.searchParams.delete("_novoUpdate");
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 function writePageUrl(pageId: string | null, mode: "push" | "replace") {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
+  url.pathname = "/";
   if (pageId) {
     url.searchParams.set("page", pageId);
     url.searchParams.delete("notebookSettings");
@@ -4084,6 +5891,7 @@ function writePageUrl(pageId: string | null, mode: "push" | "replace") {
 function writeNotebookSettingsUrl(notebookId: string | null, mode: "push" | "replace") {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
+  url.pathname = "/";
   if (notebookId) {
     url.searchParams.set("notebookSettings", notebookId);
     url.searchParams.delete("page");
@@ -4101,6 +5909,7 @@ function writeNotebookSettingsUrl(notebookId: string | null, mode: "push" | "rep
 function writeNotebookUrl(notebookId: string | null, mode: "push" | "replace") {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
+  url.pathname = "/";
   if (notebookId) {
     url.searchParams.set("notebook", notebookId);
     url.searchParams.delete("notebookSettings");
@@ -4118,6 +5927,7 @@ function writeNotebookUrl(notebookId: string | null, mode: "push" | "replace") {
 function writeProjectUrl(projectId: string | null, mode: "push" | "replace") {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
+  url.pathname = "/";
   if (projectId) {
     url.searchParams.set("project", projectId);
     url.searchParams.delete("notebookSettings");
@@ -4129,6 +5939,17 @@ function writeProjectUrl(projectId: string | null, mode: "push" | "replace") {
     url.searchParams.delete("page");
     url.searchParams.delete("notebook");
   }
+  writeUrl(url, mode);
+}
+
+function writeAccountUrl(mode: "push" | "replace") {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.pathname = "/settings";
+  url.searchParams.delete("project");
+  url.searchParams.delete("notebook");
+  url.searchParams.delete("notebookSettings");
+  url.searchParams.delete("page");
   writeUrl(url, mode);
 }
 

@@ -17,11 +17,18 @@ export async function GET(request: Request, context: { params: Promise<{ attachm
   const { searchParams } = new URL(request.url);
   const maxRows = Number(searchParams.get("rows") ?? 20);
   const maxColumns = Number(searchParams.get("columns") ?? 8);
+  const sheetIndex = Number(searchParams.get("sheet") ?? 0);
 
   try {
     const bytes = await fs.readFile(path.join(uploadDir, attachment.storageKey));
     return NextResponse.json({
-      preview: createSpreadsheetPreview(bytes, { maxRows, maxColumns }),
+      preview: await createSpreadsheetPreview(bytes, {
+        maxRows,
+        maxColumns,
+        sheetIndex,
+        filename: attachment.originalName,
+        mimeType: attachment.mimeType,
+      }),
     });
   } catch (error) {
     return NextResponse.json({

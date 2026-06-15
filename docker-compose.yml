@@ -9,7 +9,7 @@ services:
     container_name: novo-eln
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3155:3000"
+      - "127.0.0.1:3148:3000"
     env_file:
       - .env.local
     environment:

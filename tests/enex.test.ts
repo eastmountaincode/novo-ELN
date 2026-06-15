@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEnex } from "../src/lib/enex";
+import { enmlToEditorDocument, parseEnex } from "../src/lib/enex";
 
 describe("parseEnex", () => {
   it("extracts Evernote note titles, body text, and tags", () => {
@@ -50,5 +50,62 @@ describe("parseEnex", () => {
       mimeType: "image/png",
     });
     expect(notes[0].resources[0].data.toString("utf8")).toBe("hello");
+  });
+
+  it("preserves Evernote nested lists emitted as sibling lists after list items", () => {
+    const document = enmlToEditorDocument(`<en-note>
+      <div>General plan:</div>
+      <ol>
+        <li><div>Test CH22-GPA33 pool cells for GPA33 expression</div></li>
+        <li><div>Inject 4 mice with the maximum amount of cells allowed</div></li>
+        <ol>
+          <li><div>2 mice with CH22</div></li>
+          <li><div>2 mice with CH22-GPA33 pool cells</div></li>
+        </ol>
+        <li><div>Let tumors form over the course over 9 days</div></li>
+      </ol>
+    </en-note>`, new Map());
+
+    const list = document.content?.find((node) => node.type === "orderedList");
+    expect(list?.content).toHaveLength(3);
+    expect(JSON.stringify(list?.content?.[1])).toContain("2 mice with CH22");
+    expect(JSON.stringify(list?.content?.[1])).toContain("2 mice with CH22-GPA33 pool cells");
+  });
+
+
+  it("preserves deeply nested Evernote sibling lists instead of flattening them", () => {
+    const document = enmlToEditorDocument(`<en-note>
+      <div>Steps to the project to make progress</div>
+      <ul>
+        <li><div>Focus on useful structural space</div></li>
+        <ul>
+          <li><div>amino acid</div></li>
+          <li><div>certain hotspots</div></li>
+          <ul>
+            <li><div>Narrow down the variation</div></li>
+            <ul>
+              <li><div>need to test it</div></li>
+            </ul>
+          </ul>
+        </ul>
+        <li><div>Build the 600 sequences</div></li>
+      </ul>
+    </en-note>`, new Map());
+
+    const serialized = JSON.stringify(document);
+    expect(serialized).toContain("bulletList");
+    expect(serialized).toContain("amino acid");
+    expect(serialized).toContain("Narrow down the variation");
+    expect(serialized).toContain("need to test it");
+    expect(serialized).toContain("Build the 600 sequences");
+  });
+
+  it("preserves block boundaries when ENML is imperfect", () => {
+    const document = enmlToEditorDocument(`<en-note><div>First line</div><div>Second line</div><ul><li>Third line</li></ul>`, new Map());
+
+    expect(document.content).toHaveLength(3);
+    expect(JSON.stringify(document)).toContain("First line");
+    expect(JSON.stringify(document)).toContain("Second line");
+    expect(JSON.stringify(document)).toContain("Third line");
   });
 });

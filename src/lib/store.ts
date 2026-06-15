@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
-import type { AccessRole, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
-import { bodyToEditorDocument, bodyToEditorText, editorDocumentToBody, removeAttachmentCardsFromBody } from "./editor";
+import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageComment, PageCommentThread, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
+import { bodyToEditorDocument, bodyToEditorText, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody } from "./editor";
 import { uploadDir } from "./paths";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
 import { execSql, queryOne, querySql, sql } from "./sqlite";
@@ -14,7 +14,8 @@ const passwordRequirementMessage = "Password must be at least 12 characters and 
 const loginRateLimitWindowMs = 15 * 60 * 1000;
 const loginRateLimitMaxFailures = 10;
 const loginAttemptRetentionMs = 24 * 60 * 60 * 1000;
-export const pageBodyEditAuditCoalesceSeconds = 5 * 60;
+export const auditEventCoalesceSeconds = 5 * 60;
+export const pageBodyEditAuditCoalesceSeconds = auditEventCoalesceSeconds;
 
 function validatePassword(password: string) {
   if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
@@ -30,6 +31,10 @@ function normalizeLoginIp(ipAddress: string) {
   return ipAddress.trim() || "unknown";
 }
 
+function databaseBoolean(value: unknown) {
+  return value === true || value === 1 || value === "1";
+}
+
 export function ensureDatabase() {
   if (initialized) return;
   execSql(`
@@ -40,6 +45,7 @@ export function ensureDatabase() {
       last_name TEXT NOT NULL DEFAULT '',
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
+      last_login_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -57,6 +63,8 @@ export function ensureDatabase() {
       name TEXT NOT NULL,
       owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       color TEXT NOT NULL DEFAULT '#0891b2',
+      page_title_template TEXT NOT NULL DEFAULT '',
+      page_title_template_enabled INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -88,6 +96,29 @@ export function ensureDatabase() {
       PRIMARY KEY (page_id, tag)
     );
 
+    CREATE TABLE IF NOT EXISTS page_comment_threads (
+      id TEXT PRIMARY KEY,
+      page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      created_by TEXT REFERENCES users(id),
+      selected_text TEXT NOT NULL DEFAULT '',
+      resolved_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS page_comment_threads_page_idx ON page_comment_threads(page_id, updated_at);
+
+    CREATE TABLE IF NOT EXISTS page_comments (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES page_comment_threads(id) ON DELETE CASCADE,
+      user_id TEXT REFERENCES users(id),
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS page_comments_thread_idx ON page_comments(thread_id, created_at);
+
     CREATE TABLE IF NOT EXISTS attachments (
       id TEXT PRIMARY KEY,
       page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -96,8 +127,20 @@ export function ensureDatabase() {
       size INTEGER NOT NULL,
       storage_key TEXT NOT NULL,
       block_type TEXT NOT NULL DEFAULT 'file',
+      evernote_hash TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS attachment_annotations (
+      attachment_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
+      page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      data_json TEXT NOT NULL DEFAULT '{"items":[]}',
+      updated_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS attachment_annotations_page_idx ON attachment_annotations(page_id, updated_at);
 
     CREATE TABLE IF NOT EXISTS audit_events (
       id TEXT PRIMARY KEY,
@@ -117,21 +160,37 @@ export function ensureDatabase() {
     CREATE INDEX IF NOT EXISTS audit_events_page_idx ON audit_events(page_id, updated_at);
     CREATE INDEX IF NOT EXISTS audit_events_notebook_idx ON audit_events(notebook_id, updated_at);
     CREATE INDEX IF NOT EXISTS audit_events_actor_idx ON audit_events(actor_user_id, updated_at);
+    CREATE INDEX IF NOT EXISTS audit_events_updated_idx ON audit_events(updated_at);
 
     CREATE TABLE IF NOT EXISTS search_index_queue (
       page_id TEXT PRIMARY KEY,
       queued_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    INSERT OR IGNORE INTO app_settings (key, value)
+    VALUES ('prepend_date_to_new_pages', '1');
+
+    INSERT OR IGNORE INTO app_settings (key, value)
+    VALUES ('suggest_tags_globally', '1');
+
     DROP TABLE IF EXISTS import_jobs;
     DROP TABLE IF EXISTS page_versions;
   `);
   migrateUserNameColumns();
+  ensureUserLastLoginColumn();
   migrateProjectsToTopLevelNotebooks();
   ensureNotebookColumns();
   ensurePageLockColumns();
   ensurePagePreviewColumn();
   migrateAttachmentPreviewTextColumn();
+  ensureAttachmentEvernoteHashColumn();
+  ensureSearchPagesFtsSchema();
   execSql(`
     CREATE VIRTUAL TABLE IF NOT EXISTS search_pages_fts USING fts5(
       page_id UNINDEXED,
@@ -140,7 +199,6 @@ export function ensureDatabase() {
       body,
       tags,
       attachments,
-      notebook UNINDEXED,
       updated_at UNINDEXED,
       tokenize='unicode61'
     );
@@ -153,6 +211,16 @@ export function ensureDatabase() {
   if (searchIndexCount === 0 && countRows("pages") > 0) rebuildSearchIndex();
   initialized = true;
   scheduleSearchIndexDrain();
+}
+
+function ensureSearchPagesFtsSchema() {
+  const existing = queryOne("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'search_pages_fts' LIMIT 1");
+  const createSql = String(existing?.sql ?? "");
+  if (!createSql || !/\bnotebook\b/i.test(createSql)) return;
+  execSql(`
+    DROP TABLE IF EXISTS search_pages_vocab;
+    DROP TABLE IF EXISTS search_pages_fts;
+  `);
 }
 
 function migrateProjectsToTopLevelNotebooks() {
@@ -238,6 +306,14 @@ function migrateUserNameColumns() {
   }
 }
 
+function ensureUserLastLoginColumn() {
+  const columns = querySql("PRAGMA table_info(users);");
+  const columnNames = new Set(columns.map((column) => column.name));
+  if (!columnNames.has("last_login_at")) {
+    execSql("ALTER TABLE users ADD COLUMN last_login_at TEXT;");
+  }
+}
+
 function ensureNotebookColumns() {
   const columns = querySql("PRAGMA table_info(notebooks);");
   const names = new Set(columns.map((column) => column.name));
@@ -248,6 +324,8 @@ function ensureNotebookColumns() {
     `);
   }
   if (!names.has("color")) execSql("ALTER TABLE notebooks ADD COLUMN color TEXT NOT NULL DEFAULT '#0891b2';");
+  if (!names.has("page_title_template")) execSql("ALTER TABLE notebooks ADD COLUMN page_title_template TEXT NOT NULL DEFAULT '';");
+  if (!names.has("page_title_template_enabled")) execSql("ALTER TABLE notebooks ADD COLUMN page_title_template_enabled INTEGER NOT NULL DEFAULT 0;");
 }
 
 function ensurePageLockColumns() {
@@ -270,6 +348,7 @@ function migrateAttachmentPreviewTextColumn() {
   const columns = querySql("PRAGMA table_info(attachments);");
   const names = new Set(columns.map((column) => column.name));
   if (!names.has("preview_text")) return;
+  const hasEvernoteHash = names.has("evernote_hash");
 
   execSql(`
     PRAGMA foreign_keys=OFF;
@@ -282,11 +361,12 @@ function migrateAttachmentPreviewTextColumn() {
       size INTEGER NOT NULL,
       storage_key TEXT NOT NULL,
       block_type TEXT NOT NULL DEFAULT 'file',
+      evernote_hash TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    INSERT INTO attachments_new (id, page_id, original_name, mime_type, size, storage_key, block_type, created_at)
-    SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, created_at
+    INSERT INTO attachments_new (id, page_id, original_name, mime_type, size, storage_key, block_type, evernote_hash, created_at)
+    SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, ${hasEvernoteHash ? "evernote_hash" : "NULL"}, created_at
     FROM attachments;
 
     DROP TABLE attachments;
@@ -294,6 +374,13 @@ function migrateAttachmentPreviewTextColumn() {
 
     PRAGMA foreign_keys=ON;
   `);
+}
+
+function ensureAttachmentEvernoteHashColumn() {
+  const columns = querySql("PRAGMA table_info(attachments);");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("evernote_hash")) execSql("ALTER TABLE attachments ADD COLUMN evernote_hash TEXT;");
+  execSql("CREATE INDEX IF NOT EXISTS attachments_evernote_hash_idx ON attachments(evernote_hash);");
 }
 
 function migratePageStatusValues() {
@@ -450,10 +537,13 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
       u.first_name,
       u.last_name,
       u.role,
+      COALESCE(u.last_login_at, '') AS last_login_at,
       u.created_at,
-      COUNT(DISTINCT nm.notebook_id) AS notebook_count
+      COUNT(DISTINCT nm.notebook_id) AS notebook_count,
+      COALESCE(MAX(ae.updated_at), '') AS last_activity_at
     FROM users u
     LEFT JOIN notebook_members nm ON nm.user_id = u.id AND nm.role = 'owner'
+    LEFT JOIN audit_events ae ON ae.actor_user_id = u.id
     GROUP BY u.id
     ORDER BY lower(u.first_name) ASC, lower(u.last_name) ASC, lower(u.email) ASC
   `).map((row) => ({
@@ -463,8 +553,15 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
     lastName: row.last_name,
     role: row.role as UserRole,
     createdAt: row.created_at,
+    lastLoginAt: row.last_login_at,
+    lastActivityAt: row.last_activity_at,
     notebookCount: Number(row.notebook_count),
   }));
+}
+
+export function recordUserLogin(userId: string) {
+  ensureDatabase();
+  execSql(`UPDATE users SET last_login_at = datetime('now') WHERE id = ${sql(userId)};`);
 }
 
 export function getAdminDataOverview(adminUserId: string, options: { fileLimit?: number; fileOffset?: number } = {}): AdminDataOverview {
@@ -489,12 +586,10 @@ export function getAdminDataOverview(adminUserId: string, options: { fileLimit?:
       a.storage_key,
       a.created_at,
       p.title AS page_title,
-      n.name AS notebook_name,
-      u.email AS owner_email
+      n.name AS notebook_name
     FROM attachments a
     JOIN pages p ON p.id = a.page_id
     JOIN notebooks n ON n.id = p.notebook_id
-    JOIN users u ON u.id = n.owner_id
     ORDER BY a.created_at DESC, lower(a.original_name) ASC
     LIMIT ${fileLimit} OFFSET ${fileOffset}
   `).map((row) => ({
@@ -507,7 +602,6 @@ export function getAdminDataOverview(adminUserId: string, options: { fileLimit?:
     createdAt: row.created_at,
     notebookName: row.notebook_name,
     pageTitle: row.page_title,
-    ownerEmail: row.owner_email,
   }));
 
   const attachmentBytes = Number(queryOne(`SELECT COALESCE(SUM(size), 0) AS total FROM attachments`)?.total ?? 0);
@@ -538,11 +632,40 @@ export function getAdminDataOverview(adminUserId: string, options: { fileLimit?:
   };
 }
 
+export function getAdminAppSettings(adminUserId: string): AdminAppSettings {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  return readAppSettings();
+}
+
+export function updateAdminAppSettings(adminUserId: string, patch: Partial<AdminAppSettings>) {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  if (patch.prependDateToNewPages !== undefined) {
+    writeAppSetting("prepend_date_to_new_pages", patch.prependDateToNewPages ? "1" : "0");
+  }
+  if (patch.suggestTagsGlobally !== undefined) {
+    writeAppSetting("suggest_tags_globally", patch.suggestTagsGlobally ? "1" : "0");
+  }
+  return readAppSettings();
+}
+
 export function changeOwnPassword(userId: string, currentPassword: string, nextPassword: string) {
   ensureDatabase();
   const user = queryOne(`SELECT password_hash FROM users WHERE id = ${sql(userId)} LIMIT 1`);
   if (!user || !bcrypt.compareSync(currentPassword, user.password_hash)) throw new Error("Current password is incorrect.");
   updateUserPassword(userId, nextPassword);
+}
+
+export function updateOwnProfile(userId: string, input: { firstName: string; lastName?: string }): AppUser {
+  ensureDatabase();
+  const firstName = normalizeUserNamePart(input.firstName);
+  const lastName = normalizeUserNamePart(input.lastName ?? "");
+  if (!firstName) throw new Error("First name is required.");
+  execSql(`UPDATE users SET first_name = ${sql(firstName)}, last_name = ${sql(lastName)} WHERE id = ${sql(userId)};`);
+  const user = findUserById(userId);
+  if (!user) throw new Error("User not found.");
+  return user;
 }
 
 export function adminSetUserPassword(adminUserId: string, targetUserId: string, nextPassword: string) {
@@ -557,21 +680,26 @@ export function getWorkspace(userId: string): Workspace {
   const user = findUserById(userId);
   if (!user) throw new Error("User not found");
 
+  const userIsAdmin = user.role === "admin";
   const notebookRows = querySql(`
     SELECT
       n.id,
       n.name,
       n.owner_id,
       n.color,
+      COALESCE(n.page_title_template, '') AS page_title_template,
+      COALESCE(n.page_title_template_enabled, 0) AS page_title_template_enabled,
       n.created_at,
       n.updated_at,
       CASE
+        ${userIsAdmin ? "WHEN 1 THEN 'owner'" : ""}
         WHEN nm.role = 'owner' THEN 'owner'
         WHEN nm.role = 'editor' THEN 'editor'
         ELSE 'viewer'
       END AS access_role
     FROM notebooks n
-    JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    ${userIsAdmin ? "" : "WHERE nm.user_id IS NOT NULL"}
     GROUP BY n.id
     ORDER BY datetime(n.updated_at) DESC, lower(n.name) ASC
   `);
@@ -607,7 +735,7 @@ export function getWorkspace(userId: string): Workspace {
     : [];
   const notebookMemberRows = notebookIds.length
     ? querySql(`
-        SELECT nm.notebook_id, nm.user_id, nm.role, u.email, u.first_name, u.last_name
+        SELECT nm.notebook_id, nm.user_id, nm.role, u.email, u.first_name, u.last_name, u.role AS user_role
         FROM notebook_members nm
         JOIN users u ON u.id = nm.user_id
         WHERE nm.notebook_id IN (${inList(notebookIds)})
@@ -615,22 +743,27 @@ export function getWorkspace(userId: string): Workspace {
       `)
     : [];
   const memberRows = querySql(`SELECT id, email, first_name, last_name, role FROM users ORDER BY lower(first_name) ASC, lower(last_name) ASC, lower(email) ASC`);
+  const adminMembers = memberRows.filter((row) => row.role === "admin");
 
   const tagsByPage = groupBy(tagRows, "page_id");
   const attachmentStatsByPage = Object.fromEntries(attachmentStatRows.map((row) => [row.page_id, row]));
   const pagesByNotebook = groupBy(pageRows, "notebook_id");
   const membersByNotebook = groupBy(notebookMemberRows, "notebook_id");
 
-  const notebooks: Notebook[] = notebookRows.map((notebook) => ({
-    id: notebook.id,
-    name: notebook.name,
-    color: normalizeNotebookColor(notebook.color),
-    ownerId: notebook.owner_id,
-    createdAt: notebook.created_at,
-    updatedAt: notebook.updated_at,
-    accessRole: normalizeAccessRole(notebook.access_role),
-    members: (membersByNotebook[notebook.id] ?? []).map(toShareMember),
-    pages: (pagesByNotebook[notebook.id] ?? []).map((page): PageEntry => ({
+  const notebooks: Notebook[] = notebookRows.map((notebook) => {
+    const pageTitleTemplate = String(notebook.page_title_template ?? "");
+    return {
+      id: notebook.id,
+      name: notebook.name,
+      color: normalizeNotebookColor(notebook.color),
+      pageTitleTemplate,
+      pageTitleTemplateEnabled: databaseBoolean(notebook.page_title_template_enabled) && pageTitleTemplate.trim().length > 0,
+      ownerId: notebook.owner_id,
+      createdAt: notebook.created_at,
+      updatedAt: notebook.updated_at,
+      accessRole: normalizeAccessRole(notebook.access_role),
+      members: withImplicitAdminMembers((membersByNotebook[notebook.id] ?? []).map(toShareMember), adminMembers),
+      pages: (pagesByNotebook[notebook.id] ?? []).map((page): PageEntry => ({
       id: page.id,
       notebookId: page.notebook_id,
       title: page.title,
@@ -651,8 +784,9 @@ export function getWorkspace(userId: string): Workspace {
       attachments: [],
       attachmentCount: Number(attachmentStatsByPage[page.id]?.count ?? 0),
       attachmentBytes: Number(attachmentStatsByPage[page.id]?.bytes ?? 0),
-    })),
-  }));
+      })),
+    };
+  });
 
   const workspaceProject: Project = {
     id: "workspace",
@@ -670,6 +804,7 @@ export function getWorkspace(userId: string): Workspace {
 
   return {
     user,
+    appSettings: readAppSettings(),
     members: memberRows.map((row) => ({ id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, role: row.role as UserRole })),
     notebooks,
     projects: [workspaceProject],
@@ -704,7 +839,25 @@ export function getPage(userId: string, pageId: string): PageEntry {
   `);
   if (!page) throw new Error("Page not found");
   const tagRows = querySql(`SELECT page_id, tag FROM page_tags WHERE page_id = ${sql(pageId)} ORDER BY rowid ASC`);
-  const attachmentRows = querySql(`SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, created_at FROM attachments WHERE page_id = ${sql(pageId)} ORDER BY created_at DESC`);
+  const attachmentRows = querySql(`
+    SELECT
+      a.id,
+      a.page_id,
+      a.original_name,
+      a.mime_type,
+      a.size,
+      a.storage_key,
+      a.block_type,
+      COALESCE(a.evernote_hash, '') AS evernote_hash,
+      a.created_at,
+      aa.data_json AS annotation_data_json,
+      COALESCE(aa.updated_at, '') AS annotation_updated_at,
+      COALESCE(aa.updated_by, '') AS annotation_updated_by
+    FROM attachments a
+    LEFT JOIN attachment_annotations aa ON aa.attachment_id = a.id
+    WHERE a.page_id = ${sql(pageId)}
+    ORDER BY a.created_at DESC
+  `);
   const attachmentBytes = attachmentRows.reduce((total, attachment) => total + Number(attachment.size ?? 0), 0);
   return {
     id: page.id,
@@ -728,6 +881,20 @@ export function getPage(userId: string, pageId: string): PageEntry {
     attachmentCount: attachmentRows.length,
     attachmentBytes,
   };
+}
+
+export function getPageNotebook(userId: string, pageId: string): Pick<Notebook, "id" | "name" | "color"> {
+  ensureDatabase();
+  assertPageReadAccess(userId, pageId);
+  const row = queryOne(`
+    SELECT n.id, n.name, n.color
+    FROM pages p
+    JOIN notebooks n ON n.id = p.notebook_id
+    WHERE p.id = ${sql(pageId)}
+    LIMIT 1
+  `);
+  if (!row) throw new Error("Page not found");
+  return { id: row.id, name: row.name, color: row.color };
 }
 
 export function getPageActivityEvents(userId: string, pageId: string, options: { limit?: number; offset?: number } = {}) {
@@ -768,17 +935,174 @@ export function getPageActivityEvents(userId: string, pageId: string, options: {
   };
 }
 
+export function getPageCommentThreads(userId: string, pageId: string): PageCommentThread[] {
+  ensureDatabase();
+  assertPageReadAccess(userId, pageId);
+  const threadRows = querySql(`
+    SELECT
+      pct.id,
+      pct.page_id,
+      COALESCE(pct.created_by, '') AS created_by,
+      COALESCE(u.first_name, '') AS created_by_first_name,
+      COALESCE(u.last_name, '') AS created_by_last_name,
+      COALESCE(u.email, '') AS created_by_email,
+      pct.selected_text,
+      COALESCE(pct.resolved_at, '') AS resolved_at,
+      pct.created_at,
+      pct.updated_at
+    FROM page_comment_threads pct
+    LEFT JOIN users u ON u.id = pct.created_by
+    WHERE pct.page_id = ${sql(pageId)}
+    ORDER BY COALESCE(pct.resolved_at, '') ASC, pct.updated_at DESC, pct.created_at DESC, pct.rowid DESC
+  `);
+  if (!threadRows.length) return [];
+  const threadIds = threadRows.map((row) => row.id);
+  const commentRows = querySql(`
+    SELECT
+      pc.id,
+      pc.thread_id,
+      COALESCE(pc.user_id, '') AS user_id,
+      COALESCE(u.first_name, '') AS user_first_name,
+      COALESCE(u.last_name, '') AS user_last_name,
+      COALESCE(u.email, '') AS user_email,
+      pc.body,
+      pc.created_at,
+      pc.updated_at
+    FROM page_comments pc
+    LEFT JOIN users u ON u.id = pc.user_id
+    WHERE pc.thread_id IN (${inList(threadIds)})
+    ORDER BY pc.created_at ASC, pc.rowid ASC
+  `);
+  const commentsByThread = new Map<string, PageComment[]>();
+  for (const comment of commentRows.map(toPageComment)) {
+    commentsByThread.set(comment.threadId, [...(commentsByThread.get(comment.threadId) ?? []), comment]);
+  }
+  return threadRows.map((row) => toPageCommentThread(row, commentsByThread.get(row.id) ?? []));
+}
+
+export function createPageCommentThread(userId: string, pageId: string, input: { selectedText: string; body: string }): PageCommentThread {
+  ensureDatabase();
+  assertPageEditAccess(userId, pageId);
+  const body = normalizeCommentBody(input.body);
+  const selectedText = normalizeSelectedCommentText(input.selectedText);
+  const threadId = randomUUID();
+  const commentId = randomUUID();
+  execSql(`
+    INSERT INTO page_comment_threads (id, page_id, created_by, selected_text)
+    VALUES (${sql(threadId)}, ${sql(pageId)}, ${sql(userId)}, ${sql(selectedText)});
+
+    INSERT INTO page_comments (id, thread_id, user_id, body)
+    VALUES (${sql(commentId)}, ${sql(threadId)}, ${sql(userId)}, ${sql(body)});
+  `);
+  recordPageAuditEvent(userId, pageId, "page.comment.created", "added comment", { threadId });
+  const thread = getPageCommentThreads(userId, pageId).find((candidate) => candidate.id === threadId);
+  if (!thread) throw new Error("Comment was not created.");
+  return thread;
+}
+
+export function addPageComment(userId: string, threadId: string, bodyValue: string): PageCommentThread {
+  ensureDatabase();
+  const thread = queryOne(`SELECT page_id FROM page_comment_threads WHERE id = ${sql(threadId)} LIMIT 1`);
+  if (!thread) throw new Error("Comment thread not found.");
+  assertPageEditAccess(userId, thread.page_id);
+  const body = normalizeCommentBody(bodyValue);
+  execSql(`
+    INSERT INTO page_comments (id, thread_id, user_id, body)
+    VALUES (${sql(randomUUID())}, ${sql(threadId)}, ${sql(userId)}, ${sql(body)});
+
+    UPDATE page_comment_threads
+    SET updated_at = datetime('now')
+    WHERE id = ${sql(threadId)};
+  `);
+  recordPageAuditEvent(userId, thread.page_id, "page.comment.replied", "replied to comment", { threadId });
+  const updated = getPageCommentThreads(userId, thread.page_id).find((candidate) => candidate.id === threadId);
+  if (!updated) throw new Error("Comment thread not found.");
+  return updated;
+}
+
+export function setPageCommentThreadResolved(userId: string, threadId: string, resolved: boolean): PageCommentThread {
+  ensureDatabase();
+  const thread = queryOne(`SELECT page_id, resolved_at FROM page_comment_threads WHERE id = ${sql(threadId)} LIMIT 1`);
+  if (!thread) throw new Error("Comment thread not found.");
+  assertPageEditAccess(userId, thread.page_id);
+  const currentlyResolved = Boolean(thread.resolved_at);
+  if (currentlyResolved !== resolved) {
+    execSql(`
+      UPDATE page_comment_threads
+      SET resolved_at = ${resolved ? "datetime('now')" : "NULL"},
+          updated_at = datetime('now')
+      WHERE id = ${sql(threadId)};
+    `);
+    recordPageAuditEvent(userId, thread.page_id, resolved ? "page.comment.resolved" : "page.comment.reopened", resolved ? "resolved comment" : "reopened comment", { threadId });
+  }
+  const updated = getPageCommentThreads(userId, thread.page_id).find((candidate) => candidate.id === threadId);
+  if (!updated) throw new Error("Comment thread not found.");
+  return updated;
+}
+
+export function deletePageCommentThread(userId: string, threadId: string) {
+  ensureDatabase();
+  const thread = queryOne(`SELECT page_id FROM page_comment_threads WHERE id = ${sql(threadId)} LIMIT 1`);
+  if (!thread) throw new Error("Comment thread not found.");
+  assertPageEditAccess(userId, thread.page_id);
+  execSql(`DELETE FROM page_comment_threads WHERE id = ${sql(threadId)};`);
+  recordPageAuditEvent(userId, thread.page_id, "page.comment.deleted", "deleted comment", { threadId });
+}
+
+export function getAdminActivityEvents(adminUserId: string, options: { limit?: number; offset?: number } = {}): AdminActivityOverview {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  const limit = clampInteger(options.limit, 1, 100, 30);
+  const offset = clampInteger(options.offset, 0, 1_000_000_000, 0);
+  const total = Number(queryOne("SELECT COUNT(*) AS count FROM audit_events")?.count ?? 0);
+  const events = querySql(`
+    SELECT
+      ae.id,
+      ae.entity_type,
+      ae.entity_id,
+      COALESCE(ae.page_id, '') AS page_id,
+      COALESCE(ae.notebook_id, '') AS notebook_id,
+      COALESCE(ae.actor_user_id, '') AS actor_user_id,
+      COALESCE(u.first_name, '') AS actor_first_name,
+      COALESCE(u.last_name, '') AS actor_last_name,
+      COALESCE(u.email, '') AS actor_email,
+      ae.action,
+      ae.summary,
+      ae.metadata_json,
+      ae.event_count,
+      ae.created_at,
+      ae.updated_at,
+      COALESCE(p.title, '') AS page_title,
+      COALESCE(n_direct.name, n_from_page.name, '') AS notebook_name
+    FROM audit_events ae
+    LEFT JOIN users u ON u.id = ae.actor_user_id
+    LEFT JOIN pages p ON p.id = ae.page_id
+    LEFT JOIN notebooks n_from_page ON n_from_page.id = p.notebook_id
+    LEFT JOIN notebooks n_direct ON n_direct.id = ae.notebook_id
+    ORDER BY ae.updated_at DESC, ae.created_at DESC, ae.rowid DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `).map(toAuditEvent);
+  return {
+    events,
+    total,
+    limit,
+    offset,
+    hasMore: offset + events.length < total,
+  };
+}
+
 export function createNotebook(userId: string, name = "New Notebook") {
   ensureDatabase();
   const notebookId = randomUUID();
   const pageId = randomUUID();
+  const initialBody = readAppSettings().prependDateToNewPages ? formattedTodayForNewPage() : "";
   execSql(`
     INSERT INTO notebooks (id, name, owner_id, color)
     VALUES (${sql(notebookId)}, ${sql(name)}, ${sql(userId)}, ${sql(defaultNotebookColor(notebookId))});
     INSERT INTO notebook_members (notebook_id, user_id, role)
     VALUES (${sql(notebookId)}, ${sql(userId)}, 'owner');
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
+    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', ${sql(initialBody)}, '', ${sql(userId)});
   `);
   recordNotebookAuditEvent(userId, notebookId, "notebook.created", `created notebook ${quoteAuditValue(name)}`, { name });
   recordPageAuditEvent(userId, pageId, "page.created", "created page", { source: "notebook.create" });
@@ -811,7 +1135,32 @@ export function updateNotebookColor(userId: string, notebookId: string, color: s
   recordNotebookAuditEvent(userId, notebookId, "notebook.color.updated", "changed notebook color", {
     oldColor: normalizeNotebookColor(current?.color),
     newColor: nextColor,
+  }, { coalesce: true });
+}
+
+export function updateNotebookPageTitleTemplate(userId: string, notebookId: string, template: string, enabled: boolean) {
+  ensureDatabase();
+  assertNotebookManageAccess(userId, notebookId);
+  const nextTemplate = normalizePageTitleTemplate(template);
+  const nextEnabled = Boolean(enabled && nextTemplate);
+  const current = queryOne(`SELECT page_title_template, COALESCE(page_title_template_enabled, 0) AS page_title_template_enabled FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`);
+  const previousTemplate = String(current?.page_title_template ?? "");
+  const previousEnabled = databaseBoolean(current?.page_title_template_enabled);
+  if (previousTemplate === nextTemplate && previousEnabled === nextEnabled) return;
+  execSql(`
+    UPDATE notebooks
+    SET page_title_template = ${sql(nextTemplate)},
+        page_title_template_enabled = ${nextEnabled ? 1 : 0},
+        updated_at = datetime('now')
+    WHERE id = ${sql(notebookId)};
+  `);
+  recordNotebookAuditEvent(userId, notebookId, "notebook.page_title_template.updated", nextEnabled ? "updated new page title template" : "paused new page title template", {
+    previousTemplate,
+    previousEnabled,
+    nextTemplate,
+    nextEnabled,
   });
+  queueSearchIndexForNotebook(notebookId);
 }
 
 export function deleteNotebook(userId: string, notebookId: string) {
@@ -829,9 +1178,11 @@ export function createPage(userId: string, notebookId: string) {
   ensureDatabase();
   assertNotebookEditAccess(userId, notebookId);
   const pageId = randomUUID();
+  const initialBody = readAppSettings().prependDateToNewPages ? formattedTodayForNewPage() : "";
+  const title = suggestPageTitle(notebookId);
   execSql(`
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
+    VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(title)}, ${sql(initialBody)}, '', ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
   `);
   recordPageAuditEvent(userId, pageId, "page.created", "created page");
@@ -942,6 +1293,53 @@ export function setPageLocked(userId: string, pageId: string, locked: boolean) {
   queueSearchIndexForPage(pageId);
 }
 
+export function movePage(userId: string, pageId: string, targetNotebookId: string) {
+  ensureDatabase();
+  assertPageEditAccess(userId, pageId);
+  assertNotebookEditAccess(userId, targetNotebookId);
+  const page = queryOne(`
+    SELECT
+      p.notebook_id AS source_notebook_id,
+      p.title AS title,
+      source.name AS source_notebook_name,
+      target.name AS target_notebook_name
+    FROM pages p
+    JOIN notebooks source ON source.id = p.notebook_id
+    JOIN notebooks target ON target.id = ${sql(targetNotebookId)}
+    WHERE p.id = ${sql(pageId)}
+    LIMIT 1
+  `);
+  if (!page) throw new Error("Page or destination notebook not found");
+  const sourceNotebookId = String(page.source_notebook_id ?? "");
+  if (sourceNotebookId === targetNotebookId) return false;
+
+  execSql(`
+    UPDATE pages
+    SET notebook_id = ${sql(targetNotebookId)},
+        updated_at = datetime('now')
+    WHERE id = ${sql(pageId)};
+    UPDATE notebooks SET updated_at = datetime('now') WHERE id IN (${sql(sourceNotebookId)}, ${sql(targetNotebookId)});
+  `);
+  recordAuditEvent({
+    entityType: "page",
+    entityId: pageId,
+    pageId,
+    notebookId: targetNotebookId,
+    actorUserId: userId,
+    action: "page.moved",
+    summary: `moved page from ${quoteAuditValue(page.source_notebook_name ?? "Untitled")} to ${quoteAuditValue(page.target_notebook_name ?? "Untitled")}`,
+    metadata: {
+      title: page.title ?? "",
+      oldNotebookId: sourceNotebookId,
+      newNotebookId: targetNotebookId,
+      oldNotebookName: page.source_notebook_name ?? "",
+      newNotebookName: page.target_notebook_name ?? "",
+    },
+  });
+  queueSearchIndexForPage(pageId);
+  return true;
+}
+
 export function setPageTags(userId: string, pageId: string, tags: string[]) {
   ensureDatabase();
   assertPageEditAccess(userId, pageId);
@@ -996,6 +1394,98 @@ export function deletePage(userId: string, pageId: string) {
   deleteSearchIndexForPage(pageId);
 }
 
+export function duplicatePage(userId: string, pageId: string) {
+  ensureDatabase();
+  assertPageEditAccess(userId, pageId);
+  const page = queryOne(`SELECT notebook_id, title, body, status FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+  if (!page) throw new Error("Page not found");
+
+  const notebookId = String(page.notebook_id ?? "");
+  const title = duplicatePageTitle(notebookId, String(page.title || "Untitled"));
+  const tags = pageTagRowsToList(querySql(`SELECT tag FROM page_tags WHERE page_id = ${sql(pageId)} ORDER BY rowid ASC`));
+  const attachments = querySql(`
+    SELECT id, original_name, mime_type, size, storage_key, block_type, COALESCE(evernote_hash, '') AS evernote_hash
+    FROM attachments
+    WHERE page_id = ${sql(pageId)}
+    ORDER BY created_at ASC, rowid ASC
+  `);
+
+  const newPageId = randomUUID();
+  const copiedStorageKeys: string[] = [];
+  const attachmentCopies = attachments.map((attachment) => {
+    const originalName = attachment.original_name || "attachment.bin";
+    const newStorageKey = path.join(newPageId, `${randomUUID()}-${sanitizeStorageFileName(originalName)}`).split(path.sep).join("/");
+    return {
+      oldId: attachment.id,
+      newId: randomUUID(),
+      originalName,
+      mimeType: attachment.mime_type || "application/octet-stream",
+      size: Number(attachment.size || 0),
+      oldStorageKey: attachment.storage_key,
+      newStorageKey,
+      blockType: attachment.block_type || "file",
+      evernoteHash: attachment.evernote_hash || "",
+    };
+  });
+
+  try {
+    for (const attachment of attachmentCopies) {
+      const sourcePath = path.join(uploadDir, attachment.oldStorageKey);
+      const destinationPath = path.join(uploadDir, attachment.newStorageKey);
+      fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+      fs.copyFileSync(sourcePath, destinationPath);
+      copiedStorageKeys.push(attachment.newStorageKey);
+    }
+
+    const attachmentIdMap = Object.fromEntries(attachmentCopies.map((attachment) => [attachment.oldId, attachment.newId]));
+    const body = remapAttachmentCardsInBody(String(page.body ?? ""), attachmentIdMap);
+    const attachmentAnnotationInserts = attachmentCopies.map((attachment) => {
+      const annotation = queryOne(`SELECT data_json, updated_by FROM attachment_annotations WHERE attachment_id = ${sql(attachment.oldId)} LIMIT 1`);
+      if (!annotation?.data_json) return "";
+      return `
+        INSERT INTO attachment_annotations (attachment_id, page_id, data_json, updated_by)
+        VALUES (${sql(attachment.newId)}, ${sql(newPageId)}, ${sql(normalizeAttachmentAnnotationDataJson(annotation.data_json))}, ${sql(annotation.updated_by ?? userId)});
+      `;
+    }).join("\n");
+    execSql(`
+      BEGIN;
+      INSERT INTO pages (id, notebook_id, title, body, preview_text, status, owner_id)
+      VALUES (${sql(newPageId)}, ${sql(notebookId)}, ${sql(title)}, ${sql(body)}, ${sql(bodyToEditorText(body).slice(0, 500))}, ${sql(page.status ?? "")}, ${sql(userId)});
+      ${tags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(newPageId)}, ${sql(tag)});`).join("\n")}
+      ${attachmentCopies.map((attachment) => `
+        INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, evernote_hash)
+        VALUES (${sql(attachment.newId)}, ${sql(newPageId)}, ${sql(attachment.originalName)}, ${sql(attachment.mimeType)}, ${attachment.size}, ${sql(attachment.newStorageKey)}, ${sql(attachment.blockType)}, ${sql(attachment.evernoteHash)});
+      `).join("\n")}
+      ${attachmentAnnotationInserts}
+      UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
+      COMMIT;
+    `);
+  } catch (error) {
+    for (const storageKey of copiedStorageKeys) {
+      fs.rmSync(path.join(uploadDir, storageKey), { force: true });
+    }
+    throw error;
+  }
+
+  recordAuditEvent({
+    entityType: "page",
+    entityId: newPageId,
+    pageId: newPageId,
+    notebookId,
+    actorUserId: userId,
+    action: "page.duplicated",
+    summary: `duplicated page from ${quoteAuditValue(page.title || "Untitled")}`,
+    metadata: {
+      sourcePageId: pageId,
+      sourceTitle: page.title ?? "",
+      title,
+      attachmentCount: attachmentCopies.length,
+    },
+  });
+  queueSearchIndexForPage(newPageId);
+  return { pageId: newPageId, notebookId };
+}
+
 export function createAttachment(input: {
   userId: string;
   pageId: string;
@@ -1028,15 +1518,73 @@ export function createAttachment(input: {
 export function getAttachmentForUser(userId: string, attachmentId: string): Attachment | null {
   ensureDatabase();
   const row = queryOne(`
-    SELECT a.id, a.page_id, a.original_name, a.mime_type, a.size, a.storage_key, a.block_type, a.created_at
+    SELECT
+      a.id,
+      a.page_id,
+      a.original_name,
+      a.mime_type,
+      a.size,
+      a.storage_key,
+      a.block_type,
+      COALESCE(a.evernote_hash, '') AS evernote_hash,
+      a.created_at,
+      aa.data_json AS annotation_data_json,
+      COALESCE(aa.updated_at, '') AS annotation_updated_at,
+      COALESCE(aa.updated_by, '') AS annotation_updated_by
     FROM attachments a
-    JOIN pages p ON p.id = a.page_id
-    JOIN notebooks n ON n.id = p.notebook_id
-    JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    LEFT JOIN attachment_annotations aa ON aa.attachment_id = a.id
     WHERE a.id = ${sql(attachmentId)}
     LIMIT 1
   `);
+  if (row) assertPageReadAccess(userId, row.page_id);
   return row ? toAttachment(row) : null;
+}
+
+export function getAttachmentAnnotationForUser(userId: string, attachmentId: string) {
+  ensureDatabase();
+  const attachment = getAttachmentForUser(userId, attachmentId);
+  if (!attachment) throw new Error("Attachment not found");
+  return {
+    attachment,
+    annotation: attachment.annotation ?? {
+      dataJson: '{"items":[]}',
+      updatedAt: "",
+      updatedBy: "",
+    },
+  };
+}
+
+export function saveAttachmentAnnotation(input: { userId: string; attachmentId: string; data: unknown }) {
+  ensureDatabase();
+  assertAttachmentEditAccess(input.userId, input.attachmentId);
+  const attachment = getAttachmentForUser(input.userId, input.attachmentId);
+  if (!attachment) throw new Error("Attachment not found");
+  if (attachment.blockType !== "image") throw new Error("Only image attachments can be annotated.");
+
+  const dataJson = normalizeAttachmentAnnotationDataJson(input.data);
+  execSql(`
+    INSERT INTO attachment_annotations (attachment_id, page_id, data_json, updated_by, created_at, updated_at)
+    VALUES (${sql(input.attachmentId)}, ${sql(attachment.pageId)}, ${sql(dataJson)}, ${sql(input.userId)}, datetime('now'), datetime('now'))
+    ON CONFLICT(attachment_id) DO UPDATE SET
+      data_json = excluded.data_json,
+      updated_by = excluded.updated_by,
+      updated_at = datetime('now');
+    UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(attachment.pageId)};
+    UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(attachment.pageId)});
+  `);
+  recordPageAuditEvent(
+    input.userId,
+    attachment.pageId,
+    "attachment.annotated",
+    `annotated image ${quoteAuditValue(attachment.originalName)}`,
+    {
+      attachmentId: input.attachmentId,
+      originalName: attachment.originalName,
+      itemCount: parseAttachmentAnnotationDataJson(dataJson).items.length,
+    },
+    { coalesce: true },
+  );
+  return getAttachmentAnnotationForUser(input.userId, input.attachmentId).annotation;
 }
 
 export function updateAttachmentFile(input: {
@@ -1125,14 +1673,15 @@ export function createImportedAttachment(input: {
   size: number;
   storageKey: string;
   blockType: BlockType;
+  evernoteHash?: string;
   createdAt?: string;
 }): Attachment {
   ensureDatabase();
   const id = randomUUID();
   const createdAt = input.createdAt ?? new Date().toISOString();
   execSql(`
-    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, created_at)
-    VALUES (${sql(id)}, ${sql(input.pageId)}, ${sql(input.originalName)}, ${sql(input.mimeType)}, ${input.size}, ${sql(input.storageKey)}, ${sql(input.blockType)}, ${sql(createdAt)});
+    INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, evernote_hash, created_at)
+    VALUES (${sql(id)}, ${sql(input.pageId)}, ${sql(input.originalName)}, ${sql(input.mimeType)}, ${input.size}, ${sql(input.storageKey)}, ${sql(input.blockType)}, ${sql(input.evernoteHash ?? "")}, ${sql(createdAt)});
   `);
   return {
     id,
@@ -1142,6 +1691,7 @@ export function createImportedAttachment(input: {
     size: input.size,
     storageKey: input.storageKey,
     blockType: input.blockType,
+    evernoteHash: input.evernoteHash ?? "",
     createdAt,
     updatedAt: createdAt,
   };
@@ -1211,13 +1761,14 @@ export function shareNotebook(input: { actorUserId: string; notebookId: string; 
 
 export function unshareNotebook(actorUserId: string, notebookId: string, targetUserId: string) {
   ensureDatabase();
-  assertNotebookManageAccess(actorUserId, notebookId);
-  if (actorUserId === targetUserId) throw new Error("Owners cannot remove themselves.");
+  const isLeaving = actorUserId === targetUserId;
+  if (isLeaving) assertNotebookReadAccess(actorUserId, notebookId);
+  else assertNotebookManageAccess(actorUserId, notebookId);
   const targetRole = queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(targetUserId)} LIMIT 1`)?.role;
   if (targetRole === "owner" && countNotebookOwners(notebookId) <= 1) throw new Error("Notebooks need at least one owner.");
   const targetUser = findUserById(targetUserId);
   execSql(`DELETE FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(targetUserId)};`);
-  recordNotebookAuditEvent(actorUserId, notebookId, "notebook.member.removed", `removed ${targetUser ? displayName(targetUser) : "a member"} from notebook`, {
+  recordNotebookAuditEvent(actorUserId, notebookId, isLeaving ? "notebook.member.left" : "notebook.member.removed", isLeaving ? "left notebook" : `removed ${targetUser ? displayName(targetUser) : "a member"} from notebook`, {
     targetUserId,
     targetEmail: targetUser?.email ?? "",
     oldRole: targetRole ?? "",
@@ -1255,6 +1806,10 @@ function normalizePageBody(body: string) {
 }
 
 function getNotebookRole(userId: string, notebookId: string): AccessRole | null {
+  if (isAdmin(userId)) {
+    const notebook = queryOne(`SELECT 1 AS exists_flag FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`);
+    return notebook ? "owner" : null;
+  }
   const row = queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND user_id = ${sql(userId)} LIMIT 1`);
   return row ? normalizeAccessRole(row.role) : null;
 }
@@ -1274,6 +1829,11 @@ export function assertNotebookManageAccess(userId: string, notebookId: string) {
 }
 
 export function assertPageReadAccess(userId: string, pageId: string) {
+  if (isAdmin(userId)) {
+    const page = queryOne(`SELECT 1 AS exists_flag FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+    if (!page) throw new Error("Forbidden");
+    return;
+  }
   const row = queryOne(`
     SELECT nm.role AS role
     FROM pages p
@@ -1286,6 +1846,12 @@ export function assertPageReadAccess(userId: string, pageId: string) {
 }
 
 export function assertPageEditAccess(userId: string, pageId: string) {
+  if (isAdmin(userId)) {
+    const page = queryOne(`SELECT COALESCE(locked_at, '') AS locked_at FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+    if (!page) throw new Error("Forbidden");
+    if (page.locked_at) throw new Error("Page is locked.");
+    return;
+  }
   const row = queryOne(`
     SELECT CASE
       WHEN nm.role = 'owner' THEN 'owner'
@@ -1304,6 +1870,11 @@ export function assertPageEditAccess(userId: string, pageId: string) {
 }
 
 export function assertPageManageAccess(userId: string, pageId: string) {
+  if (isAdmin(userId)) {
+    const page = queryOne(`SELECT 1 AS exists_flag FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+    if (!page) throw new Error("Forbidden");
+    return;
+  }
   const row = queryOne(`
     SELECT CASE
       WHEN nm.role = 'owner' THEN 'owner'
@@ -1316,7 +1887,7 @@ export function assertPageManageAccess(userId: string, pageId: string) {
     WHERE p.id = ${sql(pageId)}
     LIMIT 1
   `);
-  if (normalizeAccessRole(row?.role) !== "owner") throw new Error("Only owners can lock pages.");
+  if (roleRank(normalizeAccessRole(row?.role)) < roleRank("editor")) throw new Error("Only editors and owners can lock pages.");
 }
 
 function countNotebookOwners(notebookId: string) {
@@ -1344,6 +1915,34 @@ function isAdmin(userId: string) {
   return role === "admin";
 }
 
+function readAppSettings(): AdminAppSettings {
+  return {
+    prependDateToNewPages: readAppSetting("prepend_date_to_new_pages", "1") === "1",
+    suggestTagsGlobally: readAppSetting("suggest_tags_globally", "1") === "1",
+  };
+}
+
+function readAppSetting(key: string, fallback: string) {
+  return String(queryOne(`SELECT value FROM app_settings WHERE key = ${sql(key)} LIMIT 1`)?.value ?? fallback);
+}
+
+function writeAppSetting(key: string, value: string) {
+  execSql(`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (${sql(key)}, ${sql(value)}, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
+  `);
+}
+
+function formattedTodayForNewPage() {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date());
+}
+
 function updateUserPassword(userId: string, nextPassword: string) {
   validatePassword(nextPassword);
   execSql(`UPDATE users SET password_hash = ${sql(bcrypt.hashSync(nextPassword, 10))} WHERE id = ${sql(userId)};`);
@@ -1355,6 +1954,53 @@ function inList(values: string[]) {
 
 function normalizeNotebookColor(value: string | undefined) {
   return /^#[0-9a-f]{6}$/i.test(value ?? "") ? value!.toLowerCase() : "#0891b2";
+}
+
+function normalizePageTitleTemplate(value: string | undefined) {
+  const template = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!template) return "";
+  if (template.length > 120) throw new Error("Title template must be 120 characters or fewer.");
+  const matches = template.match(/\{number\}/g) ?? [];
+  if (matches.length !== 1) throw new Error('Title template must include exactly one "{number}" placeholder.');
+  return template;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function templateSegmentToRegex(value: string) {
+  return escapeRegExp(value).replace(/\\\s+/g, "\\s+").replace(/\\-/g, "[\\s-]*");
+}
+
+function pageTitleTemplateRegex(template: string) {
+  const [beforeNumber] = template.split("{number}");
+  return new RegExp(`^\\s*${templateSegmentToRegex(beforeNumber)}(\\d+)`, "i");
+}
+
+function uniquePageTitle(baseTitle: string, existingTitles: Set<string>) {
+  if (!existingTitles.has(baseTitle.toLowerCase())) return baseTitle;
+  let index = 2;
+  while (existingTitles.has(`${baseTitle} (${index})`.toLowerCase())) index += 1;
+  return `${baseTitle} (${index})`;
+}
+
+function suggestPageTitle(notebookId: string) {
+  const row = queryOne(`SELECT page_title_template, COALESCE(page_title_template_enabled, 0) AS page_title_template_enabled FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`);
+  const titles = querySql(`SELECT title FROM pages WHERE notebook_id = ${sql(notebookId)}`).map((page) => String(page.title ?? ""));
+  const existingTitles = new Set(titles.map((title) => title.toLowerCase()));
+  if (!databaseBoolean(row?.page_title_template_enabled)) return "Untitled";
+  const template = normalizePageTitleTemplate(String(row?.page_title_template ?? ""));
+  if (!template) return "Untitled";
+  const regex = pageTitleTemplateRegex(template);
+  let maxNumber = 0;
+  for (const title of titles) {
+    const match = title.match(regex);
+    if (!match) continue;
+    const value = Number.parseInt(match[1], 10);
+    if (Number.isFinite(value)) maxNumber = Math.max(maxNumber, value);
+  }
+  return uniquePageTitle(template.replace("{number}", String(maxNumber + 1)), existingTitles);
 }
 
 function normalizeAccessRole(value: string | undefined | null): AccessRole {
@@ -1381,7 +2027,7 @@ type AuditEventInput = {
   coalesce?: boolean;
 };
 
-function recordPageAuditEvent(userId: string, pageId: string, action: string, summary: string, metadata: Record<string, unknown> = {}) {
+function recordPageAuditEvent(userId: string, pageId: string, action: string, summary: string, metadata: Record<string, unknown> = {}, options: { coalesce?: boolean } = {}) {
   const page = queryOne(`SELECT notebook_id FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
   recordAuditEvent({
     entityType: action.startsWith("attachment.") ? "attachment" : "page",
@@ -1392,10 +2038,11 @@ function recordPageAuditEvent(userId: string, pageId: string, action: string, su
     action,
     summary,
     metadata,
+    coalesce: options.coalesce,
   });
 }
 
-function recordNotebookAuditEvent(userId: string, notebookId: string, action: string, summary: string, metadata: Record<string, unknown> = {}) {
+function recordNotebookAuditEvent(userId: string, notebookId: string, action: string, summary: string, metadata: Record<string, unknown> = {}, options: { coalesce?: boolean } = {}) {
   recordAuditEvent({
     entityType: "notebook",
     entityId: notebookId,
@@ -1404,30 +2051,28 @@ function recordNotebookAuditEvent(userId: string, notebookId: string, action: st
     action,
     summary,
     metadata,
+    coalesce: options.coalesce,
   });
 }
 
 function recordAuditEvent(input: AuditEventInput) {
   const metadataJson = JSON.stringify(input.metadata ?? {});
-  if (input.coalesce && input.pageId) {
+  if (input.coalesce) {
     const existing = queryOne(`
       SELECT id, metadata_json, event_count
       FROM audit_events
-      WHERE page_id = ${sql(input.pageId)}
+      WHERE entity_type = ${sql(input.entityType)}
+        AND entity_id = ${sql(input.entityId)}
         AND actor_user_id = ${sql(input.actorUserId)}
         AND action = ${sql(input.action)}
-        AND datetime(updated_at) >= datetime('now', '-${pageBodyEditAuditCoalesceSeconds} seconds')
+        AND datetime(updated_at) >= datetime('now', '-${auditEventCoalesceSeconds} seconds')
       ORDER BY updated_at DESC, rowid DESC
       LIMIT 1
     `);
     if (existing?.id) {
       const previousMetadata = parseAuditMetadata(existing.metadata_json);
       const eventCount = Number(existing.event_count || 1) + 1;
-      const nextMetadata = {
-        ...previousMetadata,
-        ...input.metadata,
-        coalescedEditCount: eventCount,
-      };
+      const nextMetadata = coalescedAuditMetadata(previousMetadata, input.metadata ?? {}, eventCount);
       execSql(`
         UPDATE audit_events
         SET summary = ${sql(input.summary)},
@@ -1467,6 +2112,18 @@ function recordAuditEvent(input: AuditEventInput) {
   `);
 }
 
+function coalescedAuditMetadata(previousMetadata: Record<string, unknown>, nextMetadata: Record<string, unknown>, eventCount: number) {
+  const merged: Record<string, unknown> = {
+    ...previousMetadata,
+    ...nextMetadata,
+    coalescedEditCount: eventCount,
+  };
+  for (const [key, value] of Object.entries(previousMetadata)) {
+    if (key.startsWith("old") && Object.prototype.hasOwnProperty.call(nextMetadata, key)) merged[key] = value;
+  }
+  return merged;
+}
+
 function parseAuditMetadata(value: string | undefined) {
   if (!value) return {};
   try {
@@ -1477,8 +2134,69 @@ function parseAuditMetadata(value: string | undefined) {
   }
 }
 
-function toAuditEvent(row: Record<string, string>): AuditEvent {
+function parseAttachmentAnnotationDataJson(value: unknown): { items: unknown[] } {
+  if (!value) return { items: [] };
+  if (typeof value === "string") {
+    try {
+      return parseAttachmentAnnotationDataJson(JSON.parse(value) as unknown);
+    } catch {
+      return { items: [] };
+    }
+  }
+  if (typeof value !== "object" || Array.isArray(value)) return { items: [] };
+  const items = (value as { items?: unknown }).items;
+  return { items: Array.isArray(items) ? items.slice(0, 1000) : [] };
+}
+
+function normalizeAttachmentAnnotationDataJson(value: unknown) {
+  const normalized = parseAttachmentAnnotationDataJson(value);
+  const json = JSON.stringify(normalized);
+  if (json.length > 1024 * 1024) throw new Error("Annotation is too large.");
+  return json;
+}
+
+function toPageComment(row: Record<string, string>): PageComment {
   return {
+    id: row.id,
+    threadId: row.thread_id,
+    userId: row.user_id,
+    userFirstName: row.user_first_name,
+    userLastName: row.user_last_name,
+    userEmail: row.user_email,
+    body: row.body,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toPageCommentThread(row: Record<string, string>, comments: PageComment[]): PageCommentThread {
+  return {
+    id: row.id,
+    pageId: row.page_id,
+    createdBy: row.created_by,
+    createdByFirstName: row.created_by_first_name,
+    createdByLastName: row.created_by_last_name,
+    createdByEmail: row.created_by_email,
+    selectedText: row.selected_text,
+    resolvedAt: row.resolved_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    comments,
+  };
+}
+
+function normalizeCommentBody(value: string) {
+  const normalized = value.trim().replace(/\r\n/g, "\n").slice(0, 4000);
+  if (!normalized) throw new Error("Comment cannot be empty.");
+  return normalized;
+}
+
+function normalizeSelectedCommentText(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 500);
+}
+
+function toAuditEvent(row: Record<string, string>): AuditEvent {
+  const event: AuditEvent = {
     id: row.id,
     entityType: auditEntityType(row.entity_type),
     entityId: row.entity_id,
@@ -1495,6 +2213,9 @@ function toAuditEvent(row: Record<string, string>): AuditEvent {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  if (row.page_title) event.pageTitle = row.page_title;
+  if (row.notebook_name) event.notebookName = row.notebook_name;
+  return event;
 }
 
 function auditEntityType(value: string): AuditEvent["entityType"] {
@@ -1508,7 +2229,7 @@ function statusLabel(status: PageStatus | undefined) {
 
 function quoteAuditValue(value: string) {
   const normalized = value.trim() || "Untitled";
-  return `"${normalized.length > 72 ? `${normalized.slice(0, 69)}...` : normalized}"`;
+  return `"${normalized}"`;
 }
 
 function hashAuditValue(value: string) {
@@ -1534,7 +2255,34 @@ function toShareMember(row: Record<string, string>): ShareMember {
     firstName: row.first_name,
     lastName: row.last_name,
     role: normalizeAccessRole(row.role),
+    appRole: (row.user_role === "admin" || row.user_role === "viewer" ? row.user_role : "member") as UserRole,
+    implicitAdmin: false,
   };
+}
+
+function withImplicitAdminMembers(members: ShareMember[], adminRows: Record<string, string>[]): ShareMember[] {
+  const byUserId = new Map(members.map((member) => [member.userId, member]));
+  for (const admin of adminRows) {
+    const existing = byUserId.get(admin.id);
+    byUserId.set(admin.id, {
+      userId: admin.id,
+      email: admin.email,
+      firstName: admin.first_name,
+      lastName: admin.last_name,
+      role: "owner",
+      appRole: "admin",
+      implicitAdmin: !existing,
+    });
+  }
+  return [...byUserId.values()].sort(compareShareMembers);
+}
+
+function compareShareMembers(a: ShareMember, b: ShareMember) {
+  return (
+    a.firstName.localeCompare(b.firstName, undefined, { sensitivity: "base" })
+    || a.lastName.localeCompare(b.lastName, undefined, { sensitivity: "base" })
+    || a.email.localeCompare(b.email, undefined, { sensitivity: "base" })
+  );
 }
 
 function normalizeUserNamePart(value: string) {
@@ -1585,6 +2333,23 @@ function normalizePageTags(tags: string[]) {
   return normalized;
 }
 
+function duplicatePageTitle(notebookId: string, sourceTitle: string) {
+  const baseTitle = sourceTitle.trim() || "Untitled";
+  const existingTitles = new Set(
+    querySql(`SELECT title FROM pages WHERE notebook_id = ${sql(notebookId)}`)
+      .map((row) => String(row.title ?? "").toLowerCase()),
+  );
+  for (let index = 1; index < 10000; index += 1) {
+    const candidate = `${baseTitle} copy ${index}`;
+    if (!existingTitles.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${baseTitle} copy`;
+}
+
+function sanitizeStorageFileName(name: string) {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "attachment.bin";
+}
+
 function countRows(tableName: string) {
   const row = queryOne(`SELECT COUNT(*) AS count FROM ${tableName}`);
   return Number(row?.count ?? 0);
@@ -1617,6 +2382,7 @@ function listUploadFiles() {
 }
 
 function toAttachment(row: Record<string, string>): Attachment {
+  const annotationDataJson = row.annotation_data_json;
   return {
     id: row.id,
     pageId: row.page_id,
@@ -1625,7 +2391,13 @@ function toAttachment(row: Record<string, string>): Attachment {
     size: Number(row.size),
     storageKey: row.storage_key,
     blockType: row.block_type as BlockType,
+    evernoteHash: row.evernote_hash ?? "",
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
+    annotation: annotationDataJson ? {
+      dataJson: annotationDataJson,
+      updatedAt: row.annotation_updated_at ?? "",
+      updatedBy: row.annotation_updated_by ?? "",
+    } : null,
   };
 }

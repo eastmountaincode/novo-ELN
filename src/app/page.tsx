@@ -54,6 +54,7 @@ import { PresentationModal } from "@/components/PresentationModal";
 import { PrintPageDocument } from "@/components/PrintPageDocument";
 import { INLINE_ATTACHMENT_DRAG_TYPE, RichTextEditor, attachmentToInlineAttrs, type InlineAttachmentAttrs } from "@/components/RichTextEditor";
 import { SpreadsheetModal } from "@/components/SpreadsheetModal";
+import { appBuildId, appVersion } from "@/generated/app-version";
 import { bodyToEditorText } from "@/lib/editor";
 import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageCommentThread, PageEntry, PageStatus, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
 
@@ -105,7 +106,8 @@ const NOTEBOOK_SORT_STORAGE_KEY = "novo.notebookSortKey";
 const PAGE_ACTIVITY_PAGE_SIZE = 25;
 const SUCCESS_STATUS_CLEAR_AFTER_MS = 4400;
 const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 1000;
-const WORDMARK_TEXT = process.env.NODE_ENV === "development" ? "novo-dev" : "novo";
+const WORDMARK_TEXT = process.env.NODE_ENV === "development" ? "Novo-dev" : "Novo";
+const SIDEBAR_VERSION_TEXT = appBuildId && appBuildId !== "unknown" && appBuildId !== appVersion ? `${appVersion} · ${appBuildId}` : appVersion;
 
 const PAGE_STATUS_OPTIONS: Array<{ value: PageStatus; label: string }> = [
   { value: "", label: "No status" },
@@ -134,6 +136,13 @@ type SearchAdvancedFilters = {
   exclude: string[];
   tags: string[];
   fields: SearchFieldKey[];
+};
+
+type PendingAttachmentUpload = {
+  id: string;
+  name: string;
+  size: number;
+  status: "uploading" | "failed";
 };
 
 type SearchFieldKey = "title" | "body" | "tags" | "attachments";
@@ -225,6 +234,7 @@ export default function Home() {
   const lastSearchKeyRef = useRef("");
   const [saving, setSaving] = useState("");
   const [loadingPageId, setLoadingPageId] = useState("");
+  const [pendingAttachmentUploads, setPendingAttachmentUploads] = useState<PendingAttachmentUpload[]>([]);
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedPageIdRef = useRef("");
   const latestBodyDraftsRef = useRef(new Map<string, string>());
@@ -500,6 +510,11 @@ export default function Home() {
   const selectedNotebookCanEdit = canEditNotebook(workspace?.user, selectedNotebook);
   const selectedPageCanEdit = selectedNotebookCanEdit && !selectedPage?.lockedAt;
   const selectedPageCanManageLock = selectedNotebookCanEdit;
+
+  useEffect(() => {
+    setPendingAttachmentUploads([]);
+  }, [selectedPage?.id]);
+
   const selectedNotebookTagSuggestions = useMemo(
     () => normalizeTagList(selectedNotebook?.pages.flatMap((page) => page.tags) ?? []).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
     [selectedNotebook],
@@ -1198,25 +1213,49 @@ export default function Home() {
     }
   }
 
-  async function uploadAttachment(file: File | undefined) {
-    if (!file || !selectedPage || !selectedPageCanEdit) return;
-    const form = new FormData();
-    form.set("file", file);
-    setSaveStatus("Uploading");
-    const response = await fetch(`/api/pages/${selectedPage.id}/attachments`, { method: "POST", body: form });
-    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS } : {});
-    if (response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
+  async function uploadAttachments(files: FileList | File[] | undefined) {
+    if (!selectedPage || !selectedPageCanEdit) return;
+    const uploadFiles = Array.from(files ?? []).filter((file) => file.size >= 0);
+    if (!uploadFiles.length) return;
+    const pageId = selectedPage.id;
+    const projectId = selectedProject?.id;
+    const notebookId = selectedNotebook?.id;
+    const pendingUploads = uploadFiles.map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name: file.name,
+      size: file.size,
+      status: "uploading" as const,
+    }));
+    setPendingAttachmentUploads((current) => [...current, ...pendingUploads]);
+
+    let shouldRefresh = false;
+    for (const [index, file] of uploadFiles.entries()) {
+      const pendingId = pendingUploads[index].id;
+      const form = new FormData();
+      form.set("file", file);
+      const response = await fetch(`/api/pages/${pageId}/attachments`, { method: "POST", body: form });
+      if (!response.ok) {
+        setPendingAttachmentUploads((current) =>
+          current.map((upload) => upload.id === pendingId ? { ...upload, status: "failed" } : upload),
+        );
+        continue;
+      }
+      shouldRefresh = true;
+      setPendingAttachmentUploads((current) => current.filter((upload) => upload.id !== pendingId));
+    }
+    if (shouldRefresh) {
+      await refreshWorkspace({ projectId, notebookId, pageId });
+    }
   }
 
   async function deletePageAttachment(attachment: Attachment) {
-    if (!selectedPage || !selectedPageCanEdit) return;
+    if (!selectedPage || !selectedPageCanEdit) return false;
     const response = await fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" });
     if (!response.ok) {
-      setSaveStatus("Delete failed");
-      return;
+      return false;
     }
-    setSaveStatus("Deleted", { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS });
     await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
+    return true;
   }
 
   async function uploadInlineFile(file: File, blockType: BlockType) {
@@ -1283,14 +1322,9 @@ export default function Home() {
       <main className="grid min-h-screen place-items-center bg-slate-50 px-6 text-slate-950">
         <form onSubmit={handleAuth} className="w-full max-w-sm border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-6">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="grid size-10 place-items-center border border-slate-200 bg-white">
-                <img src="/novo-n-mark.png" alt="Novo" className="size-7 object-contain brightness-0" />
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-slate-500">Novo</p>
-                {authMode === "register" ? <h1 className="text-xl font-semibold">Create an account</h1> : null}
-              </div>
+            <div className="mb-4">
+              <p className="novo-wordmark select-none text-3xl leading-none tracking-normal text-slate-950">{WORDMARK_TEXT}</p>
+              {authMode === "register" ? <h1 className="mt-1 text-base font-semibold text-slate-700">Create an account</h1> : null}
             </div>
             <div className="grid grid-cols-2 border border-slate-200 p-1 text-sm font-medium">
               <button
@@ -1369,7 +1403,16 @@ export default function Home() {
 
   return (
     <main className="app-scroll-root overflow-x-auto bg-white text-slate-950">
-      <input ref={fileInputRef} type="file" className="hidden" onChange={(event) => void uploadAttachment(event.target.files?.[0])} />
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          void uploadAttachments(event.target.files ?? undefined);
+          event.currentTarget.value = "";
+        }}
+      />
       {(updateAvailable || previewKeys.has("update-banner")) && !updateBannerDismissed ? (
         <UpdateAvailableBanner preview={previewKeys.has("update-banner")} onDismiss={() => setUpdateBannerDismissed(true)} />
       ) : null}
@@ -1470,6 +1513,8 @@ export default function Home() {
                 setPageTags={setSelectedPageTags}
                 tagSuggestions={editorTagSuggestions}
                 setPageLocked={setSelectedPageLocked}
+                uploadAttachments={uploadAttachments}
+                pendingAttachmentUploads={pendingAttachmentUploads}
                 openFilePicker={() => fileInputRef.current?.click()}
               />
             ) : (
@@ -2241,7 +2286,7 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
                   openHome();
                 }
               }}
-              className={`novo-wordmark sidebar-wide min-w-0 cursor-pointer select-none px-1 py-1 leading-none tracking-normal text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 ${WORDMARK_TEXT === "novo-dev" ? "text-5xl" : "text-6xl"}`}
+              className="novo-wordmark sidebar-wide min-w-0 cursor-pointer select-none px-1 py-1 text-5xl leading-none tracking-normal text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
               aria-label="Go to home"
               title="Overview"
             >
@@ -2293,6 +2338,11 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
           <div className="mt-2 space-y-1">
             {sortedSharedNotebooks.map(renderNotebook)}
             {sortedSharedNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
+          </div>
+        ) : null}
+        {!sidebarCollapsed ? (
+          <div className="sidebar-wide mt-5 px-6 text-[11px] leading-tight text-slate-500" title={`Version ${SIDEBAR_VERSION_TEXT}`}>
+            <span className="select-text">Novo Version {SIDEBAR_VERSION_TEXT}</span>
           </div>
         ) : null}
       </div>
@@ -4730,8 +4780,9 @@ function safeDownloadName(value: string) {
   return value.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 90) || "page";
 }
 
-function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoading, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, tagSuggestions, setPageLocked, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; pageLoading: boolean; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<void>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: (body: string) => void; setPageTags: (tags: string[]) => Promise<void>; tagSuggestions: string[]; setPageLocked: (locked: boolean) => Promise<void>; openFilePicker: () => void }) {
+function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoading, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, tagSuggestions, setPageLocked, uploadAttachments, pendingAttachmentUploads, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; pageLoading: boolean; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<boolean>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: (body: string) => void; setPageTags: (tags: string[]) => Promise<void>; tagSuggestions: string[]; setPageLocked: (locked: boolean) => Promise<void>; uploadAttachments: (files: File[]) => Promise<void>; pendingAttachmentUploads: PendingAttachmentUpload[]; openFilePicker: () => void }) {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
+  const [attachmentsDragging, setAttachmentsDragging] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityEvents, setActivityEvents] = useState<AuditEvent[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -4752,6 +4803,7 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
   const color = projectColor(selectedNotebook ?? selectedProject);
   const locked = Boolean(page.lockedAt);
   const titleFieldRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentDragDepthRef = useRef(0);
 
   function resizeTitleField(element: HTMLTextAreaElement | null) {
     if (!element) return;
@@ -4929,6 +4981,48 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
     });
   }
 
+  function hasDraggedFiles(event: React.DragEvent<HTMLElement>) {
+    return Array.from(event.dataTransfer.types).includes("Files");
+  }
+
+  function resetAttachmentDrag() {
+    attachmentDragDepthRef.current = 0;
+    setAttachmentsDragging(false);
+  }
+
+  function handleAttachmentDragEnter(event: React.DragEvent<HTMLDivElement>) {
+    if (!canEdit || !attachmentsOpen || pageLoading || !hasDraggedFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    attachmentDragDepthRef.current += 1;
+    setAttachmentsDragging(true);
+  }
+
+  function handleAttachmentDragOver(event: React.DragEvent<HTMLDivElement>) {
+    if (!canEdit || !attachmentsOpen || pageLoading || !hasDraggedFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setAttachmentsDragging(true);
+  }
+
+  function handleAttachmentDragLeave(event: React.DragEvent<HTMLDivElement>) {
+    if (!canEdit || !attachmentsOpen || pageLoading || !hasDraggedFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    attachmentDragDepthRef.current = Math.max(0, attachmentDragDepthRef.current - 1);
+    if (attachmentDragDepthRef.current === 0) setAttachmentsDragging(false);
+  }
+
+  async function handleAttachmentDrop(event: React.DragEvent<HTMLDivElement>) {
+    if (!canEdit || !attachmentsOpen || pageLoading || !hasDraggedFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const files = Array.from(event.dataTransfer.files);
+    resetAttachmentDrag();
+    await uploadAttachments(files);
+  }
+
   return (
     <>
       <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-white">
@@ -5032,15 +5126,35 @@ function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoadi
             {canEdit ? <button onClick={openFilePicker} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100"><Plus size={14} />File</button> : null}
             </div>
             {attachmentsOpen ? (
-              pageLoading ? (
-                <p className="mt-3 border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">Loading files...</p>
-              ) : page.attachments.length ? (
-                <div className="mt-3 grid max-h-80 gap-2 overflow-y-auto scroll-contained pr-1">
-                  {page.attachments.map((attachment, index) => <AttachmentRow key={attachment.id} index={index + 1} attachment={attachment} canEdit={canEdit} onDelete={() => void deleteAttachment(attachment)} />)}
-                </div>
-              ) : (
-                <p className="mt-3 border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">No files attached yet.</p>
-              )
+              <div
+                onDragEnter={handleAttachmentDragEnter}
+                onDragOver={handleAttachmentDragOver}
+                onDragLeave={handleAttachmentDragLeave}
+                onDrop={(event) => void handleAttachmentDrop(event)}
+                className={`relative mt-3 border border-dashed transition-colors ${
+                  canEdit
+                    ? attachmentsDragging
+                      ? "border-cyan-500 bg-cyan-50"
+                      : "border-slate-300 bg-white"
+                    : "border-transparent bg-transparent"
+                }`}
+              >
+                {attachmentsDragging ? (
+                  <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-cyan-50/90 px-4 text-sm font-semibold text-cyan-800">
+                    Drop files to attach
+                  </div>
+                ) : null}
+                {pageLoading ? (
+                  <p className="p-4 text-sm text-slate-500">Loading files...</p>
+                ) : pendingAttachmentUploads.length || page.attachments.length ? (
+                  <div className="grid max-h-80 gap-2 overflow-y-auto scroll-contained p-2">
+                    {pendingAttachmentUploads.map((upload) => <PendingAttachmentUploadRow key={upload.id} upload={upload} />)}
+                    {page.attachments.map((attachment, index) => <AttachmentRow key={attachment.id} index={index + 1} attachment={attachment} canEdit={canEdit} onDelete={() => deleteAttachment(attachment)} />)}
+                  </div>
+                ) : (
+                  <p className="p-4 text-sm text-slate-500">{canEdit ? "Drop files here or use + File." : "No files attached yet."}</p>
+                )}
+              </div>
             ) : null}
           </div>
         </div>
@@ -5515,39 +5629,80 @@ function PageStatusRow({ status, canEdit, setStatus }: { status: PageStatus; can
   );
 }
 
-function AttachmentRow({ attachment, index, canEdit, onDelete }: { attachment: Attachment; index: number; canEdit: boolean; onDelete: () => void }) {
+function PendingAttachmentUploadRow({ upload }: { upload: PendingAttachmentUpload }) {
+  const failed = upload.status === "failed";
+  return (
+    <div className="flex items-center justify-between gap-4 border border-slate-200 bg-white px-3 py-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <GripVertical className="shrink-0 text-slate-300" size={15} aria-hidden="true" />
+        <span className="w-5 shrink-0 text-center text-xs font-medium tabular-nums text-slate-300">-</span>
+        {failed ? <X className="shrink-0 text-rose-500" size={17} /> : <Loader2 className="shrink-0 animate-spin text-cyan-600" size={17} />}
+        <div className="min-w-0">
+          <div className="truncate text-sm text-slate-800">{upload.name}</div>
+          <div className={`mt-0.5 text-xs ${failed ? "text-rose-600" : "text-slate-500"}`}>
+            {formatBytes(upload.size)} · {failed ? "Upload failed" : "Uploading..."}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AttachmentRow({ attachment, index, canEdit, onDelete }: { attachment: Attachment; index: number; canEdit: boolean; onDelete: () => Promise<boolean> }) {
   const Icon = blockIcons[attachment.blockType];
+  const [deleting, setDeleting] = useState(false);
+  const [deleteFailed, setDeleteFailed] = useState(false);
 
   function handleDragStart(event: React.DragEvent<HTMLDivElement>) {
-    if (!canEdit) return;
+    if (!canEdit || deleting) return;
     event.dataTransfer.effectAllowed = "copy";
     event.dataTransfer.setData(INLINE_ATTACHMENT_DRAG_TYPE, JSON.stringify(attachmentToInlineAttrs(attachment)));
     event.dataTransfer.setData("text/plain", attachment.originalName);
   }
 
+  async function handleDelete() {
+    if (deleting) return;
+    setDeleteFailed(false);
+    setDeleting(true);
+    const deleted = await onDelete();
+    if (!deleted) {
+      setDeleteFailed(true);
+      setDeleting(false);
+    }
+  }
+
   return (
     <div
-      draggable={canEdit}
+      draggable={canEdit && !deleting}
       onDragStart={handleDragStart}
-      className={`flex items-center justify-between gap-4 border border-slate-200 bg-white px-3 py-2 ${canEdit ? "cursor-grab active:cursor-grabbing" : ""}`}
-      title={canEdit ? "Drag into the page to place this attachment inline" : undefined}
+      className={`flex items-center justify-between gap-4 border border-slate-200 bg-white px-3 py-2 ${canEdit && !deleting ? "cursor-grab active:cursor-grabbing" : ""}`}
+      title={canEdit && !deleting ? "Drag into the page to place this attachment inline" : undefined}
     >
       <div className="flex min-w-0 items-center gap-2">
-        {canEdit ? <GripVertical className="shrink-0 text-slate-400" size={15} aria-hidden="true" /> : null}
+        {canEdit ? <GripVertical className={`shrink-0 ${deleting ? "text-slate-300" : "text-slate-400"}`} size={15} aria-hidden="true" /> : null}
         <span className="w-5 shrink-0 text-center text-xs font-medium tabular-nums text-slate-400">{index}</span>
         <Icon className="shrink-0 text-slate-500" size={17} />
         <div className="min-w-0">
           <div className="truncate text-sm text-slate-800">{attachment.originalName}</div>
-          <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+          <div className={`mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs ${deleteFailed ? "text-rose-600" : "text-slate-500"}`}>
             <span>{attachment.blockType}</span>
             <span>{Math.max(1, Math.round(attachment.size / 1024))} KB</span>
-            <span>Added {formatAttachmentDate(attachment.createdAt)}</span>
+            <span>{deleteFailed ? "Delete failed" : `Added ${formatAttachmentDate(attachment.createdAt)}`}</span>
           </div>
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 text-xs">
         <a href={`/api/attachments/${attachment.id}/download`} className="inline-flex h-8 items-center gap-1 border border-slate-300 bg-white px-2 text-slate-700 hover:bg-slate-100"><Download size={13} />Download</a>
-        {canEdit ? <button onClick={onDelete} className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700" title="Delete attachment"><X size={14} /></button> : null}
+        {canEdit ? (
+          <button
+            onClick={() => void handleDelete()}
+            disabled={deleting}
+            className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-wait disabled:border-slate-300 disabled:bg-slate-50 disabled:text-slate-400"
+            title={deleting ? "Deleting attachment" : "Delete attachment"}
+          >
+            {deleting ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
+          </button>
+        ) : null}
       </div>
     </div>
   );

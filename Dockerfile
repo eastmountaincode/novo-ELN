@@ -18,7 +18,11 @@ FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+ARG NOVO_BUILD_ID=unknown
+ARG NOVO_BUILD_DATE
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NOVO_BUILD_ID=$NOVO_BUILD_ID
+ENV NOVO_BUILD_DATE=$NOVO_BUILD_DATE
 RUN npm run build
 RUN npm prune --omit=dev
 

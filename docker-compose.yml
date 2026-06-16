@@ -5,6 +5,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        NOVO_BUILD_ID: ${NOVO_BUILD_ID:-unknown}
+        NOVO_BUILD_DATE: ${NOVO_BUILD_DATE:-}
     image: novo-eln:latest
     container_name: novo-eln
     restart: unless-stopped

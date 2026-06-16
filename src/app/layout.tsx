@@ -12,7 +12,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const appTitle = process.env.NODE_ENV === "development" ? "novo-dev" : "novo";
+const appTitle = process.env.NODE_ENV === "development" ? "Novo-dev" : "Novo";
 
 export const metadata: Metadata = {
   title: appTitle,

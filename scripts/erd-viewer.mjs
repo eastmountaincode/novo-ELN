@@ -17,6 +17,7 @@ const appTables = [
   "notebooks",
   "notebook_members",
   "pages",
+  "tags",
   "page_tags",
   "attachments",
   "audit_events",
@@ -132,8 +133,8 @@ function compareTables(left, right) {
 }
 
 function querySql(statement) {
-  const output = execFileSync("sqlite3", [databasePath, "-batch", "-header", "-csv"], {
-    input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`,
+  const output = execFileSync("sqlite3", ["-batch", databasePath], {
+    input: `.timeout 30000\n.bail on\n.headers on\n.mode csv\nPRAGMA foreign_keys=ON;\n${statement}`,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -474,7 +475,8 @@ function renderPage() {
       notebooks: { x: 560, y: 90 },
       notebook_members: { x: 560, y: 500 },
       pages: { x: 1080, y: 90 },
-      page_tags: { x: 1080, y: 640 },
+      tags: { x: 1080, y: 500 },
+      page_tags: { x: 1080, y: 860 },
       attachments: { x: 1600, y: 90 },
       audit_events: { x: 1600, y: 560 },
       search_pages_fts: { x: 1600, y: 1040 },

@@ -1400,6 +1400,7 @@ export default function Home() {
   const effectivePagesWidth = pagesCollapsed ? SIDEBAR_COLLAPSED_WIDTH : pagesWidth;
   const effectiveSidebarCollapsed = sidebarCollapsed;
   const effectiveSidebarWidth = effectiveSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
+  const pagesColumnWidth = pagesCollapsed ? `${SIDEBAR_COLLAPSED_WIDTH}px` : `minmax(${PAGES_MIN_WIDTH}px, ${effectivePagesWidth}px)`;
 
   return (
     <main className="app-scroll-root overflow-x-auto bg-white text-slate-950">
@@ -1417,7 +1418,7 @@ export default function Home() {
         <UpdateAvailableBanner preview={previewKeys.has("update-banner")} onDismiss={() => setUpdateBannerDismissed(true)} />
       ) : null}
 
-      <div className="grid h-dvh min-w-[980px]" style={{ gridTemplateColumns: activeView === "project" ? `${effectiveSidebarWidth}px 1px minmax(0,${effectivePagesWidth}px) 1px minmax(560px, 1fr)` : `${effectiveSidebarWidth}px 1px minmax(560px, 1fr)` } as React.CSSProperties}>
+      <div className="grid h-dvh min-w-[980px]" style={{ gridTemplateColumns: activeView === "project" ? `${effectiveSidebarWidth}px 1px ${pagesColumnWidth} 1px minmax(560px, 1fr)` : `${effectiveSidebarWidth}px 1px minmax(560px, 1fr)` } as React.CSSProperties}>
         <UnifiedSidebar
           workspace={workspace}
           activeView={activeView}
@@ -1453,7 +1454,7 @@ export default function Home() {
         <ResizeHandle disabled={effectiveSidebarCollapsed} onPointerDown={(event) => setDragState({ pane: "sidebar", startX: event.clientX, startWidth: sidebarWidth })} />
 
         {activeView === "home" || activeView === "projectHome" ? (
-          <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} importEnexNotebook={() => createNewNotebook(undefined, "import")} />
+          <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} />
         ) : activeView === "account" ? (
           <AccountView user={workspace.user} notebooks={workspace.notebooks} onChanged={() => refreshWorkspace()} />
         ) : activeView === "notebookSettings" ? (
@@ -2324,21 +2325,25 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
             <span className="sidebar-wide min-w-0 truncate font-medium">Overview</span>
           </button>
         </div>
-        <SidebarSection label="My Notebooks" collapsed={myNotebooksCollapsed} onToggle={() => setMyNotebooksCollapsed((current) => !current)} action={notebookSortControl} onAdd={() => createNewNotebook(workspaceProject?.id)} />
-        {!myNotebooksCollapsed ? (
-          <div className="mt-2 space-y-1">
-            {sortedOwnNotebooks.map(renderNotebook)}
-            {sortedOwnNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
-          </div>
-        ) : null}
-        <div className="mt-5">
-          <SidebarSection label="Shared with Me" collapsed={sharedNotebooksCollapsed} onToggle={() => setSharedNotebooksCollapsed((current) => !current)} />
-        </div>
-        {!sharedNotebooksCollapsed ? (
-          <div className="mt-2 space-y-1">
-            {sortedSharedNotebooks.map(renderNotebook)}
-            {sortedSharedNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
-          </div>
+        {!sidebarCollapsed ? (
+          <>
+            <SidebarSection label="My Notebooks" collapsed={myNotebooksCollapsed} onToggle={() => setMyNotebooksCollapsed((current) => !current)} action={notebookSortControl} onAdd={() => createNewNotebook(workspaceProject?.id)} />
+            {!myNotebooksCollapsed ? (
+              <div className="mt-2 space-y-1">
+                {sortedOwnNotebooks.map(renderNotebook)}
+                {sortedOwnNotebooks.length === 0 ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
+              </div>
+            ) : null}
+            <div className="mt-5">
+              <SidebarSection label="Shared with Me" collapsed={sharedNotebooksCollapsed} onToggle={() => setSharedNotebooksCollapsed((current) => !current)} />
+            </div>
+            {!sharedNotebooksCollapsed ? (
+              <div className="mt-2 space-y-1">
+                {sortedSharedNotebooks.map(renderNotebook)}
+                {sortedSharedNotebooks.length === 0 ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
+              </div>
+            ) : null}
+          </>
         ) : null}
         {!sidebarCollapsed ? (
           <div className="sidebar-wide mt-5 px-6 text-[11px] leading-tight text-slate-500" title={`Version ${SIDEBAR_VERSION_TEXT}`}>
@@ -2569,6 +2574,45 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
       window.clearTimeout(timeout);
     };
   }, [notebookQuery, notebookSearchFilters, notebookSearchOpen, selectedNotebook?.id]);
+
+  useEffect(() => {
+    if (collapsed || !selectedProject || !selectedNotebook || sortedPages.length < 2) return;
+
+    const project = selectedProject;
+    const notebook = selectedNotebook;
+
+    function shouldIgnorePageArrowNavigation(target: EventTarget | null) {
+      if (!(target instanceof Element)) return false;
+      if (target.closest("[contenteditable='true'], input, textarea, select, [role='textbox'], [data-transient-menu], [data-search-dialog], dialog")) return true;
+      const pageCard = target.closest("[data-page-card-id]");
+      return Boolean(target.closest("button, a, [role='button']")) && !pageCard;
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      if (sortOptionsOpen || filterOptionsOpen || notebookSearchOpen || pageMenuId) return;
+      if (shouldIgnorePageArrowNavigation(event.target)) return;
+
+      const activeElement = document.activeElement;
+      const focusIsOnPageList = activeElement instanceof Element && Boolean(pageListRef.current?.contains(activeElement));
+      const focusIsPlainPage = activeElement === document.body || activeElement === document.documentElement;
+      if (!focusIsOnPageList && !focusIsPlainPage) return;
+
+      const currentIndex = sortedPages.findIndex((page) => page.id === selectedPage?.id);
+      if (currentIndex < 0) return;
+      const nextIndex = event.key === "ArrowDown"
+        ? Math.min(currentIndex + 1, sortedPages.length - 1)
+        : Math.max(currentIndex - 1, 0);
+      if (nextIndex === currentIndex) return;
+
+      event.preventDefault();
+      selectPage(project, notebook, sortedPages[nextIndex]);
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [collapsed, filterOptionsOpen, notebookSearchOpen, pageMenuId, selectPage, selectedNotebook, selectedPage?.id, selectedProject, sortOptionsOpen, sortedPages]);
 
   useEffect(() => {
     if (collapsed || !selectedPage?.id) return;
@@ -3337,7 +3381,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   );
 }
 
-function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; members: AppUser[]; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; importEnexNotebook: () => void }) {
+function HomeView({ recentPages, members, selectPage }: { recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; members: AppUser[]; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void }) {
   return (
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
@@ -3372,22 +3416,6 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
           </section>
 
           <aside className="min-w-0 space-y-6">
-            <section className="border border-slate-200 bg-white p-4">
-              <div className="mb-4 flex items-center gap-2">
-                <FileArchive size={17} className="text-slate-500" />
-                <h2 className="text-base font-semibold text-slate-950">Import</h2>
-              </div>
-              <p className="mb-4 text-sm leading-6 text-slate-500">Create a new notebook from an Evernote ENEX export.</p>
-              <button
-                type="button"
-                onClick={importEnexNotebook}
-                className="flex h-9 w-full items-center justify-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:border-slate-500"
-              >
-                <FileArchive size={15} />
-                Import ENEX notebook
-              </button>
-            </section>
-
             <section className="border border-slate-200 bg-white p-4">
               <div className="mb-4 flex items-center gap-2">
                 <Users size={17} className="text-slate-500" />
@@ -5342,21 +5370,21 @@ function PageCommentPopover({ threads, loading, error, selectedThreadId, canEdit
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <MessageSquare size={16} className="text-amber-600" />
+              <MessageSquare size={16} className="text-slate-950" />
               <h2 className="text-sm font-semibold text-slate-950">Comment</h2>
             </div>
             {selectedThread ? <p className="mt-1 truncate text-xs text-slate-500">{selectedThread.selectedText || "Commented text was removed"}</p> : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <button type="button" onClick={() => void onRefresh()} disabled={loading} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-wait disabled:text-slate-300" aria-label="Refresh comment">
+            <button type="button" onClick={() => void onRefresh()} disabled={loading} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-wait disabled:text-slate-300" aria-label="Refresh comment thread" title="Refresh comment thread">
               {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             </button>
             {selectedThread && canEdit ? (
-              <button type="button" onClick={() => void deleteSelectedThread()} disabled={Boolean(pending)} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-wait disabled:text-slate-300" aria-label="Delete comment">
+              <button type="button" onClick={() => void deleteSelectedThread()} disabled={Boolean(pending)} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-wait disabled:text-slate-300" aria-label="Delete comment thread" title="Delete comment thread">
                 {pending === "delete" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={15} />}
               </button>
             ) : null}
-            <button type="button" onClick={onClose} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900" aria-label="Close comment">
+            <button type="button" onClick={onClose} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900" aria-label="Close" title="Close">
               <X size={15} />
             </button>
           </div>
@@ -5712,7 +5740,14 @@ function formatAttachmentDate(value: string) {
   const parsed = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
   if (Number.isNaN(parsed)) return value;
   const date = new Date(parsed);
-  return date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function formatBytes(value: number) {

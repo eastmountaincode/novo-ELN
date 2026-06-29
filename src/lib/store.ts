@@ -90,10 +90,15 @@ export function ensureDatabase() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS tags (
+      id TEXT PRIMARY KEY DEFAULT (${tagIdSql()}),
+      label TEXT NOT NULL COLLATE NOCASE UNIQUE
+    );
+
     CREATE TABLE IF NOT EXISTS page_tags (
       page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-      tag TEXT NOT NULL,
-      PRIMARY KEY (page_id, tag)
+      tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      PRIMARY KEY (page_id, tag_id)
     );
 
     CREATE TABLE IF NOT EXISTS page_comment_threads (
@@ -207,6 +212,7 @@ export function ensureDatabase() {
   `);
   migratePageStatusValues();
   migrateGroupedTagsToPageTags();
+  ensureGlobalTagSchema();
   const searchIndexCount = Number(queryOne("SELECT COUNT(*) AS count FROM search_pages_fts")?.count ?? 0);
   if (searchIndexCount === 0 && countRows("pages") > 0) rebuildSearchIndex();
   initialized = true;
@@ -390,22 +396,90 @@ function migratePageStatusValues() {
   `);
 }
 
+function tagIdSql() {
+  return "lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))), 2) || '-' || substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))";
+}
+
+function ensureGlobalTagSchema() {
+  execSql(`
+    CREATE TABLE IF NOT EXISTS tags (
+      id TEXT PRIMARY KEY DEFAULT (${tagIdSql()}),
+      label TEXT NOT NULL COLLATE NOCASE UNIQUE
+    );
+  `);
+
+  const columns = querySql("PRAGMA table_info(page_tags);");
+  const columnNames = new Set(columns.map((column) => column.name));
+  if (columnNames.has("tag_id") && !columnNames.has("tag")) {
+    execSql(`
+      CREATE INDEX IF NOT EXISTS page_tags_page_idx ON page_tags(page_id);
+      CREATE INDEX IF NOT EXISTS page_tags_tag_idx ON page_tags(tag_id);
+    `);
+    return;
+  }
+
+  execSql(`
+    PRAGMA foreign_keys=OFF;
+    BEGIN;
+
+    DROP TABLE IF EXISTS page_tags_new;
+
+    CREATE TABLE page_tags_new (
+      page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      PRIMARY KEY (page_id, tag_id)
+    );
+
+    INSERT OR IGNORE INTO tags (id, label)
+    SELECT ${tagIdSql()}, trim(tag)
+    FROM page_tags
+    WHERE trim(tag) <> ''
+    ORDER BY rowid ASC;
+
+    INSERT OR IGNORE INTO page_tags_new (page_id, tag_id)
+    SELECT pt.page_id, t.id
+    FROM page_tags pt
+    JOIN tags t ON t.label = trim(pt.tag) COLLATE NOCASE
+    WHERE trim(pt.tag) <> ''
+    ORDER BY pt.rowid ASC;
+
+    DROP TABLE page_tags;
+    ALTER TABLE page_tags_new RENAME TO page_tags;
+    CREATE INDEX IF NOT EXISTS page_tags_page_idx ON page_tags(page_id);
+    CREATE INDEX IF NOT EXISTS page_tags_tag_idx ON page_tags(tag_id);
+
+    COMMIT;
+    PRAGMA foreign_keys=ON;
+  `);
+}
+
 function migrateGroupedTagsToPageTags() {
   const tables = querySql("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tag_groups', 'tag_values', 'page_tag_values');");
   const tableNames = new Set(tables.map((table) => table.name));
   if (!tableNames.has("tag_groups") || !tableNames.has("tag_values") || !tableNames.has("page_tag_values")) return;
 
   execSql(`
-    INSERT OR IGNORE INTO page_tags (page_id, tag)
-    SELECT ptv.page_id, tv.label
+    BEGIN;
+
+    INSERT OR IGNORE INTO tags (id, label)
+    SELECT ${tagIdSql()}, trim(tv.label)
+    FROM tag_values tv
+    WHERE tv.archived_at IS NULL
+      AND trim(tv.label) <> '';
+
+    INSERT OR IGNORE INTO page_tags (page_id, tag_id)
+    SELECT ptv.page_id, t.id
     FROM page_tag_values ptv
     JOIN tag_values tv ON tv.id = ptv.tag_value_id
+    JOIN tags t ON t.label = trim(tv.label) COLLATE NOCASE
     WHERE tv.archived_at IS NULL
       AND trim(tv.label) <> '';
 
     DROP TABLE page_tag_values;
     DROP TABLE tag_values;
     DROP TABLE tag_groups;
+
+    COMMIT;
   `);
 }
 
@@ -729,7 +803,15 @@ export function getWorkspace(userId: string): Workspace {
       `)
     : [];
   const pageIds = pageRows.map((page) => page.id);
-  const tagRows = pageIds.length ? querySql(`SELECT page_id, tag FROM page_tags WHERE page_id IN (${inList(pageIds)}) ORDER BY rowid ASC`) : [];
+  const tagRows = pageIds.length
+    ? querySql(`
+        SELECT pt.page_id, t.label AS tag
+        FROM page_tags pt
+        JOIN tags t ON t.id = pt.tag_id
+        WHERE pt.page_id IN (${inList(pageIds)})
+        ORDER BY pt.rowid ASC
+      `)
+    : [];
   const attachmentStatRows = pageIds.length
     ? querySql(`SELECT page_id, COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM attachments WHERE page_id IN (${inList(pageIds)}) GROUP BY page_id`)
     : [];
@@ -780,7 +862,7 @@ export function getWorkspace(userId: string): Workspace {
       lockedByLastName: page.locked_by_last_name,
       createdAt: page.created_at,
       updatedAt: page.updated_at,
-      tags: pageTagRowsToList(tagsByPage[page.id] ?? []),
+      tags: tagLabelRowsToList(tagsByPage[page.id] ?? []),
       attachments: [],
       attachmentCount: Number(attachmentStatsByPage[page.id]?.count ?? 0),
       attachmentBytes: Number(attachmentStatsByPage[page.id]?.bytes ?? 0),
@@ -838,7 +920,13 @@ export function getPage(userId: string, pageId: string): PageEntry {
     LIMIT 1
   `);
   if (!page) throw new Error("Page not found");
-  const tagRows = querySql(`SELECT page_id, tag FROM page_tags WHERE page_id = ${sql(pageId)} ORDER BY rowid ASC`);
+  const tagRows = querySql(`
+    SELECT pt.page_id, t.label AS tag
+    FROM page_tags pt
+    JOIN tags t ON t.id = pt.tag_id
+    WHERE pt.page_id = ${sql(pageId)}
+    ORDER BY pt.rowid ASC
+  `);
   const attachmentRows = querySql(`
     SELECT
       a.id,
@@ -876,7 +964,7 @@ export function getPage(userId: string, pageId: string): PageEntry {
     lockedByLastName: page.locked_by_last_name,
     createdAt: page.created_at,
     updatedAt: page.updated_at,
-    tags: pageTagRowsToList(tagRows),
+    tags: tagLabelRowsToList(tagRows),
     attachments: attachmentRows.map(toAttachment),
     attachmentCount: attachmentRows.length,
     attachmentBytes,
@@ -1344,12 +1432,18 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
   ensureDatabase();
   assertPageEditAccess(userId, pageId);
   const normalizedTags = normalizePageTags(tags);
-  const currentTags = pageTagRowsToList(querySql(`SELECT tag FROM page_tags WHERE page_id = ${sql(pageId)} ORDER BY rowid ASC`));
+  const currentTags = tagLabelRowsToList(querySql(`
+    SELECT t.label AS tag
+    FROM page_tags pt
+    JOIN tags t ON t.id = pt.tag_id
+    WHERE pt.page_id = ${sql(pageId)}
+    ORDER BY pt.rowid ASC
+  `));
   if (tagListsEqual(normalizedTags, currentTags)) return false;
   const page = queryOne(`SELECT notebook_id FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
   execSql(`
     DELETE FROM page_tags WHERE page_id = ${sql(pageId)};
-    ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
+    ${pageTagInsertSql(pageId, normalizedTags)}
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(pageId)};
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
   `);
@@ -1402,7 +1496,13 @@ export function duplicatePage(userId: string, pageId: string) {
 
   const notebookId = String(page.notebook_id ?? "");
   const title = duplicatePageTitle(notebookId, String(page.title || "Untitled"));
-  const tags = pageTagRowsToList(querySql(`SELECT tag FROM page_tags WHERE page_id = ${sql(pageId)} ORDER BY rowid ASC`));
+  const tags = tagLabelRowsToList(querySql(`
+    SELECT t.label AS tag
+    FROM page_tags pt
+    JOIN tags t ON t.id = pt.tag_id
+    WHERE pt.page_id = ${sql(pageId)}
+    ORDER BY pt.rowid ASC
+  `));
   const attachments = querySql(`
     SELECT id, original_name, mime_type, size, storage_key, block_type, COALESCE(evernote_hash, '') AS evernote_hash
     FROM attachments
@@ -1451,7 +1551,7 @@ export function duplicatePage(userId: string, pageId: string) {
       BEGIN;
       INSERT INTO pages (id, notebook_id, title, body, preview_text, status, owner_id)
       VALUES (${sql(newPageId)}, ${sql(notebookId)}, ${sql(title)}, ${sql(body)}, ${sql(bodyToEditorText(body).slice(0, 500))}, ${sql(page.status ?? "")}, ${sql(userId)});
-      ${tags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(newPageId)}, ${sql(tag)});`).join("\n")}
+      ${pageTagInsertSql(newPageId, tags)}
       ${attachmentCopies.map((attachment) => `
         INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, evernote_hash)
         VALUES (${sql(attachment.newId)}, ${sql(newPageId)}, ${sql(attachment.originalName)}, ${sql(attachment.mimeType)}, ${attachment.size}, ${sql(attachment.newStorageKey)}, ${sql(attachment.blockType)}, ${sql(attachment.evernoteHash)});
@@ -1653,7 +1753,7 @@ export function createImportedPage(input: {
       SET title = ${sql(title)}, body = ${sql(input.body)}, preview_text = ${sql(bodyToEditorText(input.body).slice(0, 500))}, created_at = ${sql(createdAt)}, updated_at = ${sql(updatedAt)}
       WHERE id = ${sql(pageId)};
       DELETE FROM page_tags WHERE page_id = ${sql(pageId)};
-      ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
+      ${pageTagInsertSql(pageId, normalizedTags)}
     `);
     return pageId;
   }
@@ -1661,7 +1761,7 @@ export function createImportedPage(input: {
   execSql(`
     INSERT INTO pages (id, notebook_id, title, body, preview_text, status, owner_id, created_at, updated_at)
     VALUES (${sql(pageId)}, ${sql(input.notebookId)}, ${sql(title)}, ${sql(input.body)}, ${sql(bodyToEditorText(input.body).slice(0, 500))}, '', ${sql(input.userId)}, ${sql(createdAt)}, ${sql(updatedAt)});
-    ${normalizedTags.map((tag) => `INSERT INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
+    ${pageTagInsertSql(pageId, normalizedTags)}
   `);
   return pageId;
 }
@@ -1787,7 +1887,7 @@ export function importNotebook(input: {
     execSql(`
       INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
       VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(note.title || "Untitled Evernote page")}, ${sql(note.body)}, '', ${sql(input.userId)});
-      ${note.tags.map((tag) => `INSERT OR IGNORE INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n")}
+      ${pageTagInsertSql(pageId, normalizePageTags(note.tags))}
     `);
   }
   finishImportedNotebook(notebookId);
@@ -2312,8 +2412,21 @@ function groupBy<T extends Record<string, unknown>>(rows: T[], key: string) {
   }, {});
 }
 
-function pageTagRowsToList(rows: Record<string, string>[]) {
+function tagLabelRowsToList(rows: Record<string, string>[]) {
   return normalizePageTags(rows.map((row) => row.tag));
+}
+
+function pageTagInsertSql(pageId: string, tags: string[]) {
+  return tags.map((tag) => `
+    INSERT OR IGNORE INTO tags (id, label)
+    VALUES (${sql(randomUUID())}, ${sql(tag)});
+
+    INSERT OR IGNORE INTO page_tags (page_id, tag_id)
+    SELECT ${sql(pageId)}, id
+    FROM tags
+    WHERE label = ${sql(tag)} COLLATE NOCASE
+    LIMIT 1;
+  `).join("\n");
 }
 
 function tagListsEqual(left: string[], right: string[]) {

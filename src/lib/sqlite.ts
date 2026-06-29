@@ -22,8 +22,8 @@ export function nowSql() {
 
 export function execSql(statement: string) {
   ensureRuntimeDirs();
-  execFileSync("sqlite3", [databasePath, "-batch"], {
-    input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`,
+  execFileSync("sqlite3", ["-batch", databasePath], {
+    input: `.timeout 30000\n.bail on\nPRAGMA foreign_keys=ON;\n${statement}`,
     stdio: ["pipe", "pipe", "pipe"],
     maxBuffer: sqliteMaxBufferBytes(),
   });
@@ -31,8 +31,8 @@ export function execSql(statement: string) {
 
 export function querySql(statement: string): SqlRow[] {
   ensureRuntimeDirs();
-  const output = execFileSync("sqlite3", [databasePath, "-batch", "-header", "-csv"], {
-    input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`,
+  const output = execFileSync("sqlite3", ["-batch", databasePath], {
+    input: `.timeout 30000\n.bail on\n.headers on\n.mode csv\nPRAGMA foreign_keys=ON;\n${statement}`,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
     maxBuffer: sqliteMaxBufferBytes(),

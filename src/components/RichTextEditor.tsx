@@ -454,13 +454,35 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   }
 
   function handleEditorDragOver(event: DragEvent<HTMLDivElement>) {
+    if (!readOnly && hasExternalFilePayload(event.dataTransfer)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      return;
+    }
     if (readOnly || !hasInlineAttachmentPayload(event.dataTransfer)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
   }
 
-  function handleEditorDrop(event: DragEvent<HTMLDivElement>) {
+  async function handleEditorDrop(event: DragEvent<HTMLDivElement>) {
     if (!editor || readOnly) return;
+    if (hasExternalFilePayload(event.dataTransfer)) {
+      const files = Array.from(event.dataTransfer.files);
+      if (!files.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const dropPosition = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? editor.state.doc.content.size;
+      let insertPosition = dropPosition;
+      for (const file of files) {
+        const attachment = await uploadInlineFile(file, blockTypeForDroppedFile(file));
+        if (!attachment) continue;
+        insertAttachmentCard(attachmentToInlineAttrs(attachment), insertPosition);
+        onInlineAttachmentInserted(attachment, editorDocumentToBody(editor.getJSON()));
+        insertPosition += 1;
+      }
+      clearEditorDropCursor(editor.view.dom);
+      return;
+    }
     const attrs = parseInlineAttachmentDrag(event.dataTransfer);
     if (!attrs) return;
     event.preventDefault();
@@ -471,7 +493,9 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   }
 
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border border-slate-300 bg-white">
+    <div
+      className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border border-slate-300 bg-white"
+    >
       {!readOnly || onPrint || onExportPdf || onExportArchive ? <div className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
         {!readOnly ? (
           <>
@@ -622,6 +646,31 @@ function createAttachmentCardExtension(actions: { openSpreadsheet: (attachment: 
 
 function hasInlineAttachmentPayload(dataTransfer: DataTransfer) {
   return Array.from(dataTransfer.types).includes(INLINE_ATTACHMENT_DRAG_TYPE);
+}
+
+function hasExternalFilePayload(dataTransfer: DataTransfer) {
+  return Array.from(dataTransfer.types).includes("Files");
+}
+
+function acceptListMatchesFile(file: File, accept: string) {
+  const name = file.name.toLowerCase();
+  const mimeType = file.type.toLowerCase();
+  return accept.split(",").some((entry) => {
+    const value = entry.trim().toLowerCase();
+    if (!value) return false;
+    if (value.endsWith("/*")) return mimeType.startsWith(value.slice(0, -1));
+    if (value.startsWith(".")) return name.endsWith(value);
+    return mimeType === value;
+  });
+}
+
+function blockTypeForDroppedFile(file: File): BlockType {
+  const name = file.name.toLowerCase();
+  if (acceptListMatchesFile(file, imageAccept)) return "image";
+  if (name.endsWith(".pdf") || file.type === "application/pdf") return "pdf";
+  if (acceptListMatchesFile(file, spreadsheetAccept)) return "sheet";
+  if (acceptListMatchesFile(file, presentationAccept)) return "slides";
+  return "file";
 }
 
 function parseInlineAttachmentDrag(dataTransfer: DataTransfer): InlineAttachmentAttrs | null {

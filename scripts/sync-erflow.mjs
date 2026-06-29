@@ -16,6 +16,7 @@ const appTables = [
   "notebooks",
   "notebook_members",
   "pages",
+  "tags",
   "page_tags",
   "attachments",
   "audit_events",
@@ -27,7 +28,8 @@ const defaultPositions = {
   notebooks: { x: 560, y: 80 },
   notebook_members: { x: 560, y: 440 },
   pages: { x: 1040, y: 80 },
-  page_tags: { x: 1040, y: 620 },
+  tags: { x: 1040, y: 440 },
+  page_tags: { x: 1040, y: 760 },
   attachments: { x: 1520, y: 80 },
   audit_events: { x: 1520, y: 520 },
 };
@@ -165,8 +167,8 @@ function parseToolJson(text) {
 }
 
 function querySql(statement) {
-  const output = execFileSync("sqlite3", [databasePath, "-batch", "-header", "-csv"], {
-    input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`,
+  const output = execFileSync("sqlite3", ["-batch", databasePath], {
+    input: `.timeout 30000\n.bail on\n.headers on\n.mode csv\nPRAGMA foreign_keys=ON;\n${statement}`,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
   });

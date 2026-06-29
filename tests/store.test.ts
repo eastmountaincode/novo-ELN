@@ -71,6 +71,11 @@ describe("store", () => {
         preview_text TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      CREATE TABLE page_tags (
+        page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        tag TEXT NOT NULL,
+        PRIMARY KEY (page_id, tag)
+      );
 
       INSERT INTO users (id, email, name, password_hash, role, created_at)
       VALUES ('user-1', 'legacy@example.local', 'Legacy User', 'hash', 'member', '2026-05-18 12:00:00');
@@ -80,6 +85,8 @@ describe("store", () => {
       VALUES ('page-1', 'notebook-1', 'Legacy Page', 'body', '', 'user-1', '2026-05-18 12:02:00', '2026-05-18 12:02:00');
       INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type)
       VALUES ('attachment-1', 'page-1', 'legacy.pdf', 'application/pdf', 12, 'legacy.pdf', 'pdf');
+      INSERT INTO page_tags (page_id, tag)
+      VALUES ('page-1', 'Cells'), ('page-1', 'Needs review');
     `);
 
     const { ensureDatabase } = await import("../src/lib/store");
@@ -91,6 +98,8 @@ describe("store", () => {
     const migratedUser = queryOne("SELECT first_name, last_name FROM users WHERE id = 'user-1'");
     expect(migratedUser?.first_name).toBe("Legacy");
     expect(migratedUser?.last_name).toBe("User");
+    expect(queryOne("SELECT COUNT(*) AS count FROM tags WHERE label IN ('Cells', 'Needs review')")?.count).toBe("2");
+    expect(queryOne("SELECT COUNT(*) AS count FROM page_tags WHERE page_id = 'page-1' AND tag_id IS NOT NULL")?.count).toBe("2");
   });
 
   it("creates and updates pages through the repository API", async () => {
@@ -283,15 +292,21 @@ describe("store", () => {
   });
 
   it("adds and removes simple page tags", async () => {
-    const { getWorkspace, setPageTags } = await import("../src/lib/store");
+    const { queryOne } = await import("../src/lib/sqlite");
+    const { createPage, getWorkspace, setPageTags } = await import("../src/lib/store");
     const user = await createTestAdmin();
     const workspace = getWorkspace(user.id);
+    const notebookId = workspace.notebooks[0].id;
     const pageId = workspace.notebooks[0].pages[0].id;
+    const secondPageId = createPage(user.id, notebookId);
 
     setPageTags(user.id, pageId, ["cells", "success", "cells", "  needs review  "]);
+    setPageTags(user.id, secondPageId, ["Cells"]);
 
     const page = getWorkspace(user.id).notebooks[0].pages.find((candidate) => candidate.id === pageId)!;
     expect(page.tags).toEqual(["cells", "success", "needs review"]);
+    expect(queryOne("SELECT COUNT(*) AS count FROM tags WHERE lower(label) = 'cells'")?.count).toBe("1");
+    expect(queryOne("SELECT COUNT(*) AS count FROM page_tags WHERE tag_id = (SELECT id FROM tags WHERE lower(label) = 'cells')")?.count).toBe("2");
 
     setPageTags(user.id, pageId, ["success"]);
     const updatedPage = getWorkspace(user.id).notebooks[0].pages.find((candidate) => candidate.id === pageId)!;

@@ -75,7 +75,13 @@ for (const [index, page] of pages.entries()) {
   const attachmentDir = path.join(pageDir, "attachments");
   await mkdir(attachmentDir, { recursive: true });
 
-  const tags = sqliteJson(`SELECT tag FROM page_tags WHERE page_id = ${sqlString(page.id)} ORDER BY tag COLLATE NOCASE ASC`).map((row) => row.tag);
+  const tags = sqliteJson(`
+    SELECT t.label AS tag
+    FROM page_tags pt
+    JOIN tags t ON t.id = pt.tag_id
+    WHERE pt.page_id = ${sqlString(page.id)}
+    ORDER BY t.label COLLATE NOCASE ASC
+  `).map((row) => row.tag);
   const attachments = sqliteJson(`
     SELECT id, page_id, original_name, mime_type, size, storage_key, block_type, evernote_hash, created_at
     FROM attachments

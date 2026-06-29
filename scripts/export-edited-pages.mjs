@@ -31,7 +31,13 @@ async function run() {
       p.updated_at,
       n.id AS notebook_id,
       n.name AS notebook_name,
-      COALESCE((SELECT json_group_array(tag) FROM page_tags WHERE page_id = p.id ORDER BY lower(tag)), '[]') AS tags_json,
+      COALESCE((
+        SELECT json_group_array(t.label)
+        FROM page_tags pt
+        JOIN tags t ON t.id = pt.tag_id
+        WHERE pt.page_id = p.id
+        ORDER BY lower(t.label)
+      ), '[]') AS tags_json,
       COALESCE((
         SELECT json_group_array(json_object(
           'id', id,

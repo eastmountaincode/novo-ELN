@@ -18,6 +18,14 @@ export type AdminUser = AppUser & {
   notebookCount: number;
 };
 
+export type AdminTag = {
+  id: string;
+  label: string;
+  pageCount: number;
+  notebookCount: number;
+  updatedAt: string;
+};
+
 export type AdminDataFile = {
   id: string;
   originalName: string;
@@ -111,7 +119,7 @@ export type PageCommentThread = {
 
 export type AuditEvent = {
   id: string;
-  entityType: "page" | "notebook" | "attachment";
+  entityType: "page" | "notebook" | "attachment" | "tag";
   entityId: string;
   pageId: string;
   notebookId: string;

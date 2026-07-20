@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
-import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageComment, PageCommentThread, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
+import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminTag, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageComment, PageCommentThread, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
 import { bodyToEditorDocument, bodyToEditorText, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody } from "./editor";
 import { uploadDir } from "./paths";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
@@ -631,6 +631,109 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
     lastActivityAt: row.last_activity_at,
     notebookCount: Number(row.notebook_count),
   }));
+}
+
+export function listTagsForAdmin(adminUserId: string): AdminTag[] {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  pruneUnusedTags();
+  return querySql(`
+    SELECT
+      t.id,
+      t.label,
+      COUNT(DISTINCT pt.page_id) AS page_count,
+      COUNT(DISTINCT p.notebook_id) AS notebook_count,
+      COALESCE(MAX(p.updated_at), '') AS updated_at
+    FROM tags t
+    LEFT JOIN page_tags pt ON pt.tag_id = t.id
+    LEFT JOIN pages p ON p.id = pt.page_id
+    GROUP BY t.id, t.label
+    ORDER BY lower(t.label) ASC
+  `).map((row) => ({
+    id: row.id,
+    label: row.label,
+    pageCount: Number(row.page_count),
+    notebookCount: Number(row.notebook_count),
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function renameTagForAdmin(adminUserId: string, tagId: string, label: string): AdminTag[] {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  const normalizedLabel = normalizeGlobalTagLabel(label);
+  const tag = queryOne(`SELECT id, label FROM tags WHERE id = ${sql(tagId)} LIMIT 1`);
+  if (!tag) throw new Error("Tag not found.");
+  if (tag.label === normalizedLabel) return listTagsForAdmin(adminUserId);
+  const duplicate = queryOne(`
+    SELECT id
+    FROM tags
+    WHERE label = ${sql(normalizedLabel)} COLLATE NOCASE
+      AND id <> ${sql(tagId)}
+    LIMIT 1
+  `);
+  if (duplicate) throw new Error("A tag with that name already exists. Merge the tag instead.");
+
+  const pageRows = tagPageRows(tagId);
+  execSql(`UPDATE tags SET label = ${sql(normalizedLabel)} WHERE id = ${sql(tagId)};`);
+  recordTagAuditEvent(adminUserId, tagId, "tag.renamed", `renamed tag ${quoteAuditValue(tag.label)} to ${quoteAuditValue(normalizedLabel)}`, {
+    oldLabel: tag.label,
+    newLabel: normalizedLabel,
+    affectedPages: pageRows.length,
+  });
+  queueSearchIndexForTagPageRows(pageRows);
+  return listTagsForAdmin(adminUserId);
+}
+
+export function mergeTagForAdmin(adminUserId: string, sourceTagId: string, targetTagId: string): AdminTag[] {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  if (sourceTagId === targetTagId) throw new Error("Choose two different tags to merge.");
+  const source = queryOne(`SELECT id, label FROM tags WHERE id = ${sql(sourceTagId)} LIMIT 1`);
+  const target = queryOne(`SELECT id, label FROM tags WHERE id = ${sql(targetTagId)} LIMIT 1`);
+  if (!source || !target) throw new Error("Tag not found.");
+
+  const pageRows = tagPageRows(sourceTagId);
+  execSql(`
+    BEGIN;
+    INSERT OR IGNORE INTO page_tags (page_id, tag_id)
+    SELECT page_id, ${sql(targetTagId)}
+    FROM page_tags
+    WHERE tag_id = ${sql(sourceTagId)};
+    DELETE FROM page_tags WHERE tag_id = ${sql(sourceTagId)};
+    DELETE FROM tags WHERE id = ${sql(sourceTagId)};
+    COMMIT;
+  `);
+  recordTagAuditEvent(adminUserId, sourceTagId, "tag.merged", `merged tag ${quoteAuditValue(source.label)} into ${quoteAuditValue(target.label)}`, {
+    sourceTagId,
+    sourceLabel: source.label,
+    targetTagId,
+    targetLabel: target.label,
+    affectedPages: pageRows.length,
+  });
+  queueSearchIndexForTagPageRows(pageRows);
+  return listTagsForAdmin(adminUserId);
+}
+
+export function deleteTagForAdmin(adminUserId: string, tagId: string): AdminTag[] {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  const tag = queryOne(`SELECT id, label FROM tags WHERE id = ${sql(tagId)} LIMIT 1`);
+  if (!tag) throw new Error("Tag not found.");
+
+  const pageRows = tagPageRows(tagId);
+  execSql(`
+    BEGIN;
+    DELETE FROM page_tags WHERE tag_id = ${sql(tagId)};
+    DELETE FROM tags WHERE id = ${sql(tagId)};
+    COMMIT;
+  `);
+  recordTagAuditEvent(adminUserId, tagId, "tag.deleted", `deleted tag ${quoteAuditValue(tag.label)}`, {
+    label: tag.label,
+    affectedPages: pageRows.length,
+  });
+  queueSearchIndexForTagPageRows(pageRows);
+  return listTagsForAdmin(adminUserId);
 }
 
 export function recordUserLogin(userId: string) {
@@ -1447,6 +1550,7 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
     UPDATE pages SET updated_at = datetime('now') WHERE id = ${sql(pageId)};
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
   `);
+  pruneUnusedTags();
   recordAuditEvent({
     entityType: "page",
     entityId: pageId,
@@ -1485,6 +1589,7 @@ export function deletePage(userId: string, pageId: string) {
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(page.notebook_id)};
     DELETE FROM pages WHERE id = ${sql(pageId)};
   `);
+  pruneUnusedTags();
   deleteSearchIndexForPage(pageId);
 }
 
@@ -2010,6 +2115,42 @@ function assertAdmin(userId: string) {
   if (!isAdmin(userId)) throw new Error("Forbidden");
 }
 
+function normalizeGlobalTagLabel(label: string) {
+  const normalized = label.trim().replace(/\s+/g, " ");
+  if (!normalized) throw new Error("Tag name is required.");
+  if (normalized.length > 80) throw new Error("Tag name must be 80 characters or fewer.");
+  return normalized;
+}
+
+function tagPageRows(tagId: string) {
+  return querySql(`
+    SELECT page_id
+    FROM page_tags
+    WHERE tag_id = ${sql(tagId)}
+  `);
+}
+
+function pruneUnusedTags() {
+  execSql(`
+    DELETE FROM tags
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM page_tags
+      WHERE page_tags.tag_id = tags.id
+    );
+  `);
+}
+
+function queueSearchIndexForTagPageRows(rows: Array<{ page_id?: string }>) {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const pageId = row.page_id ?? "";
+    if (!pageId || seen.has(pageId)) continue;
+    seen.add(pageId);
+    queueSearchIndexForPage(pageId);
+  }
+}
+
 function isAdmin(userId: string) {
   const role = queryOne(`SELECT role FROM users WHERE id = ${sql(userId)} LIMIT 1`)?.role;
   return role === "admin";
@@ -2152,6 +2293,17 @@ function recordNotebookAuditEvent(userId: string, notebookId: string, action: st
     summary,
     metadata,
     coalesce: options.coalesce,
+  });
+}
+
+function recordTagAuditEvent(userId: string, tagId: string, action: string, summary: string, metadata: Record<string, unknown> = {}) {
+  recordAuditEvent({
+    entityType: "tag",
+    entityId: tagId,
+    actorUserId: userId,
+    action,
+    summary,
+    metadata,
   });
 }
 
@@ -2319,7 +2471,7 @@ function toAuditEvent(row: Record<string, string>): AuditEvent {
 }
 
 function auditEntityType(value: string): AuditEvent["entityType"] {
-  if (value === "notebook" || value === "attachment") return value;
+  if (value === "notebook" || value === "attachment" || value === "tag") return value;
   return "page";
 }
 

@@ -402,7 +402,7 @@ function insertImportedNote({ job, notebookId, pageId, note, body, plainText, at
     INSERT INTO attachments (id, page_id, original_name, mime_type, size, storage_key, block_type, evernote_hash, created_at)
     VALUES (${sql(attachment.id)}, ${sql(pageId)}, ${sql(attachment.originalName)}, ${sql(attachment.mimeType)}, ${attachment.size}, ${sql(attachment.storageKey)}, ${sql(attachment.blockType)}, ${sql(attachment.evernoteHash || "")}, ${sql(createdAt)});
   `).join("\n");
-  const tagSql = note.tags.map((tag) => `INSERT OR IGNORE INTO page_tags (page_id, tag) VALUES (${sql(pageId)}, ${sql(tag)});`).join("\n");
+  const tagSql = pageTagInsertSql(pageId, note.tags);
   execSql(`
     BEGIN IMMEDIATE;
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id, created_at, updated_at)
@@ -728,11 +728,11 @@ function editorDocumentToPlainText(node) {
 }
 
 function execSql(statement) {
-  execFileSync("sqlite3", [databasePath, "-batch"], { input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`, stdio: ["pipe", "pipe", "pipe"] });
+  execFileSync("sqlite3", ["-batch", databasePath], { input: `.timeout 30000\n.bail on\nPRAGMA foreign_keys=ON;\n${statement}`, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 function querySql(statement) {
-  const output = execFileSync("sqlite3", [databasePath, "-batch", "-header", "-csv"], { input: `.timeout 30000\nPRAGMA foreign_keys=ON;\n${statement}`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+  const output = execFileSync("sqlite3", ["-batch", databasePath], { input: `.timeout 30000\n.bail on\n.headers on\n.mode csv\nPRAGMA foreign_keys=ON;\n${statement}`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   return parseCsv(output);
 }
 
@@ -771,6 +771,20 @@ function sql(value) {
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
   return `'${String(value).replace(/'/g, "''")}'`;
 }
+
+function pageTagInsertSql(pageId, tags) {
+  return tags.map((tag) => `
+    INSERT OR IGNORE INTO tags (id, label)
+    VALUES (${sql(crypto.randomUUID())}, ${sql(tag)});
+
+    INSERT OR IGNORE INTO page_tags (page_id, tag_id)
+    SELECT ${sql(pageId)}, id
+    FROM tags
+    WHERE label = ${sql(tag)} COLLATE NOCASE
+    LIMIT 1;
+  `).join("\n");
+}
+
 function formatBytes(value) {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];

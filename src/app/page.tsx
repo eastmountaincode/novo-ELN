@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Copy,
   Crown,
   Database,
@@ -56,7 +57,7 @@ import { INLINE_ATTACHMENT_DRAG_TYPE, RichTextEditor, attachmentToInlineAttrs, t
 import { SpreadsheetModal } from "@/components/SpreadsheetModal";
 import { appBuildId, appVersion } from "@/generated/app-version";
 import { bodyToEditorText } from "@/lib/editor";
-import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageCommentThread, PageEntry, PageStatus, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
+import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminTag, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageCommentThread, PageEntry, PageStatus, Project, SearchResult, ShareMember, Workspace } from "@/lib/types";
 
 const blockIcons: Record<BlockType, typeof ImageIcon> = {
   image: ImageIcon,
@@ -87,6 +88,9 @@ type DragState = {
 
 type PageSortKey = "updated" | "created" | "title";
 type NotebookSortKey = "updated" | "created" | "title";
+type AdminTagSortKey = "label" | "pages" | "notebooks" | "lastUsed";
+type AdminUserSortKey = "user" | "role" | "notebooks" | "lastLogin" | "lastActivity" | "created";
+type SortDirection = "asc" | "desc";
 
 const PAGE_SORT_OPTIONS: Array<{ key: PageSortKey; label: string }> = [
   { key: "updated", label: "Date updated" },
@@ -1400,6 +1404,7 @@ export default function Home() {
   const effectivePagesWidth = pagesCollapsed ? SIDEBAR_COLLAPSED_WIDTH : pagesWidth;
   const effectiveSidebarCollapsed = sidebarCollapsed;
   const effectiveSidebarWidth = effectiveSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
+  const pagesColumnWidth = pagesCollapsed ? `${SIDEBAR_COLLAPSED_WIDTH}px` : `minmax(${PAGES_MIN_WIDTH}px, ${effectivePagesWidth}px)`;
 
   return (
     <main className="app-scroll-root overflow-x-auto bg-white text-slate-950">
@@ -1417,7 +1422,7 @@ export default function Home() {
         <UpdateAvailableBanner preview={previewKeys.has("update-banner")} onDismiss={() => setUpdateBannerDismissed(true)} />
       ) : null}
 
-      <div className="grid h-dvh min-w-[980px]" style={{ gridTemplateColumns: activeView === "project" ? `${effectiveSidebarWidth}px 1px minmax(0,${effectivePagesWidth}px) 1px minmax(560px, 1fr)` : `${effectiveSidebarWidth}px 1px minmax(560px, 1fr)` } as React.CSSProperties}>
+      <div className="grid h-dvh min-w-[980px]" style={{ gridTemplateColumns: activeView === "project" ? `${effectiveSidebarWidth}px 1px ${pagesColumnWidth} 1px minmax(560px, 1fr)` : `${effectiveSidebarWidth}px 1px minmax(560px, 1fr)` } as React.CSSProperties}>
         <UnifiedSidebar
           workspace={workspace}
           activeView={activeView}
@@ -1453,7 +1458,7 @@ export default function Home() {
         <ResizeHandle disabled={effectiveSidebarCollapsed} onPointerDown={(event) => setDragState({ pane: "sidebar", startX: event.clientX, startWidth: sidebarWidth })} />
 
         {activeView === "home" || activeView === "projectHome" ? (
-          <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} importEnexNotebook={() => createNewNotebook(undefined, "import")} />
+          <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} />
         ) : activeView === "account" ? (
           <AccountView user={workspace.user} notebooks={workspace.notebooks} onChanged={() => refreshWorkspace()} />
         ) : activeView === "notebookSettings" ? (
@@ -2324,21 +2329,25 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
             <span className="sidebar-wide min-w-0 truncate font-medium">Overview</span>
           </button>
         </div>
-        <SidebarSection label="My Notebooks" collapsed={myNotebooksCollapsed} onToggle={() => setMyNotebooksCollapsed((current) => !current)} action={notebookSortControl} onAdd={() => createNewNotebook(workspaceProject?.id)} />
-        {!myNotebooksCollapsed ? (
-          <div className="mt-2 space-y-1">
-            {sortedOwnNotebooks.map(renderNotebook)}
-            {sortedOwnNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
-          </div>
-        ) : null}
-        <div className="mt-5">
-          <SidebarSection label="Shared with Me" collapsed={sharedNotebooksCollapsed} onToggle={() => setSharedNotebooksCollapsed((current) => !current)} />
-        </div>
-        {!sharedNotebooksCollapsed ? (
-          <div className="mt-2 space-y-1">
-            {sortedSharedNotebooks.map(renderNotebook)}
-            {sortedSharedNotebooks.length === 0 && !sidebarCollapsed ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
-          </div>
+        {!sidebarCollapsed ? (
+          <>
+            <SidebarSection label="My Notebooks" collapsed={myNotebooksCollapsed} onToggle={() => setMyNotebooksCollapsed((current) => !current)} action={notebookSortControl} onAdd={() => createNewNotebook(workspaceProject?.id)} />
+            {!myNotebooksCollapsed ? (
+              <div className="mt-2 space-y-1">
+                {sortedOwnNotebooks.map(renderNotebook)}
+                {sortedOwnNotebooks.length === 0 ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No notebooks yet.</p> : null}
+              </div>
+            ) : null}
+            <div className="mt-5">
+              <SidebarSection label="Shared with Me" collapsed={sharedNotebooksCollapsed} onToggle={() => setSharedNotebooksCollapsed((current) => !current)} />
+            </div>
+            {!sharedNotebooksCollapsed ? (
+              <div className="mt-2 space-y-1">
+                {sortedSharedNotebooks.map(renderNotebook)}
+                {sortedSharedNotebooks.length === 0 ? <p className="sidebar-wide px-6 py-2 text-xs text-slate-500">No shared notebooks.</p> : null}
+              </div>
+            ) : null}
+          </>
         ) : null}
         {!sidebarCollapsed ? (
           <div className="sidebar-wide mt-5 px-6 text-[11px] leading-tight text-slate-500" title={`Version ${SIDEBAR_VERSION_TEXT}`}>
@@ -2569,6 +2578,45 @@ function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, pageMen
       window.clearTimeout(timeout);
     };
   }, [notebookQuery, notebookSearchFilters, notebookSearchOpen, selectedNotebook?.id]);
+
+  useEffect(() => {
+    if (collapsed || !selectedProject || !selectedNotebook || sortedPages.length < 2) return;
+
+    const project = selectedProject;
+    const notebook = selectedNotebook;
+
+    function shouldIgnorePageArrowNavigation(target: EventTarget | null) {
+      if (!(target instanceof Element)) return false;
+      if (target.closest("[contenteditable='true'], input, textarea, select, [role='textbox'], [data-transient-menu], [data-search-dialog], dialog")) return true;
+      const pageCard = target.closest("[data-page-card-id]");
+      return Boolean(target.closest("button, a, [role='button']")) && !pageCard;
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      if (sortOptionsOpen || filterOptionsOpen || notebookSearchOpen || pageMenuId) return;
+      if (shouldIgnorePageArrowNavigation(event.target)) return;
+
+      const activeElement = document.activeElement;
+      const focusIsOnPageList = activeElement instanceof Element && Boolean(pageListRef.current?.contains(activeElement));
+      const focusIsPlainPage = activeElement === document.body || activeElement === document.documentElement;
+      if (!focusIsOnPageList && !focusIsPlainPage) return;
+
+      const currentIndex = sortedPages.findIndex((page) => page.id === selectedPage?.id);
+      if (currentIndex < 0) return;
+      const nextIndex = event.key === "ArrowDown"
+        ? Math.min(currentIndex + 1, sortedPages.length - 1)
+        : Math.max(currentIndex - 1, 0);
+      if (nextIndex === currentIndex) return;
+
+      event.preventDefault();
+      selectPage(project, notebook, sortedPages[nextIndex]);
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [collapsed, filterOptionsOpen, notebookSearchOpen, pageMenuId, selectPage, selectedNotebook, selectedPage?.id, selectedProject, sortOptionsOpen, sortedPages]);
 
   useEffect(() => {
     if (collapsed || !selectedPage?.id) return;
@@ -3337,7 +3385,7 @@ function PageCard({ page, active = false, contextLabel, accentColor = "#0891b2",
   );
 }
 
-function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; members: AppUser[]; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void; importEnexNotebook: () => void }) {
+function HomeView({ recentPages, members, selectPage }: { recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; members: AppUser[]; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void }) {
   return (
     <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
@@ -3372,22 +3420,6 @@ function HomeView({ recentPages, members, selectPage, importEnexNotebook }: { re
           </section>
 
           <aside className="min-w-0 space-y-6">
-            <section className="border border-slate-200 bg-white p-4">
-              <div className="mb-4 flex items-center gap-2">
-                <FileArchive size={17} className="text-slate-500" />
-                <h2 className="text-base font-semibold text-slate-950">Import</h2>
-              </div>
-              <p className="mb-4 text-sm leading-6 text-slate-500">Create a new notebook from an Evernote ENEX export.</p>
-              <button
-                type="button"
-                onClick={importEnexNotebook}
-                className="flex h-9 w-full items-center justify-center gap-2 border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 hover:border-slate-500"
-              >
-                <FileArchive size={15} />
-                Import ENEX notebook
-              </button>
-            </section>
-
             <section className="border border-slate-200 bg-white p-4">
               <div className="mb-4 flex items-center gap-2">
                 <Users size={17} className="text-slate-500" />
@@ -3886,7 +3918,7 @@ async function assertOk(response: Response) {
   throw new Error(body?.error ?? "Request failed.");
 }
 
-type AccountTab = "profile" | "notebooks" | "security" | "app" | "users" | "activity" | "data";
+type AccountTab = "profile" | "notebooks" | "security" | "app" | "users" | "activity" | "data" | "tags";
 
 function AccountView({ user, notebooks, onChanged }: { user: AppUser; notebooks: Notebook[]; onChanged: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<AccountTab>("profile");
@@ -3897,6 +3929,7 @@ function AccountView({ user, notebooks, onChanged }: { user: AppUser; notebooks:
     ...(user.role === "admin" ? [{ id: "users" as AccountTab, label: "Users", icon: Users }] : []),
     ...(user.role === "admin" ? [{ id: "activity" as AccountTab, label: "Activity", icon: History }] : []),
     ...(user.role === "admin" ? [{ id: "data" as AccountTab, label: "Data", icon: Database }] : []),
+    ...(user.role === "admin" ? [{ id: "tags" as AccountTab, label: "Tags", icon: Tag }] : []),
     ...(user.role === "admin" ? [{ id: "app" as AccountTab, label: "App Settings", icon: Settings }] : []),
   ];
 
@@ -3931,6 +3964,7 @@ function AccountView({ user, notebooks, onChanged }: { user: AppUser; notebooks:
         {activeTab === "users" && user.role === "admin" ? <UsersAdminPanel currentUserId={user.id} /> : null}
         {activeTab === "activity" && user.role === "admin" ? <AdminActivityPanel /> : null}
         {activeTab === "data" && user.role === "admin" ? <DataAdminPanel /> : null}
+        {activeTab === "tags" && user.role === "admin" ? <TagsAdminPanel onChanged={onChanged} /> : null}
       </div>
     </section>
   );
@@ -4257,7 +4291,7 @@ function AppSettingsPanel({ onChanged }: { onChanged: () => Promise<void> }) {
             />
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold text-slate-950">Add today&apos;s date to new pages</span>
-              <span className="mt-1 block text-sm text-slate-500">New pages start with a first line like "May 28, 2026".</span>
+              <span className="mt-1 block text-sm text-slate-500">New pages start with a first line like &quot;May 28, 2026&quot;.</span>
             </span>
             {saving ? <Loader2 size={16} className="mt-1 shrink-0 animate-spin text-slate-400" /> : null}
           </label>
@@ -4281,11 +4315,352 @@ function AppSettingsPanel({ onChanged }: { onChanged: () => Promise<void> }) {
   );
 }
 
+function TagsAdminPanel({ onChanged }: { onChanged: () => Promise<void> }) {
+  const [tags, setTags] = useState<AdminTag[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [sortKey, setSortKey] = useState<AdminTagSortKey>("label");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [renameTarget, setRenameTarget] = useState<AdminTag | null>(null);
+  const [draftLabel, setDraftLabel] = useState("");
+  const [savingTagId, setSavingTagId] = useState("");
+  const [mergeSource, setMergeSource] = useState<AdminTag | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<AdminTag | null>(null);
+
+  async function loadTags(showSpinner = true) {
+    if (showSpinner) setRefreshing(true);
+    setError("");
+    const response = await fetch("/api/admin/tags");
+    const body = (await response.json().catch(() => null)) as { tags?: AdminTag[]; error?: string } | null;
+    if (showSpinner) setRefreshing(false);
+    setLoading(false);
+    if (!response.ok) {
+      setError(body?.error ?? "Unable to load tags.");
+      return;
+    }
+    setTags(body?.tags ?? []);
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadTags(false);
+  }, []);
+
+  function startRename(tag: AdminTag) {
+    setError("");
+    setMergeSource(null);
+    setDeleteTarget(null);
+    setRenameTarget(tag);
+    setDraftLabel(tag.label);
+  }
+
+  async function renameTag() {
+    if (!renameTarget) return;
+    const label = draftLabel.trim().replace(/\s+/g, " ");
+    if (!label || label === renameTarget.label || savingTagId) {
+      setRenameTarget(null);
+      return;
+    }
+    setError("");
+    setSavingTagId(renameTarget.id);
+    const response = await fetch("/api/admin/tags", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tagId: renameTarget.id, label }),
+    });
+    const body = (await response.json().catch(() => null)) as { tags?: AdminTag[]; error?: string } | null;
+    setSavingTagId("");
+    if (!response.ok) {
+      setError(body?.error ?? "Unable to rename tag.");
+      return;
+    }
+    setRenameTarget(null);
+    setTags(body?.tags ?? []);
+    await onChanged();
+  }
+
+  function startMerge(tag: AdminTag) {
+    setError("");
+    setRenameTarget(null);
+    setDeleteTarget(null);
+    setMergeSource(tag);
+    setMergeTargetId(tags.find((candidate) => candidate.id !== tag.id)?.id ?? "");
+  }
+
+  async function mergeSelectedTag() {
+    if (!mergeSource || !mergeTargetId || savingTagId) return;
+    setError("");
+    setSavingTagId(mergeSource.id);
+    const response = await fetch("/api/admin/tags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceTagId: mergeSource.id, targetTagId: mergeTargetId }),
+    });
+    const body = (await response.json().catch(() => null)) as { tags?: AdminTag[]; error?: string } | null;
+    setSavingTagId("");
+    if (!response.ok) {
+      setError(body?.error ?? "Unable to merge tags.");
+      return;
+    }
+    setMergeSource(null);
+    setMergeTargetId("");
+    setTags(body?.tags ?? []);
+    await onChanged();
+  }
+
+  async function deleteSelectedTag() {
+    if (!deleteTarget || savingTagId) return;
+    setError("");
+    setSavingTagId(deleteTarget.id);
+    const response = await fetch(`/api/admin/tags?tagId=${encodeURIComponent(deleteTarget.id)}`, { method: "DELETE" });
+    const body = (await response.json().catch(() => null)) as { tags?: AdminTag[]; error?: string } | null;
+    setSavingTagId("");
+    if (!response.ok) {
+      setError(body?.error ?? "Unable to delete tag.");
+      return;
+    }
+    setDeleteTarget(null);
+    setTags(body?.tags ?? []);
+    await onChanged();
+  }
+
+  const mergeTarget = tags.find((tag) => tag.id === mergeTargetId) ?? null;
+  const sortedTags = useMemo(() => {
+    const directionMultiplier = sortDirection === "asc" ? 1 : -1;
+    return [...tags].sort((first, second) => {
+      let comparison = 0;
+      if (sortKey === "label") {
+        comparison = first.label.localeCompare(second.label, undefined, { sensitivity: "base", numeric: true });
+      } else if (sortKey === "pages") {
+        comparison = first.pageCount - second.pageCount;
+      } else if (sortKey === "notebooks") {
+        comparison = first.notebookCount - second.notebookCount;
+      } else {
+        if (!first.updatedAt && !second.updatedAt) comparison = 0;
+        else if (!first.updatedAt) return 1;
+        else if (!second.updatedAt) return -1;
+        else comparison = (new Date(first.updatedAt).getTime() - new Date(second.updatedAt).getTime()) * directionMultiplier;
+      }
+      if (comparison === 0) {
+        comparison = first.label.localeCompare(second.label, undefined, { sensitivity: "base", numeric: true });
+      }
+      if (sortKey === "lastUsed") return comparison;
+      return comparison * directionMultiplier;
+    });
+  }, [sortDirection, sortKey, tags]);
+
+  function toggleSort(nextSortKey: AdminTagSortKey) {
+    if (sortKey === nextSortKey) {
+      setSortDirection((current) => current === "asc" ? "desc" : "asc");
+      return;
+    }
+    setSortKey(nextSortKey);
+    setSortDirection(nextSortKey === "lastUsed" ? "desc" : "asc");
+  }
+
+  function renderSortHeader(column: AdminTagSortKey, label: string) {
+    const active = sortKey === column;
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSort(column)}
+        className={`inline-flex items-center gap-1 font-semibold hover:text-slate-900 ${active ? "text-slate-900" : "text-slate-500"}`}
+      >
+        <span>{label}</span>
+        {active ? (
+          sortDirection === "asc" ? (
+            <ChevronUp size={13} strokeWidth={2} className="text-slate-600" />
+          ) : (
+            <ChevronDown size={13} strokeWidth={2} className="text-slate-600" />
+          )
+        ) : null}
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <section className="max-w-5xl border border-slate-200 bg-white">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
+          <div className="flex items-start gap-3">
+            <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
+              <Tag size={21} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">Tags</h2>
+            </div>
+          </div>
+          <button
+            onClick={() => void loadTags(true)}
+            disabled={loading || refreshing}
+            className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:text-slate-400"
+          >
+            {refreshing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+            Refresh
+          </button>
+        </div>
+
+        {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+
+        {loading ? (
+          <p className="flex items-center gap-2 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Loading tags...</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed border-collapse text-left text-sm">
+              <colgroup>
+                <col className="w-[28%]" />
+                <col className="w-[10%]" />
+                <col className="w-[12%]" />
+                <col className="w-[20%]" />
+                <col className="w-[30%]" />
+              </colgroup>
+              <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 font-semibold" aria-sort={sortKey === "label" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}>
+                    {renderSortHeader("label", "Tag")}
+                  </th>
+                  <th className="px-3 py-2 font-semibold" aria-sort={sortKey === "pages" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}>
+                    {renderSortHeader("pages", "Pages")}
+                  </th>
+                  <th className="px-3 py-2 font-semibold" aria-sort={sortKey === "notebooks" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}>
+                    {renderSortHeader("notebooks", "Notebooks")}
+                  </th>
+                  <th className="px-3 py-2 font-semibold" aria-sort={sortKey === "lastUsed" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}>
+                    {renderSortHeader("lastUsed", "Last used")}
+                  </th>
+                  <th className="px-3 py-2 font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sortedTags.map((tag) => {
+                  const saving = savingTagId === tag.id;
+                  return (
+                    <tr key={tag.id}>
+                      <td className="px-3 py-2 align-middle">
+                        <p className="whitespace-normal break-words font-semibold text-slate-950 [overflow-wrap:anywhere]">{tag.label}</p>
+                      </td>
+                      <td className="px-3 py-2 align-middle text-slate-700">{tag.pageCount.toLocaleString()}</td>
+                      <td className="px-3 py-2 align-middle text-slate-700">{tag.notebookCount.toLocaleString()}</td>
+                      <td className="px-3 py-2 align-middle text-xs leading-5 text-slate-500">{tag.updatedAt ? formatDateTime(tag.updatedAt) : "None"}</td>
+                      <td className="px-3 py-2 align-middle">
+                        <div className="flex flex-nowrap items-center gap-2 whitespace-nowrap">
+                          <button type="button" onClick={() => startRename(tag)} disabled={saving} className="h-8 border border-slate-300 px-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:text-slate-400">Rename</button>
+                          <button type="button" onClick={() => startMerge(tag)} disabled={tags.length < 2 || saving} className="h-8 border border-slate-300 px-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400">Merge</button>
+                          <button type="button" onClick={() => { setMergeSource(null); setRenameTarget(null); setDeleteTarget(tag); }} disabled={saving} className="h-8 border border-rose-200 px-2 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-wait disabled:text-rose-300">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {tags.length === 0 ? <p className="p-5 text-sm text-slate-500">No tags found.</p> : null}
+          </div>
+        )}
+      </section>
+
+      {renameTarget ? (
+        <ModalFrame>
+          <div className="flex items-start justify-between gap-4">
+            <h2 className="text-lg font-semibold text-white">Rename tag</h2>
+            <button type="button" onClick={() => setRenameTarget(null)} disabled={savingTagId === renameTarget.id} className="text-slate-400 hover:text-white disabled:opacity-50">
+              <X size={18} />
+            </button>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-slate-400">
+            Rename <span className="font-semibold text-white">{renameTarget.label}</span> everywhere it appears.
+          </p>
+          <label className="mt-4 block text-sm font-medium text-slate-200">
+            Tag name
+            <input
+              value={draftLabel}
+              onChange={(event) => setDraftLabel(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void renameTag();
+                if (event.key === "Escape") setRenameTarget(null);
+              }}
+              disabled={savingTagId === renameTarget.id}
+              className="mt-2 h-10 w-full border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-cyan-400 disabled:opacity-60"
+              autoFocus
+            />
+          </label>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setRenameTarget(null)} disabled={savingTagId === renameTarget.id} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
+            <button onClick={() => void renameTag()} disabled={savingTagId === renameTarget.id} className="inline-flex h-9 items-center gap-2 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-400">
+              {savingTagId === renameTarget.id ? <Loader2 size={15} className="animate-spin" /> : null}
+              {savingTagId === renameTarget.id ? "Renaming..." : "Rename tag"}
+            </button>
+          </div>
+        </ModalFrame>
+      ) : null}
+
+      {mergeSource ? (
+        <ModalFrame>
+          <div className="flex items-start justify-between gap-4">
+            <h2 className="text-lg font-semibold text-white">Merge tag</h2>
+            <button type="button" onClick={() => setMergeSource(null)} disabled={savingTagId === mergeSource.id} className="text-slate-400 hover:text-white disabled:opacity-50">
+              <X size={18} />
+            </button>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-slate-400">
+            Pages with <span className="font-semibold text-white">{mergeSource.label}</span> will use the selected tag instead. The old tag will be removed.
+          </p>
+          <label className="mt-4 block text-sm font-medium text-slate-200">
+            Merge into
+            <select
+              value={mergeTargetId}
+              onChange={(event) => setMergeTargetId(event.target.value)}
+              disabled={savingTagId === mergeSource.id}
+              className="mt-2 h-10 w-full cursor-pointer border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {tags.filter((tag) => tag.id !== mergeSource.id).map((tag) => (
+                <option key={tag.id} value={tag.id}>{tag.label}</option>
+              ))}
+            </select>
+          </label>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setMergeSource(null)} disabled={savingTagId === mergeSource.id} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
+            <button onClick={() => void mergeSelectedTag()} disabled={!mergeTarget || savingTagId === mergeSource.id} className="inline-flex h-9 items-center gap-2 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-400">
+              {savingTagId === mergeSource.id ? <Loader2 size={15} className="animate-spin" /> : null}
+              {savingTagId === mergeSource.id ? "Merging..." : "Merge tags"}
+            </button>
+          </div>
+        </ModalFrame>
+      ) : null}
+
+      {deleteTarget ? (
+        <ModalFrame>
+          <div className="flex items-start justify-between gap-4">
+            <h2 className="text-lg font-semibold text-white">Delete tag?</h2>
+            <button type="button" onClick={() => setDeleteTarget(null)} disabled={savingTagId === deleteTarget.id} className="text-slate-400 hover:text-white disabled:opacity-50">
+              <X size={18} />
+            </button>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-slate-400">
+            This removes <span className="font-semibold text-white">{deleteTarget.label}</span> from {deleteTarget.pageCount.toLocaleString()} {deleteTarget.pageCount === 1 ? "page" : "pages"}. It does not delete any pages.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setDeleteTarget(null)} disabled={savingTagId === deleteTarget.id} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
+            <button onClick={() => void deleteSelectedTag()} disabled={savingTagId === deleteTarget.id} className="inline-flex h-9 items-center gap-2 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200">
+              {savingTagId === deleteTarget.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+              {savingTagId === deleteTarget.id ? "Deleting..." : "Delete tag"}
+            </button>
+          </div>
+        </ModalFrame>
+      ) : null}
+    </>
+  );
+}
+
 function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [resetUser, setResetUser] = useState<AdminUser | null>(null);
+  const [sortKey, setSortKey] = useState<AdminUserSortKey>("user");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   async function loadUsers() {
     setLoading(true);
@@ -4323,6 +4698,64 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
     };
   }, []);
 
+  const sortedUsers = useMemo(() => {
+    const direction = sortDirection === "asc" ? 1 : -1;
+    const compareText = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }) * direction;
+    const compareNumber = (a: number, b: number) => (a - b) * direction;
+    const compareNullableDate = (a: string | null | undefined, b: string | null | undefined) => {
+      if (!a && !b) return 0;
+      if (!a) return sortDirection === "asc" ? -1 : 1;
+      if (!b) return sortDirection === "asc" ? 1 : -1;
+      return (new Date(a).getTime() - new Date(b).getTime()) * direction;
+    };
+
+    return [...users].sort((a, b) => {
+      switch (sortKey) {
+        case "user":
+          return compareText(`${userDisplayName(a)} ${a.email}`, `${userDisplayName(b)} ${b.email}`);
+        case "role":
+          return compareText(a.role, b.role);
+        case "notebooks":
+          return compareNumber(a.notebookCount, b.notebookCount);
+        case "lastLogin":
+          return compareNullableDate(a.lastLoginAt, b.lastLoginAt);
+        case "lastActivity":
+          return compareNullableDate(a.lastActivityAt, b.lastActivityAt);
+        case "created":
+          return compareNullableDate(a.createdAt, b.createdAt);
+      }
+    });
+  }, [sortDirection, sortKey, users]);
+
+  function toggleSort(nextSortKey: AdminUserSortKey) {
+    if (sortKey === nextSortKey) {
+      setSortDirection((current) => current === "asc" ? "desc" : "asc");
+      return;
+    }
+    setSortKey(nextSortKey);
+    setSortDirection(["lastLogin", "lastActivity", "created"].includes(nextSortKey) ? "desc" : "asc");
+  }
+
+  function renderSortHeader(column: AdminUserSortKey, label: string) {
+    const active = sortKey === column;
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSort(column)}
+        className={`inline-flex items-center gap-1 font-semibold hover:text-slate-900 ${active ? "text-slate-900" : "text-slate-500"}`}
+      >
+        <span>{label}</span>
+        {active ? (
+          sortDirection === "asc" ? (
+            <ChevronUp size={13} strokeWidth={2} className="text-slate-600" />
+          ) : (
+            <ChevronDown size={13} strokeWidth={2} className="text-slate-600" />
+          )
+        ) : null}
+      </button>
+    );
+  }
+
   return (
     <section className="max-w-5xl border border-slate-200 bg-white">
       <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
@@ -4353,17 +4786,17 @@ function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
             </colgroup>
             <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
               <tr>
-                <th className="px-3 py-3 font-semibold">User</th>
-                <th className="px-3 py-3 font-semibold">Role</th>
-                <th className="px-3 py-3 font-semibold">Notebooks</th>
-                <th className="px-3 py-3 font-semibold">Last login</th>
-                <th className="px-3 py-3 font-semibold">Last activity</th>
-                <th className="px-3 py-3 font-semibold">Created</th>
+                <th className="px-3 py-3">{renderSortHeader("user", "User")}</th>
+                <th className="px-3 py-3">{renderSortHeader("role", "Role")}</th>
+                <th className="px-3 py-3">{renderSortHeader("notebooks", "Notebooks")}</th>
+                <th className="px-3 py-3">{renderSortHeader("lastLogin", "Last login")}</th>
+                <th className="px-3 py-3">{renderSortHeader("lastActivity", "Last activity")}</th>
+                <th className="px-3 py-3">{renderSortHeader("created", "Created")}</th>
                 <th className="px-3 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {users.map((user) => (
+              {sortedUsers.map((user) => (
                 <tr key={user.id}>
                   <td className="px-3 py-3">
                     <div className="truncate font-medium text-slate-950">{userDisplayName(user)}</div>
@@ -5342,21 +5775,21 @@ function PageCommentPopover({ threads, loading, error, selectedThreadId, canEdit
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <MessageSquare size={16} className="text-amber-600" />
+              <MessageSquare size={16} className="text-slate-950" />
               <h2 className="text-sm font-semibold text-slate-950">Comment</h2>
             </div>
             {selectedThread ? <p className="mt-1 truncate text-xs text-slate-500">{selectedThread.selectedText || "Commented text was removed"}</p> : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <button type="button" onClick={() => void onRefresh()} disabled={loading} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-wait disabled:text-slate-300" aria-label="Refresh comment">
+            <button type="button" onClick={() => void onRefresh()} disabled={loading} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-wait disabled:text-slate-300" aria-label="Refresh comment thread" title="Refresh comment thread">
               {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             </button>
             {selectedThread && canEdit ? (
-              <button type="button" onClick={() => void deleteSelectedThread()} disabled={Boolean(pending)} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-wait disabled:text-slate-300" aria-label="Delete comment">
+              <button type="button" onClick={() => void deleteSelectedThread()} disabled={Boolean(pending)} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-wait disabled:text-slate-300" aria-label="Delete comment thread" title="Delete comment thread">
                 {pending === "delete" ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={15} />}
               </button>
             ) : null}
-            <button type="button" onClick={onClose} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900" aria-label="Close comment">
+            <button type="button" onClick={onClose} className="grid size-7 place-items-center border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900" aria-label="Close" title="Close">
               <X size={15} />
             </button>
           </div>
@@ -5712,7 +6145,14 @@ function formatAttachmentDate(value: string) {
   const parsed = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
   if (Number.isNaN(parsed)) return value;
   const date = new Date(parsed);
-  return date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function formatBytes(value: number) {

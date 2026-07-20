@@ -422,11 +422,12 @@ function getSearchablePages(whereClause = ""): SearchablePage[] {
       p.body,
       p.updated_at,
       n.name AS notebook_name,
-      COALESCE(group_concat(DISTINCT pt.tag), '') AS tags,
+      COALESCE(group_concat(DISTINCT t.label), '') AS tags,
       COALESCE(group_concat(DISTINCT a.original_name), '') AS attachments
     FROM pages p
     JOIN notebooks n ON n.id = p.notebook_id
     LEFT JOIN page_tags pt ON pt.page_id = p.id
+    LEFT JOIN tags t ON t.id = pt.tag_id
     LEFT JOIN attachments a ON a.page_id = p.id
     ${whereClause}
     GROUP BY p.id
@@ -487,8 +488,9 @@ function advancedSearchSqlCondition(scope: SearchScope, options: { includeTextCa
     conditions.push(`EXISTS (
       SELECT 1
       FROM page_tags search_filter_tag
+      JOIN tags search_filter_tag_value ON search_filter_tag_value.id = search_filter_tag.tag_id
       WHERE search_filter_tag.page_id = f.page_id
-        AND lower(search_filter_tag.tag) = ${sql(tag.toLowerCase())}
+        AND lower(search_filter_tag_value.label) = ${sql(tag.toLowerCase())}
     )`);
   }
   return conditions.length ? `AND ${conditions.join("\n      AND ")}` : "";

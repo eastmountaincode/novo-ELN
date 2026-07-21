@@ -4,6 +4,8 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 FROM deps AS dev
+ENV NODE_ENV=development
+ENV NOVO_INSTANCE=dev
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -27,15 +29,19 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 FROM node:20-bookworm-slim AS runner
+ARG NOVO_GIT_SHA=unknown
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV NOVO_INSTANCE=prod
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV ELN_DATA_DIR=/app-data/data
 ENV ELN_UPLOAD_DIR=/app-data/uploads
 ENV ELN_PREVIEW_DIR=/app-data/previews
 ENV ELN_DATABASE_PATH=/app-data/data/eln.sqlite3
+
+LABEL org.opencontainers.image.revision=$NOVO_GIT_SHA
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \

@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { connection } from "next/server";
+import { NovoInstanceProvider } from "@/components/NovoInstanceProvider";
+import { getNovoBrand } from "@/lib/novoInstance";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,36 +15,44 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const appTitle = process.env.NODE_ENV === "development" ? "Novo-dev" : "Novo";
+export async function generateMetadata(): Promise<Metadata> {
+  await connection();
+  const { wordmark } = getNovoBrand();
 
-export const metadata: Metadata = {
-  title: appTitle,
-  description: "Electronic lab notebook.",
-  openGraph: {
-    title: appTitle,
+  return {
+    title: wordmark,
     description: "Electronic lab notebook.",
-  },
-  twitter: {
-    card: "summary",
-    title: appTitle,
-    description: "Electronic lab notebook.",
-  },
-  icons: {
-    icon: [
-      { url: "/favicon.ico" },
-      { url: "/icon.png", type: "image/png", sizes: "512x512" },
-    ],
-  },
-};
+    openGraph: {
+      title: wordmark,
+      description: "Electronic lab notebook.",
+    },
+    twitter: {
+      card: "summary",
+      title: wordmark,
+      description: "Electronic lab notebook.",
+    },
+    icons: {
+      icon: [
+        { url: "/favicon.ico" },
+        { url: "/icon.png", type: "image/png", sizes: "512x512" },
+      ],
+    },
+  };
+}
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  await connection();
+  const { instance, wordmark } = getNovoBrand();
+
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body>{children}</body>
+    <html lang="en" data-novo-instance={instance} className={`${geistSans.variable} ${geistMono.variable}`}>
+      <body>
+        <NovoInstanceProvider wordmark={wordmark}>{children}</NovoInstanceProvider>
+      </body>
     </html>
   );
 }

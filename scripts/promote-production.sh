@@ -10,6 +10,10 @@ if [[ ! "$requested_commit" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
   exit 2
 fi
 
+production_root="${NOVO_PRODUCTION_ROOT:-$ROOT_DIR/../novo-eln-prod}"
+production_env="${NOVO_PRODUCTION_ENV_FILE:-$production_root/.env.local}"
+production_runtime="${NOVO_PRODUCTION_RUNTIME_DIR:-$production_root/runtime}"
+
 if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "Refusing to promote from a checkout with tracked changes." >&2
   exit 1
@@ -41,19 +45,19 @@ if ! curl -fsS "http://127.0.0.1:${NOVO_STAGING_PORT:-3155}/" | grep -Fq '<title
   exit 1
 fi
 
-if [[ ! -f .env.local ]] || ! grep -Eq '^NOVO_INSTANCE=(prod|production)$' .env.local; then
-  echo ".env.local must explicitly set NOVO_INSTANCE=prod before production promotion." >&2
+if [[ ! -f "$production_env" ]] || ! grep -Eq '^NOVO_INSTANCE=(prod|production)$' "$production_env"; then
+  echo "$production_env must explicitly set NOVO_INSTANCE=prod before production promotion." >&2
   exit 1
 fi
-sqlite3 runtime/data/eln.sqlite3 'PRAGMA quick_check;' | grep -qx ok
+sqlite3 "$production_runtime/data/eln.sqlite3" 'PRAGMA quick_check;' | grep -qx ok
 
 previous_image="$(docker inspect novo-eln --format '{{.Config.Image}}' 2>/dev/null || true)"
 
 export NOVO_COMPOSE_PROJECT=novo-eln
 export NOVO_CONTAINER_NAME=novo-eln
 export NOVO_HOST_PORT="${NOVO_PRODUCTION_PORT:-3148}"
-export NOVO_ENV_FILE=.env.local
-export NOVO_RUNTIME_DIR=./runtime
+export NOVO_ENV_FILE="$production_env"
+export NOVO_RUNTIME_DIR="$production_runtime"
 export NOVO_IMAGE="$image"
 
 git checkout --detach "$commit"

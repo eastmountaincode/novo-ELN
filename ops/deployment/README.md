@@ -37,7 +37,9 @@ Commit changes on a feature branch and push that exact commit to GitHub.
 
 ## 2. Refresh the isolated CCIB staging data
 
-On CCIB Web 2, create `.env.staging` with a separate session secret and `NOVO_INSTANCE=dev`. Keep production explicit with `NOVO_INSTANCE=prod` in `.env.local`.
+On CCIB Web 2, keep staging in a clean checkout at `/export/home/aboylan/novo-eln-staging`. Do not deploy staging from or modify the production checkout at `/export/home/aboylan/novo-eln-prod`.
+
+In the staging checkout, create `.env.staging` with a separate session secret and `NOVO_INSTANCE=dev`. Keep production explicit with `NOVO_INSTANCE=prod` in the production checkout's `.env.local`.
 
 Refresh the disposable staging database from a transactionally consistent production snapshot:
 
@@ -45,7 +47,7 @@ Refresh the disposable staging database from a transactionally consistent produc
 scripts/refresh-staging-snapshot.sh
 ```
 
-The refresh stops staging while replacing its database. It does not copy attachments or previews. Copy only the individual files needed for a file-specific test.
+By default, the refresh reads the sibling production database at `../novo-eln-prod/runtime/data/eln.sqlite3`. Override `NOVO_PRODUCTION_DATABASE` if the production checkout lives elsewhere. The refresh stops staging while replacing its database. It does not copy attachments or previews. Copy only the individual files needed for a file-specific test.
 
 ## 3. Deploy one GitHub commit to CCIB staging
 
@@ -70,6 +72,8 @@ Promotion is a separate, explicit action on CCIB Web 2:
 ```bash
 scripts/promote-production.sh <git-commit-sha>
 ```
+
+Run promotion from the clean staging checkout. By default, it reads production configuration and runtime data from the sibling `../novo-eln-prod` checkout while using the exact image already built and verified in staging.
 
 Promotion refuses to proceed unless all of the following are true:
 

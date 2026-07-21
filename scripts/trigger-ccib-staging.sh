@@ -18,7 +18,7 @@ fi
 
 ccib_jump="${NOVO_CCIB_JUMP:-aboylan@ccibprod0.mgh.harvard.edu}"
 ccib_host="${NOVO_CCIB_HOST:-aboylan@clustweb2}"
-ccib_repo="${NOVO_CCIB_REPO:-/export/home/aboylan/novo-eln-prod}"
+ccib_repo="${NOVO_CCIB_REPO:-/export/home/aboylan/novo-eln-staging}"
 
 printf -v remote_command \
   'cd %q && git diff --quiet && git diff --cached --quiet && git fetch --prune origin && git checkout --detach %q && scripts/deploy-staging.sh %q' \

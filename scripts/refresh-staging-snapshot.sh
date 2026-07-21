@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-production_db="${NOVO_PRODUCTION_DATABASE:-$ROOT_DIR/runtime/data/eln.sqlite3}"
+production_db="${NOVO_PRODUCTION_DATABASE:-$ROOT_DIR/../novo-eln-prod/runtime/data/eln.sqlite3}"
 staging_runtime="${NOVO_STAGING_RUNTIME_DIR:-$ROOT_DIR/runtime-staging}"
 staging_db="$staging_runtime/data/eln.sqlite3"
 snapshot_tmp="$staging_runtime/data/eln.sqlite3.next"

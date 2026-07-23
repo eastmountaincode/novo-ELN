@@ -53,6 +53,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PresentationModal } from "@/components/PresentationModal";
 import { PrintPageDocument } from "@/components/PrintPageDocument";
+import { NovoDeploymentLabel, NovoWordmark } from "@/components/NovoInstanceProvider";
 import { INLINE_ATTACHMENT_DRAG_TYPE, RichTextEditor, attachmentToInlineAttrs, type InlineAttachmentAttrs } from "@/components/RichTextEditor";
 import { SpreadsheetModal } from "@/components/SpreadsheetModal";
 import { appBuildId, appVersion } from "@/generated/app-version";
@@ -110,7 +111,6 @@ const NOTEBOOK_SORT_STORAGE_KEY = "novo.notebookSortKey";
 const PAGE_ACTIVITY_PAGE_SIZE = 25;
 const SUCCESS_STATUS_CLEAR_AFTER_MS = 4400;
 const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 1000;
-const WORDMARK_TEXT = process.env.NODE_ENV === "development" ? "Novo-dev" : "Novo";
 const SIDEBAR_VERSION_TEXT = appBuildId && appBuildId !== "unknown" && appBuildId !== appVersion ? `${appVersion} · ${appBuildId}` : appVersion;
 
 const PAGE_STATUS_OPTIONS: Array<{ value: PageStatus; label: string }> = [
@@ -1315,7 +1315,10 @@ export default function Home() {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-50 text-slate-600">
         <div className="flex flex-col items-center gap-4">
-          <div className="novo-wordmark select-none text-7xl leading-none tracking-normal text-slate-950">{WORDMARK_TEXT}</div>
+          <div className="flex flex-col items-center">
+            <div className="novo-wordmark select-none text-7xl leading-none tracking-normal text-slate-950"><NovoWordmark /></div>
+            <NovoDeploymentLabel className="mt-2 text-xs font-medium leading-none text-slate-500" />
+          </div>
           <span className="inline-flex items-center gap-2 text-sm"><Loader2 size={16} className="animate-spin" />Loading...</span>
         </div>
       </main>
@@ -1327,8 +1330,9 @@ export default function Home() {
         <form onSubmit={handleAuth} className="w-full max-w-sm border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-6">
             <div className="mb-4">
-              <p className="novo-wordmark select-none text-3xl leading-none tracking-normal text-slate-950">{WORDMARK_TEXT}</p>
-              {authMode === "register" ? <h1 className="mt-1 text-base font-semibold text-slate-700">Create an account</h1> : null}
+              <p className="novo-wordmark select-none text-3xl leading-none tracking-normal text-slate-950"><NovoWordmark /></p>
+              <NovoDeploymentLabel className="mt-1 text-xs font-medium leading-none text-slate-500" />
+              {authMode === "register" ? <h1 className="mt-2 text-base font-semibold text-slate-700">Create an account</h1> : null}
             </div>
             <div className="grid grid-cols-2 border border-slate-200 p-1 text-sm font-medium">
               <button
@@ -2291,11 +2295,12 @@ function UnifiedSidebar({ workspace, activeView, selectedNotebook, sidebarCollap
                   openHome();
                 }
               }}
-              className="novo-wordmark sidebar-wide min-w-0 cursor-pointer select-none px-1 py-1 text-5xl leading-none tracking-normal text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+              className="sidebar-wide min-w-0 cursor-pointer select-none px-1 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
               aria-label="Go to home"
               title="Overview"
             >
-              {WORDMARK_TEXT}
+              <div className="novo-wordmark text-5xl leading-none tracking-normal text-slate-100"><NovoWordmark /></div>
+              <NovoDeploymentLabel className="mt-1 max-w-full truncate text-xs font-medium leading-none text-slate-400" />
             </div>
             <button
               type="button"

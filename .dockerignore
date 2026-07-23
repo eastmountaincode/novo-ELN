@@ -8,6 +8,7 @@ data
 storage
 runtime
 runtime-dev
+runtime-staging
 .env
 .env.*
 !.env.example

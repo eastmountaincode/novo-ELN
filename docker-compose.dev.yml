@@ -1,0 +1,31 @@
+name: novo-dev
+
+services:
+  novo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    image: novo-eln-dev:latest
+    container_name: novo-dev
+    restart: unless-stopped
+    command: ["npm", "run", "dev", "--", "--webpack", "--hostname", "0.0.0.0", "--port", "3000"]
+    ports:
+      - "127.0.0.1:3155:3000"
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: development
+      NOVO_INSTANCE: dev
+      NOVO_DEPLOYMENT_LABEL: AORUS2 development
+      ELN_DATA_DIR: /app-data/data
+      ELN_UPLOAD_DIR: /app-data/uploads
+      ELN_PREVIEW_DIR: /app-data/previews
+      ELN_DATABASE_PATH: /app-data/data/eln.sqlite3
+    volumes:
+      - ./runtime:/app-data
+      - ./next.config.ts:/app/next.config.ts
+      - ./postcss.config.mjs:/app/postcss.config.mjs
+      - ./public:/app/public
+      - ./src:/app/src
+      - ./tsconfig.json:/app/tsconfig.json

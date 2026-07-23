@@ -1,4 +1,4 @@
-name: novo-eln
+name: ${NOVO_COMPOSE_PROJECT:-novo-eln}
 
 services:
   novo:
@@ -8,13 +8,14 @@ services:
       args:
         NOVO_BUILD_ID: ${NOVO_BUILD_ID:-unknown}
         NOVO_BUILD_DATE: ${NOVO_BUILD_DATE:-}
-    image: novo-eln:latest
-    container_name: novo-eln
+        NOVO_GIT_SHA: ${NOVO_GIT_SHA:-unknown}
+    image: ${NOVO_IMAGE:-novo-eln:latest}
+    container_name: ${NOVO_CONTAINER_NAME:-novo-eln}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3148:3000"
+      - "127.0.0.1:${NOVO_HOST_PORT:-3148}:3000"
     env_file:
-      - .env.local
+      - ${NOVO_ENV_FILE:-.env.local}
     environment:
       NODE_ENV: production
       ELN_DATA_DIR: /app-data/data
@@ -22,4 +23,4 @@ services:
       ELN_PREVIEW_DIR: /app-data/previews
       ELN_DATABASE_PATH: /app-data/data/eln.sqlite3
     volumes:
-      - ./runtime:/app-data
+      - ${NOVO_RUNTIME_DIR:-./runtime}:/app-data

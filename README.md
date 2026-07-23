@@ -34,6 +34,7 @@ cp .env.example .env.local
 ```
 
 Edit `.env.local` and set `ELN_SESSION_SECRET` to a long random value of at least 32 characters.
+Set `NOVO_INSTANCE=prod` for a production instance.
 
 Then start the app:
 
@@ -44,7 +45,7 @@ docker compose up -d --build
 Open:
 
 ```text
-http://localhost:3155
+http://localhost:3148
 ```
 
 Stop the container:
@@ -57,8 +58,16 @@ Update after pulling new code:
 
 ```bash
 git pull
-docker compose up -d --build
+scripts/deploy-production.sh <tested-git-commit-sha>
 ```
+
+For active development with hot reload and `Novo-dev` branding:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+The development server listens on `127.0.0.1:3155`. See `ops/deployment/README.md` for the AORUS to GitHub to CCIB staging and production promotion workflow.
 
 ## Admin Access
 

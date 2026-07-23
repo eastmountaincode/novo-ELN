@@ -38,6 +38,7 @@ dev.pid
 # Local runtime data
 /data/
 /runtime/
+/runtime-staging/
 /storage/
 # macOS sidecar metadata
 ._*

@@ -17,6 +17,7 @@ services:
     environment:
       NODE_ENV: development
       NOVO_INSTANCE: dev
+      NOVO_DEPLOYMENT_LABEL: AORUS2 development
       ELN_DATA_DIR: /app-data/data
       ELN_UPLOAD_DIR: /app-data/uploads
       ELN_PREVIEW_DIR: /app-data/previews

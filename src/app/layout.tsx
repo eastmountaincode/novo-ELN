@@ -46,12 +46,14 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   await connection();
-  const { instance, wordmark } = getNovoBrand();
+  const { instance, wordmark, deploymentLabel } = getNovoBrand();
 
   return (
     <html lang="en" data-novo-instance={instance} className={`${geistSans.variable} ${geistMono.variable}`}>
       <body>
-        <NovoInstanceProvider wordmark={wordmark}>{children}</NovoInstanceProvider>
+        <NovoInstanceProvider wordmark={wordmark} deploymentLabel={deploymentLabel}>
+          {children}
+        </NovoInstanceProvider>
       </body>
     </html>
   );

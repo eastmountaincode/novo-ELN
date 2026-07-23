@@ -33,6 +33,12 @@ html {
   background: var(--background);
 }
 
+@media screen {
+  html {
+    font-size: 90%;
+  }
+}
+
 body {
   height: 100%;
   margin: 0;

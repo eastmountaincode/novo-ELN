@@ -8,6 +8,8 @@ GitHub is the source of truth for application code. Runtime databases, uploaded 
 
 - `NOVO_INSTANCE=dev` shows `Novo-dev` in development and staging.
 - `NOVO_INSTANCE=prod` shows `Novo` in production.
+- `NOVO_DEPLOYMENT_LABEL` adds a subtitle beneath `Novo-dev`, such as
+  `AORUS2 development` or `CCIBWeb2 staging`. Production ignores this value.
 
 The production Docker image always runs the optimized Next.js server. Its visible identity is read from the container environment at runtime, so one immutable image can be tested as `Novo-dev` in staging and promoted as `Novo` in production.
 
@@ -39,7 +41,10 @@ Commit changes on a feature branch and push that exact commit to GitHub.
 
 On CCIB Web 2, keep staging in a clean checkout at `/export/home/aboylan/novo-eln-staging`. Do not deploy staging from or modify the production checkout at `/export/home/aboylan/novo-eln-prod`.
 
-In the staging checkout, create `.env.staging` with a separate session secret and `NOVO_INSTANCE=dev`. Keep production explicit with `NOVO_INSTANCE=prod` in the production checkout's `.env.local`.
+In the staging checkout, create `.env.staging` with a separate session secret,
+`NOVO_INSTANCE=dev`, and `NOVO_DEPLOYMENT_LABEL=CCIBWeb2 staging`. Keep
+production explicit with `NOVO_INSTANCE=prod` in the production checkout's
+`.env.local`.
 
 Refresh the disposable staging database from a transactionally consistent production snapshot:
 
@@ -89,8 +94,8 @@ The production container then starts the already-tested image without rebuilding
 
 | Instance | Container | Loopback port | Runtime directory | Identity |
 | --- | --- | --- | --- | --- |
-| AORUS development | `novo-dev` | 3155 | `runtime/` on AORUS | `Novo-dev` |
-| CCIB staging | `novo-staging` | 3155 | `runtime-staging/` on CCIB | `Novo-dev` |
+| AORUS development | `novo-dev` | 3155 | `runtime/` on AORUS | `Novo-dev` / `AORUS2 development` |
+| CCIB staging | `novo-staging` | 3155 | `runtime-staging/` on CCIB | `Novo-dev` / `CCIBWeb2 staging` |
 | CCIB production | `novo-eln` | 3148 | `runtime/` on CCIB | `Novo` |
 
 Never mount the production runtime directory into staging. When reproducing a data-specific problem, refresh the staging snapshot and treat it as disposable.

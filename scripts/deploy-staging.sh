@@ -32,6 +32,11 @@ if ! grep -Eq '^NOVO_INSTANCE=(dev|development|staging)$' .env.staging; then
   echo ".env.staging must explicitly set NOVO_INSTANCE=dev." >&2
   exit 1
 fi
+deployment_label="$(sed -n 's/^NOVO_DEPLOYMENT_LABEL=//p' .env.staging | tail -n 1)"
+if [[ -z "${deployment_label//[[:space:]]/}" ]]; then
+  echo ".env.staging must explicitly set NOVO_DEPLOYMENT_LABEL." >&2
+  exit 1
+fi
 if [[ ! -f runtime-staging/data/eln.sqlite3 ]]; then
   echo "Missing staging database. Run scripts/refresh-staging-snapshot.sh first." >&2
   exit 1
@@ -61,14 +66,16 @@ docker compose up -d --no-build novo
 page=""
 for _attempt in $(seq 1 60); do
   page="$(curl -fsS "http://127.0.0.1:${NOVO_HOST_PORT}/" 2>/dev/null || true)"
-  if grep -Fq '<title>Novo-dev</title>' <<<"$page"; then
+  if grep -Fq '<title>Novo-dev</title>' <<<"$page" &&
+    grep -Fq "$deployment_label" <<<"$page"; then
     break
   fi
   sleep 1
 done
 
-if ! grep -Fq '<title>Novo-dev</title>' <<<"$page"; then
-  echo "Staging failed its Novo-dev health check." >&2
+if ! grep -Fq '<title>Novo-dev</title>' <<<"$page" ||
+  ! grep -Fq "$deployment_label" <<<"$page"; then
+  echo "Staging failed its Novo-dev identity health check." >&2
   docker logs --tail=100 "$NOVO_CONTAINER_NAME" >&2 || true
   exit 1
 fi

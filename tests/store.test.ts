@@ -103,17 +103,19 @@ describe("store", () => {
   });
 
   it("creates and updates pages through the repository API", async () => {
-    const { getWorkspace, createPage, updatePage } = await import("../src/lib/store");
+    const { bodyToEditorText } = await import("../src/lib/editor");
+    const { getPage, getWorkspace, createPage, updatePage } = await import("../src/lib/store");
     const user = await createTestAdmin();
     const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
 
     updatePage(user.id, pageId, { title: "Edited title", body: "Edited body", status: "Completed" });
 
-    const page = getWorkspace(user.id).notebooks[0].pages.find((candidate) => candidate.id === pageId);
-    expect(page?.title).toBe("Edited title");
-    expect(page?.body).toBe("Edited body");
-    expect(page?.status).toBe("Completed");
+    const page = getPage(user.id, pageId);
+    expect(page.title).toBe("Edited title");
+    expect(bodyToEditorText(page.body).trim()).toBe("Edited body");
+    expect(page.bodyLoaded).toBe(true);
+    expect(page.status).toBe("Completed");
   });
 
   it("does not timestamp or audit no-op page saves", async () => {
@@ -158,7 +160,6 @@ describe("store", () => {
       size: 10,
       storageKey: "audit.pdf",
       blockType: "pdf",
-      previewText: "",
     });
 
     let events = getPageActivityEvents(user.id, pageId).events;
@@ -258,7 +259,7 @@ describe("store", () => {
 
   it("searches pages with FTS ranking and fuzzy fallback", async () => {
     const { getWorkspace, createNotebook, createPage, updatePage } = await import("../src/lib/store");
-    const { searchWorkspace } = await import("../src/lib/search");
+    const { searchWorkspace, updateSearchIndexForPage } = await import("../src/lib/search");
     const user = await createTestAdmin();
     const notebookId = getWorkspace(user.id).notebooks[0].id;
     const pageId = createPage(user.id, notebookId);
@@ -273,6 +274,8 @@ describe("store", () => {
       title: "ctDNA-Expt57 DNA/exosome isolation from B16F10-ROR1 tumors in B6 mice",
       body: "Compare direct DNA isolation from plasma. Tumor cells are processed before sequencing.",
     });
+    updateSearchIndexForPage(pageId);
+    updateSearchIndexForPage(relatedPageId);
 
     const titleResults = searchWorkspace(user.id, "GPA33");
     expect(titleResults[0]?.pageId).toBe(pageId);
@@ -356,7 +359,6 @@ describe("store", () => {
       size: 5,
       storageKey: "attached.txt",
       blockType: "file",
-      previewText: "",
     });
 
     const overview = getAdminDataOverview(admin.id);
@@ -433,7 +435,6 @@ describe("store", () => {
       size: 4,
       storageKey: "permissions.txt",
       blockType: "file",
-      previewText: "permissions",
     });
 
     shareNotebook({ actorUserId: owner.id, notebookId, email: viewer.email, role: "viewer" });
@@ -452,7 +453,6 @@ describe("store", () => {
       size: 1,
       storageKey: "viewer.txt",
       blockType: "file",
-      previewText: "",
     })).toThrow("Forbidden");
     expect(() => updateAttachmentFile({
       userId: viewer.id,
@@ -476,16 +476,15 @@ describe("store", () => {
       size: 1,
       storageKey: "editor.txt",
       blockType: "file",
-      previewText: "",
     });
     expect(() => shareNotebook({ actorUserId: editor.id, notebookId, email: viewer.email, role: "editor" })).toThrow("Only owners can manage sharing.");
     expect(() => deleteNotebook(editor.id, notebookId)).toThrow("Only owners can manage sharing.");
 
-    expect(() => setPageLocked(editor.id, pageId, true)).toThrow("Only owners can lock pages.");
-    setPageLocked(owner.id, pageId, true);
+    expect(() => setPageLocked(viewer.id, pageId, true)).toThrow("Only editors and owners can lock pages.");
+    setPageLocked(editor.id, pageId, true);
     const lockedPage = getWorkspace(owner.id).notebooks.find((notebook) => notebook.id === notebookId)?.pages.find((page) => page.id === pageId);
     expect(lockedPage?.lockedAt).toBeTruthy();
-    expect(lockedPage?.lockedBy).toBe(owner.id);
+    expect(lockedPage?.lockedBy).toBe(editor.id);
     expect(() => updatePage(owner.id, pageId, { title: "Owner edit while locked" })).toThrow("Page is locked.");
     expect(() => updatePage(editor.id, pageId, { title: "Editor edit while locked" })).toThrow("Page is locked.");
     expect(() => setPageTags(owner.id, pageId, ["locked"])).toThrow("Page is locked.");
@@ -497,7 +496,6 @@ describe("store", () => {
       size: 1,
       storageKey: "locked.txt",
       blockType: "file",
-      previewText: "",
     })).toThrow("Page is locked.");
     expect(() => deleteAttachment(owner.id, attachmentId)).toThrow("Page is locked.");
     expect(() => deletePage(owner.id, pageId)).toThrow("Page is locked.");
@@ -508,7 +506,7 @@ describe("store", () => {
 
   it("uses notebook membership roles for ownership instead of creator status", async () => {
     const { createNotebook, createUser, getWorkspace, shareNotebook, unshareNotebook } = await import("../src/lib/store");
-    const creator = await createTestAdmin();
+    const creator = createUser({ email: "notebook.creator@example.local", firstName: "Notebook", lastName: "Creator", password: "Creator-password-2026!" });
     const secondOwner = createUser({ email: "second.owner@example.local", firstName: "Second", lastName: "Owner", password: "Owner-password-2026!" });
     const viewer = createUser({ email: "shared.viewer@example.local", firstName: "Shared", lastName: "Viewer", password: "Viewer-password-2026!" });
     const notebookId = createNotebook(creator.id, "Multiple Owner Notebook").notebookId;
@@ -522,10 +520,15 @@ describe("store", () => {
     expect(() => shareNotebook({ actorUserId: secondOwner.id, notebookId, email: secondOwner.email, role: "viewer" })).toThrow(
       "Owners cannot change their own role.",
     );
-    expect(() => unshareNotebook(secondOwner.id, notebookId, secondOwner.id)).toThrow("Owners cannot remove themselves.");
-
     shareNotebook({ actorUserId: secondOwner.id, notebookId, email: creator.email, role: "viewer" });
 
     expect(getWorkspace(creator.id).notebooks.find((notebook) => notebook.id === notebookId)?.accessRole).toBe("viewer");
+    expect(() => unshareNotebook(secondOwner.id, notebookId, secondOwner.id)).toThrow("Notebooks need at least one owner.");
+
+    shareNotebook({ actorUserId: secondOwner.id, notebookId, email: creator.email, role: "owner" });
+    unshareNotebook(secondOwner.id, notebookId, secondOwner.id);
+
+    expect(getWorkspace(secondOwner.id).notebooks.some((notebook) => notebook.id === notebookId)).toBe(false);
+    expect(getWorkspace(creator.id).notebooks.find((notebook) => notebook.id === notebookId)?.accessRole).toBe("owner");
   });
 });

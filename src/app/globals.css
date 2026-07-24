@@ -123,6 +123,14 @@ input:disabled {
   margin-top: 0.75rem;
 }
 
+.rich-text-surface > h2:not(:first-child) {
+  margin-top: 1.75rem;
+}
+
+.rich-text-surface > h2 + * {
+  margin-top: 0.5rem;
+}
+
 .rich-text-surface h1 {
   font-size: 1.75rem;
   font-weight: 650;
@@ -205,11 +213,15 @@ input:disabled {
 }
 
 .rich-text-surface pre {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.25rem;
+  color: #1e293b;
   font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
   overflow-x: auto;
-  padding: 0.75rem;
+  padding: 0.75rem 0.875rem;
 }
 
 .rich-text-surface code {

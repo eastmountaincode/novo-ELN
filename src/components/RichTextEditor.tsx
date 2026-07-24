@@ -5,7 +5,7 @@ import { Extension, Mark, Node, mergeAttributes, type Editor } from "@tiptap/cor
 import type { Mark as ProseMirrorMark } from "@tiptap/pm/model";
 import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type JSONContent, type NodeViewProps } from "@tiptap/react";
+import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, useEditorState, type JSONContent, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Color } from "@tiptap/extension-color";
 import Link from "@tiptap/extension-link";
@@ -304,6 +304,15 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       saveDirtyBody(editorDocumentToBody(activeEditor.getJSON()));
     },
   });
+  const historyState = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => ({
+      canUndo: activeEditor?.can().undo() ?? false,
+      canRedo: activeEditor?.can().redo() ?? false,
+    }),
+  });
+  const canUndo = historyState?.canUndo ?? false;
+  const canRedo = historyState?.canRedo ?? false;
 
   useEffect(() => {
     if (!editor) return;
@@ -531,7 +540,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
             <ToolbarDivider />
             <ToolbarMenu
               label="Table"
-              icon={<TableIcon size={15} />}
+              icon={null}
               items={() => [
                 {
                   label: "Insert 3 × 3 table",
@@ -582,7 +591,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
             <ToolbarDivider />
             <ToolbarMenu
               label="Insert"
-              icon={<Plus size={15} />}
+              icon={null}
               items={[
                 { label: "Image", icon: <FileImage size={15} />, onSelect: () => void insertInlineFile("image", imageAccept) },
                 { label: "Spreadsheet", icon: <FileSpreadsheet size={15} />, onSelect: () => void insertInlineFile("sheet", spreadsheetAccept) },
@@ -591,8 +600,8 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
               ]}
             />
             <ToolbarDivider />
-            <ToolbarButton onClick={() => editor.chain().focus().undo().run()} label="Undo"><Undo2 size={15} /></ToolbarButton>
-            <ToolbarButton onClick={() => editor.chain().focus().redo().run()} label="Redo"><Redo2 size={15} /></ToolbarButton>
+            <ToolbarButton disabled={!canUndo} onClick={() => editor.chain().focus().undo().run()} label="Undo"><Undo2 size={15} /></ToolbarButton>
+            <ToolbarButton disabled={!canRedo} onClick={() => editor.chain().focus().redo().run()} label="Redo"><Redo2 size={15} /></ToolbarButton>
           </>
         ) : null}
         {onPrint || onExportPdf || onExportArchive ? (
@@ -1775,17 +1784,18 @@ function CommentComposer({ anchorRef, value, error, blockMessage, submitting, on
   );
 }
 
-function ToolbarButton({ active, label, onClick, children, buttonRef }: { active?: boolean; label: string; onClick: () => void; children: ReactNode; buttonRef?: RefObject<HTMLButtonElement | null> }) {
+function ToolbarButton({ active, disabled = false, label, onClick, children, buttonRef }: { active?: boolean; disabled?: boolean; label: string; onClick: () => void; children: ReactNode; buttonRef?: RefObject<HTMLButtonElement | null> }) {
   return (
     <button
       ref={buttonRef}
       type="button"
+      disabled={disabled}
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
       title={label}
       aria-label={label}
       aria-pressed={active}
-      className={`grid size-8 cursor-pointer place-items-center border text-slate-700 hover:bg-white ${active ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-transparent"}`}
+      className={`grid size-8 cursor-pointer place-items-center border text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent ${active ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-transparent"}`}
     >
       {children}
     </button>

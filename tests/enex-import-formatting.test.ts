@@ -31,13 +31,14 @@ describe("ENEX import formatting", () => {
         </note>
       </en-export>`);
 
-    const { createUser, getWorkspace } = await import("../src/lib/store");
+    const { createUser, getPage, getWorkspace } = await import("../src/lib/store");
     const { importEnexFile } = await import("../src/lib/enex");
     const user = createUser({ email: "test@example.local", firstName: "Test", lastName: "User", password: "Strong-password-2026!" });
     await importEnexFile({ userId: user.id, notebookName: "Formatting", filePath: enexPath });
 
-    const importedPage = getWorkspace(user.id).notebooks.find((notebook) => notebook.name === "Formatting")?.pages[0];
-    const body = JSON.parse(importedPage!.body);
+    const importedPageSummary = getWorkspace(user.id).notebooks.find((notebook) => notebook.name === "Formatting")?.pages[0];
+    const importedPage = getPage(user.id, importedPageSummary!.id);
+    const body = JSON.parse(importedPage.body);
 
     expect(body.content).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "heading", attrs: { level: 2 } }),

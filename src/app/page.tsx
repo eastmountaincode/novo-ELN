@@ -4918,7 +4918,7 @@ function AdminActivityPanel() {
                 <p className="mt-1 whitespace-normal break-words text-xs text-slate-500 [overflow-wrap:anywhere]">
                   <AdminActivityContext event={event} />
                 </p>
-                <p className="mt-1 text-xs font-medium text-blue-700">{formatDateTime(event.updatedAt)}</p>
+                <p className="mt-1 text-xs font-medium text-slate-500">{formatDateTime(event.updatedAt)}</p>
               </div>
             </div>
           ))}
@@ -5659,7 +5659,7 @@ function PageActivityDrawer({ events, loading, loadingMore, hasMore, error, onRe
                   <span className="font-semibold text-slate-950">{auditActorName(event)}</span>{" "}
                   {event.summary}
                 </p>
-                <p className="mt-1 text-xs font-medium text-blue-700">{formatDateTime(event.updatedAt)}</p>
+                <p className="mt-1 text-xs font-medium text-slate-500">{formatDateTime(event.updatedAt)}</p>
               </div>
             </div>
           ))}
@@ -5813,7 +5813,7 @@ function PageCommentPopover({ threads, loading, error, selectedThreadId, canEdit
                     <div className="min-w-0">
                       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
                         <p className="text-sm font-semibold text-slate-950">{commentAuthorName(comment)}</p>
-                        <p className="text-xs font-medium text-blue-700">{formatDateTime(comment.createdAt)}</p>
+                        <p className="text-xs font-medium text-slate-500">{formatDateTime(comment.createdAt)}</p>
                       </div>
                       <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-700">{comment.body}</p>
                     </div>

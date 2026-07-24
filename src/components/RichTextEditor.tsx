@@ -1,5 +1,6 @@
 "use client";
 
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Extension, Mark, Node, mergeAttributes, type Editor } from "@tiptap/core";
 import type { Mark as ProseMirrorMark } from "@tiptap/pm/model";
 import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
@@ -16,6 +17,7 @@ import {
   Bold,
   CalendarClock,
   CalendarPlus,
+  ChevronDown,
   Code,
   Columns3,
   Download,
@@ -54,7 +56,7 @@ import {
   Unlink,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { PresentationPreviewCarousel } from "@/components/PresentationPreviewCarousel";
 import { bodyToEditorDocument, editorDocumentToBody } from "@/lib/editor";
@@ -375,6 +377,17 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run();
   }
 
+  function commitEditorCommand(command: () => boolean) {
+    if (!editor || !command()) return;
+    const body = editorDocumentToBody(editor.getJSON());
+    // A menu can trigger a blur save before its command runs, so queue the newer body immediately.
+    latestBody.current = body;
+    dirty.current = false;
+    clearAutosaveTimer();
+    onChange(body);
+    onBlur(body);
+  }
+
   function openCommentComposer() {
     if (!editor || readOnly || !onCreateComment) return;
     const { from, to, empty } = editor.state.selection;
@@ -496,7 +509,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     <div
       className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border border-slate-300 bg-white"
     >
-      {!readOnly || onPrint || onExportPdf || onExportArchive ? <div className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
+      {!readOnly || onPrint || onExportPdf || onExportArchive ? <div role="group" aria-label="Text editor controls" className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
         {!readOnly ? (
           <>
             <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
@@ -516,17 +529,67 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
             <ToolbarButton active={editor.isActive("link")} onClick={setLink} label="Link"><LinkIcon size={15} /></ToolbarButton>
             <ToolbarButton onClick={() => editor.chain().focus().unsetLink().run()} label="Remove link"><Unlink size={15} /></ToolbarButton>
             <ToolbarDivider />
-            <ToolbarButton onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} label="Insert table"><TableIcon size={15} /></ToolbarButton>
-            <ToolbarButton onClick={() => editor.chain().focus().deleteRow().run()} label="Delete row"><TableActionIcon kind="row" action="delete" /></ToolbarButton>
-            <ToolbarButton onClick={() => editor.chain().focus().addRowAfter().run()} label="Add row below"><TableActionIcon kind="row" action="add" /></ToolbarButton>
-            <ToolbarButton onClick={() => editor.chain().focus().deleteColumn().run()} label="Delete column"><TableActionIcon kind="column" action="delete" /></ToolbarButton>
-            <ToolbarButton onClick={() => editor.chain().focus().addColumnAfter().run()} label="Add column right"><TableActionIcon kind="column" action="add" /></ToolbarButton>
-            <ToolbarButton onClick={() => editor.chain().focus().deleteTable().run()} label="Delete table"><TableActionIcon kind="table" action="delete" /></ToolbarButton>
+            <ToolbarMenu
+              label="Table"
+              icon={<TableIcon size={15} />}
+              items={() => [
+                {
+                  label: "Insert 3 × 3 table",
+                  icon: <TableIcon size={15} />,
+                  onSelect: () => commitEditorCommand(() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()),
+                  disabled: !editor.can().chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+                  focusEditor: true,
+                },
+                {
+                  label: "Add row below",
+                  icon: <TableActionIcon kind="row" action="add" />,
+                  onSelect: () => commitEditorCommand(() => editor.chain().focus().addRowAfter().run()),
+                  disabled: !editor.can().chain().focus().addRowAfter().run(),
+                  separatorBefore: true,
+                  focusEditor: true,
+                },
+                {
+                  label: "Delete row",
+                  icon: <TableActionIcon kind="row" action="delete" />,
+                  onSelect: () => commitEditorCommand(() => editor.chain().focus().deleteRow().run()),
+                  disabled: !editor.can().chain().focus().deleteRow().run(),
+                  focusEditor: true,
+                },
+                {
+                  label: "Add column right",
+                  icon: <TableActionIcon kind="column" action="add" />,
+                  onSelect: () => commitEditorCommand(() => editor.chain().focus().addColumnAfter().run()),
+                  disabled: !editor.can().chain().focus().addColumnAfter().run(),
+                  focusEditor: true,
+                },
+                {
+                  label: "Delete column",
+                  icon: <TableActionIcon kind="column" action="delete" />,
+                  onSelect: () => commitEditorCommand(() => editor.chain().focus().deleteColumn().run()),
+                  disabled: !editor.can().chain().focus().deleteColumn().run(),
+                  focusEditor: true,
+                },
+                {
+                  label: "Delete table",
+                  icon: <TableActionIcon kind="table" action="delete" />,
+                  onSelect: () => commitEditorCommand(() => editor.chain().focus().deleteTable().run()),
+                  disabled: !editor.can().chain().focus().deleteTable().run(),
+                  separatorBefore: true,
+                  focusEditor: true,
+                },
+              ]}
+            />
             <ToolbarDivider />
-            <ToolbarButton onClick={() => void insertInlineFile("image", imageAccept)} label="Insert image"><FileImage size={15} /></ToolbarButton>
-            <ToolbarButton onClick={() => void insertInlineFile("sheet", spreadsheetAccept)} label="Insert spreadsheet"><FileSpreadsheet size={15} /></ToolbarButton>
-            <ToolbarButton onClick={() => void insertInlineFile("slides", presentationAccept)} label="Insert presentation"><Presentation size={15} /></ToolbarButton>
-            <ToolbarButton onClick={() => void insertInlineFile("file", "")} label="Insert file"><Plus size={15} /></ToolbarButton>
+            <ToolbarMenu
+              label="Insert"
+              icon={<Plus size={15} />}
+              items={[
+                { label: "Image", icon: <FileImage size={15} />, onSelect: () => void insertInlineFile("image", imageAccept) },
+                { label: "Spreadsheet", icon: <FileSpreadsheet size={15} />, onSelect: () => void insertInlineFile("sheet", spreadsheetAccept) },
+                { label: "Presentation", icon: <Presentation size={15} />, onSelect: () => void insertInlineFile("slides", presentationAccept) },
+                { label: "File", icon: <File size={15} />, onSelect: () => void insertInlineFile("file", "") },
+              ]}
+            />
             <ToolbarDivider />
             <ToolbarButton onClick={() => editor.chain().focus().undo().run()} label="Undo"><Undo2 size={15} /></ToolbarButton>
             <ToolbarButton onClick={() => editor.chain().focus().redo().run()} label="Redo"><Redo2 size={15} /></ToolbarButton>
@@ -1521,7 +1584,7 @@ function TextColorMenu({ editor }: { editor: Editor }) {
         title="Text color"
         aria-label="Text color"
         aria-expanded={open}
-        className={`grid size-8 place-items-center border text-slate-700 hover:bg-white ${currentColor ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-transparent"}`}
+        className={`grid size-8 cursor-pointer place-items-center border text-slate-700 hover:bg-white ${currentColor ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-transparent"}`}
       >
         <span className="relative grid size-5 place-items-center">
           <Palette size={15} />
@@ -1538,7 +1601,7 @@ function TextColorMenu({ editor }: { editor: Editor }) {
               key={option.label}
               type="button"
               onClick={() => applyTextColor(option.value)}
-              className={`flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 ${option.value === currentColor ? "bg-cyan-50 text-cyan-900" : ""}`}
+              className={`flex w-full cursor-pointer items-center gap-2 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 ${option.value === currentColor ? "bg-cyan-50 text-cyan-900" : ""}`}
             >
               <span className="size-3 shrink-0 rounded-full border border-slate-300" style={{ backgroundColor: option.swatch }} />
               <span className="min-w-0 flex-1">{option.label}</span>
@@ -1550,100 +1613,101 @@ function TextColorMenu({ editor }: { editor: Editor }) {
   );
 }
 
-function ExportMenu({ onExportPdf, onExportArchive, exporting }: { onExportPdf?: () => void; onExportArchive?: () => void; exporting?: boolean }) {
+type ToolbarMenuItem = {
+  label: string;
+  icon: ReactNode;
+  onSelect: () => void;
+  disabled?: boolean;
+  separatorBefore?: boolean;
+  focusEditor?: boolean;
+};
+
+function ToolbarMenu({
+  label,
+  icon,
+  items,
+  align = "start",
+  iconOnly = false,
+  disabled = false,
+}: {
+  label: string;
+  icon: ReactNode;
+  items: ToolbarMenuItem[] | (() => ToolbarMenuItem[]);
+  align?: "start" | "center" | "end";
+  iconOnly?: boolean;
+  disabled?: boolean;
+}) {
   const [open, setOpen] = useState(false);
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const buttonRef = useRef<HTMLButtonElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-
-    function positionMenu() {
-      const rect = buttonRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const menuWidth = 176;
-      const viewportPadding = 8;
-      setMenuPosition({
-        top: rect.bottom + 4,
-        left: Math.max(viewportPadding, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - viewportPadding)),
-      });
-    }
-
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-
-    positionMenu();
-    window.addEventListener("resize", positionMenu);
-    window.addEventListener("scroll", positionMenu, true);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.removeEventListener("resize", positionMenu);
-      window.removeEventListener("scroll", positionMenu, true);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
-  function exportPdf() {
-    if (exporting) return;
-    setOpen(false);
-    onExportPdf?.();
-  }
-
-  function exportArchive() {
-    if (exporting) return;
-    setOpen(false);
-    onExportArchive?.();
-  }
+  const keepEditorFocus = useRef(false);
+  const resolvedItems = typeof items === "function" ? items() : items;
 
   return (
-    <div className="relative">
-      <button
-        ref={buttonRef}
-        type="button"
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={() => !exporting && setOpen((value) => !value)}
-        disabled={exporting}
-        title={exporting ? "Exporting" : "Export"}
-        aria-label={exporting ? "Exporting" : "Export"}
-        aria-expanded={open}
-        className={`inline-flex size-8 items-center justify-center border text-sm text-slate-700 hover:bg-white disabled:cursor-wait disabled:text-slate-400 ${open ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-transparent"}`}
-      >
-        {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-      </button>
-      {open && menuPosition ? createPortal(
-        <div
-          className="fixed z-[1000] w-44 border border-slate-300 bg-white p-1 shadow-lg"
-          style={{ top: menuPosition.top, left: menuPosition.left }}
-          onMouseDown={(event) => event.preventDefault()}
+    <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          title={label}
+          aria-label={label}
+          className={`${iconOnly ? "grid size-8 place-items-center" : "inline-flex h-8 items-center gap-1.5 px-2"} cursor-pointer border text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:text-slate-400 ${open ? "border-slate-300 bg-white text-slate-900" : "border-transparent"}`}
         >
-          <div className="px-2 pb-1 pt-1 text-xs font-semibold text-slate-500">Export</div>
-          {onExportPdf ? (
-            <button
-              type="button"
-              onClick={exportPdf}
-              disabled={exporting}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:text-slate-400"
-            >
-              <FileText size={14} />
-              <span>PDF</span>
-            </button>
+          {icon}
+          {!iconOnly ? (
+            <>
+              <span className="text-xs font-medium">{label}</span>
+              <ChevronDown size={12} aria-hidden="true" />
+            </>
           ) : null}
-          {onExportArchive ? (
-            <button
-              type="button"
-              onClick={exportArchive}
-              disabled={exporting}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:text-slate-400"
-            >
-              <FileArchive size={14} />
-              <span>ZIP archive</span>
-            </button>
-          ) : null}
-        </div>,
-        document.body,
-      ) : null}
-    </div>
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align={align}
+          sideOffset={4}
+          collisionPadding={8}
+          onCloseAutoFocus={(event) => {
+            if (!keepEditorFocus.current) return;
+            event.preventDefault();
+            keepEditorFocus.current = false;
+          }}
+          className="z-[1000] min-w-48 border border-slate-200 bg-white p-1 shadow-md outline-none"
+        >
+          <DropdownMenu.Label className="px-2 pb-1 pt-1 text-xs font-semibold text-slate-500">{label}</DropdownMenu.Label>
+          {resolvedItems.map((item) => (
+            <Fragment key={item.label}>
+              {item.separatorBefore ? <DropdownMenu.Separator className="my-1 h-px bg-slate-200" /> : null}
+              <DropdownMenu.Item
+                disabled={item.disabled}
+                onSelect={() => {
+                  keepEditorFocus.current = Boolean(item.focusEditor);
+                  item.onSelect();
+                }}
+                className="flex cursor-pointer select-none items-center gap-2 px-2 py-1.5 text-xs text-slate-700 outline-none data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900 data-[disabled]:cursor-not-allowed data-[disabled]:text-slate-300"
+              >
+                <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">{item.icon}</span>
+                <span className="min-w-0 flex-1">{item.label}</span>
+              </DropdownMenu.Item>
+            </Fragment>
+          ))}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+function ExportMenu({ onExportPdf, onExportArchive, exporting }: { onExportPdf?: () => void; onExportArchive?: () => void; exporting?: boolean }) {
+  const items: ToolbarMenuItem[] = [];
+  if (onExportPdf) items.push({ label: "PDF", icon: <FileText size={14} />, onSelect: onExportPdf, disabled: exporting });
+  if (onExportArchive) items.push({ label: "ZIP archive", icon: <FileArchive size={14} />, onSelect: onExportArchive, disabled: exporting });
+  return (
+    <ToolbarMenu
+      label={exporting ? "Exporting" : "Export"}
+      icon={exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+      items={items}
+      align="end"
+      iconOnly
+      disabled={exporting}
+    />
   );
 }
 
@@ -1711,7 +1775,7 @@ function CommentComposer({ anchorRef, value, error, blockMessage, submitting, on
   );
 }
 
-function ToolbarButton({ active = false, label, onClick, children, buttonRef }: { active?: boolean; label: string; onClick: () => void; children: ReactNode; buttonRef?: RefObject<HTMLButtonElement | null> }) {
+function ToolbarButton({ active, label, onClick, children, buttonRef }: { active?: boolean; label: string; onClick: () => void; children: ReactNode; buttonRef?: RefObject<HTMLButtonElement | null> }) {
   return (
     <button
       ref={buttonRef}
@@ -1720,7 +1784,8 @@ function ToolbarButton({ active = false, label, onClick, children, buttonRef }: 
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`grid size-8 place-items-center border text-slate-700 hover:bg-white ${active ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-transparent"}`}
+      aria-pressed={active}
+      className={`grid size-8 cursor-pointer place-items-center border text-slate-700 hover:bg-white ${active ? "border-cyan-500 bg-cyan-50 text-cyan-800" : "border-transparent"}`}
     >
       {children}
     </button>
@@ -1746,7 +1811,7 @@ function normalizeTextColor(value: unknown) {
 }
 
 function ToolbarDivider() {
-  return <div className="mx-1 h-6 w-px bg-slate-200" />;
+  return <div aria-hidden="true" className="mx-1 h-6 w-px bg-slate-200" />;
 }
 
 function pickFile(accept: string) {

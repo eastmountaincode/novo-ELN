@@ -13,6 +13,12 @@ export function userDisplayName(user: Pick<AppUser | ShareMember, "firstName" | 
   return `${user.firstName} ${user.lastName}`.trim() || user.email;
 }
 
+export function userInitials(user: Pick<AppUser | ShareMember, "firstName" | "lastName" | "email">) {
+  const nameParts = [user.firstName, user.lastName].filter(Boolean);
+  if (nameParts.length) return nameParts.map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  return (user.email || "?").slice(0, 2).toUpperCase();
+}
+
 export function normalizeColor(value: string | undefined) {
   return /^#[0-9a-f]{6}$/i.test(value ?? "") ? value!.toLowerCase() : "#0891b2";
 }

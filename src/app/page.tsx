@@ -16,7 +16,6 @@ import type { InlineAttachmentAttrs } from "@/components/RichTextEditor";
 import { SpreadsheetModal } from "@/components/SpreadsheetModal";
 import { AccountView } from "@/features/account/AccountView";
 import { EditorPane, type PendingAttachmentUpload } from "@/features/editor/EditorPane";
-import { NameModal, type NameDialogState } from "@/features/import/NameModal";
 import { NotebookSettingsView } from "@/features/notebooks/settings/NotebookSettingsView";
 import { PageCard } from "@/features/pages/PageCard";
 import { PagesSidebar } from "@/features/pages/PagesSidebar";
@@ -36,6 +35,7 @@ import { bodyToEditorText } from "@/lib/editor";
 import { passwordRequirementText } from "@/lib/passwordRequirements";
 import { normalizeTagList, tagListsEqual } from "@/lib/tags";
 import type { AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, Project, SearchResult, Workspace } from "@/lib/types";
+import { NameModal, type NameDialogState } from "@/features/workspace/NameModal";
 import { canEditNotebook, normalizeColor, userDisplayName, userInitials } from "@/lib/workspaceDisplay";
 
 const SIDEBAR_MIN_WIDTH = 320;
@@ -978,14 +978,14 @@ export default function Home() {
     setNameDialog({ kind: "createProject" });
   }
 
-  function createNewNotebook(projectId = selectedProject?.id ?? workspace?.projects[0]?.id, initialMode: "blank" | "import" = "blank") {
+  function createNewNotebook(projectId = selectedProject?.id ?? workspace?.projects[0]?.id) {
     if (!projectId) return;
     setProjectMenuId(null);
     setNotebookMenuId(null);
     setPageMenuId(null);
     setAccountOpen(false);
     const projectName = "Novo";
-    setNameDialog({ kind: "createNotebook", projectId, projectName, initialMode });
+    setNameDialog({ kind: "createNotebook", projectId, projectName });
   }
 
   async function submitNameDialog(name: string) {
@@ -1430,15 +1430,8 @@ export default function Home() {
             dialog={nameDialog}
             onCancel={() => setNameDialog(null)}
             onSubmit={submitNameDialog}
-            onImportComplete={async (projectId, notebookId) => {
-              setNameDialog(null);
-              setActiveView("project");
-              writeNotebookUrl(notebookId, "push");
-              await refreshWorkspace({ projectId, notebookId });
-            }}
           />
         ) : null}
-
 
         {spreadsheetModal ? (
           <SpreadsheetModal

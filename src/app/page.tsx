@@ -1,22 +1,17 @@
 "use client";
 
-import {
-  Eye,
-  EyeOff,
-  Loader2,
-  RefreshCw,
-  Users,
-  X,
-} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PresentationModal } from "@/components/PresentationModal";
-import { NovoDeploymentLabel, NovoWordmark } from "@/components/NovoInstanceProvider";
 import type { InlineAttachmentAttrs } from "@/components/RichTextEditor";
 import { SpreadsheetModal } from "@/components/SpreadsheetModal";
 import { AccountView } from "@/features/account/AccountView";
+import { AppLoadingView } from "@/features/app/AppLoadingView";
+import { ResizeHandle } from "@/features/app/ResizeHandle";
+import { UpdateAvailableBanner } from "@/features/app/UpdateAvailableBanner";
+import { AuthView, type AuthMode } from "@/features/auth/AuthView";
 import { EditorPane, type PendingAttachmentUpload } from "@/features/editor/EditorPane";
+import { HomeView } from "@/features/home/HomeView";
 import { NotebookSettingsView } from "@/features/notebooks/settings/NotebookSettingsView";
-import { PageCard } from "@/features/pages/PageCard";
 import { PagesSidebar } from "@/features/pages/PagesSidebar";
 import { SearchOverlay } from "@/features/search/SearchOverlay";
 import {
@@ -31,15 +26,14 @@ import {
 } from "@/features/search/searchModel";
 import { UnifiedSidebar } from "@/features/sidebar/UnifiedSidebar";
 import { bodyToEditorText } from "@/lib/editor";
-import { passwordRequirementText } from "@/lib/passwordRequirements";
 import { normalizeTagList, tagListsEqual } from "@/lib/tags";
-import type { AppUser, Attachment, BlockType, Notebook, PageEntry, PageStatus, Project, SearchResult, Workspace } from "@/lib/types";
+import type { Attachment, BlockType, Notebook, PageEntry, PageStatus, Project, SearchResult, Workspace } from "@/lib/types";
 import { NameModal, type NameDialogState } from "@/features/workspace/NameModal";
 import { NotebookDeleteModal } from "@/features/workspace/modals/NotebookDeleteModal";
 import { PageDeleteModal } from "@/features/workspace/modals/PageDeleteModal";
 import { PageMoveModal } from "@/features/workspace/modals/PageMoveModal";
 import { ProjectDeleteModal } from "@/features/workspace/modals/ProjectDeleteModal";
-import { canEditNotebook, normalizeColor, userDisplayName, userInitials } from "@/lib/workspaceDisplay";
+import { canEditNotebook, normalizeColor } from "@/lib/workspaceDisplay";
 
 const SIDEBAR_MIN_WIDTH = 320;
 const SIDEBAR_MAX_WIDTH = 460;
@@ -76,7 +70,7 @@ export default function Home() {
   const [authError, setAuthError] = useState("");
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [authMode, setAuthMode] = useState<"signin" | "register">("signin");
+  const [authMode, setAuthMode] = useState<AuthMode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -1169,97 +1163,31 @@ export default function Home() {
     setSpreadsheetModal(attachment);
   }
 
-  if (loading) {
-    return (
-      <main className="grid min-h-screen place-items-center bg-slate-50 text-slate-600">
-        <div className="flex flex-col items-center gap-4">
-          <div className="flex flex-col items-center">
-            <div className="novo-wordmark select-none text-7xl leading-none tracking-normal text-slate-950"><NovoWordmark /></div>
-            <NovoDeploymentLabel className="mt-2 text-xs font-medium leading-none text-slate-500" />
-          </div>
-          <span className="inline-flex items-center gap-2 text-sm"><Loader2 size={16} className="animate-spin" />Loading...</span>
-        </div>
-      </main>
-    );
-  }
+  if (loading) return <AppLoadingView />;
   if (!workspace) {
     return (
-      <main className="grid min-h-screen place-items-center bg-slate-50 px-6 text-slate-950">
-        <form onSubmit={handleAuth} className="w-full max-w-sm border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-6">
-            <div className="mb-4">
-              <p className="novo-wordmark select-none text-3xl leading-none tracking-normal text-slate-950"><NovoWordmark /></p>
-              <NovoDeploymentLabel className="mt-1 text-xs font-medium leading-none text-slate-500" />
-              {authMode === "register" ? <h1 className="mt-2 text-base font-semibold text-slate-700">Create an account</h1> : null}
-            </div>
-            <div className="grid grid-cols-2 border border-slate-200 p-1 text-sm font-medium">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthError("");
-                  setAuthMode("signin");
-                }}
-                disabled={authSubmitting}
-                className={`h-8 disabled:cursor-not-allowed disabled:opacity-60 ${authMode === "signin" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}
-              >
-                Sign in
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthError("");
-                  setAuthMode("register");
-                }}
-                disabled={authSubmitting}
-                className={`h-8 disabled:cursor-not-allowed disabled:opacity-60 ${authMode === "register" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}
-              >
-                Register
-              </button>
-            </div>
-          </div>
-          {authMode === "register" ? (
-            <div className="mb-3 grid gap-3 sm:grid-cols-2">
-              <label className="block text-sm font-medium text-slate-700">First name<input value={firstName} onChange={(event) => setFirstName(event.target.value)} disabled={authSubmitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="given-name" /></label>
-              <label className="block text-sm font-medium text-slate-700">Last name<input value={lastName} onChange={(event) => setLastName(event.target.value)} disabled={authSubmitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="family-name" /></label>
-            </div>
-          ) : null}
-          <label className="mb-3 block text-sm font-medium text-slate-700">Email<input value={email} onChange={(event) => setEmail(event.target.value)} disabled={authSubmitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" /></label>
-          <label className="mb-2 block text-sm font-medium text-slate-700">
-            Password
-            <div className="relative mt-1">
-              <input
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                type={showPassword ? "text" : "password"}
-                disabled={authSubmitting}
-                className="h-10 w-full border border-slate-300 px-3 pr-10 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50"
-                autoComplete={authMode === "register" ? "new-password" : "current-password"}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((current) => !current)}
-                className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-                title={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-          </label>
-          {authMode === "register" ? <p className="mb-4 text-xs leading-5 text-slate-500">{passwordRequirementText}</p> : null}
-          {authMode === "signin" ? (
-            <label className="mb-4 flex items-center gap-2 text-sm text-slate-600">
-              <input checked={rememberDevice} onChange={(event) => setRememberDevice(event.target.checked)} disabled={authSubmitting} type="checkbox" className="size-4 border border-slate-300 accent-slate-950 disabled:cursor-not-allowed" />
-              Remember this device for 14 days
-            </label>
-          ) : null}
-          {authError ? <p className="mb-3 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{authError}</p> : null}
-          <button disabled={authSubmitting} className="inline-flex h-10 w-full items-center justify-center gap-2 bg-slate-950 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-500">
-            {authSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
-            {authSubmitting ? (authMode === "register" ? "Creating account..." : "Signing in...") : (authMode === "register" ? "Create account" : "Sign in")}
-          </button>
-        </form>
-      </main>
+      <AuthView
+        mode={authMode}
+        submitting={authSubmitting}
+        error={authError}
+        email={email}
+        password={password}
+        showPassword={showPassword}
+        rememberDevice={rememberDevice}
+        firstName={firstName}
+        lastName={lastName}
+        onSubmit={handleAuth}
+        onModeChange={(mode) => {
+          setAuthError("");
+          setAuthMode(mode);
+        }}
+        onEmailChange={setEmail}
+        onPasswordChange={setPassword}
+        onShowPasswordChange={setShowPassword}
+        onRememberDeviceChange={setRememberDevice}
+        onFirstNameChange={setFirstName}
+        onLastNameChange={setLastName}
+      />
     );
   }
 
@@ -1475,97 +1403,6 @@ export default function Home() {
   );
 }
 
-function UpdateAvailableBanner({ preview, onDismiss }: { preview: boolean; onDismiss: () => void }) {
-  return (
-    <div className="fixed right-5 top-5 z-[70] w-[min(380px,calc(100vw-2.5rem))] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-950/15">
-      <div className="flex items-start gap-3">
-        <RefreshCw size={18} className="mt-0.5 shrink-0 text-slate-600" />
-        <div className="min-w-0 flex-1 pr-6">
-          <p className="text-sm font-semibold text-slate-950">A new version of Novo is available.</p>
-          {preview ? <p className="mt-1 text-xs text-slate-400">Preview mode</p> : null}
-        </div>
-        <button type="button" onClick={onDismiss} className="grid size-7 shrink-0 place-items-center border border-transparent text-slate-400 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700" aria-label="Dismiss update notice">
-          <X size={15} />
-        </button>
-      </div>
-      <div className="mt-4 flex justify-end">
-        <button type="button" onClick={() => void performAppUpdate()} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800">
-          <RefreshCw size={15} />
-          Update now
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function HomeView({ recentPages, members, selectPage }: { recentPages: Array<{ page: PageEntry; project: Project; notebook: Notebook }>; members: AppUser[]; selectPage: (project: Project, notebook: Notebook, page: PageEntry) => void }) {
-  return (
-    <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
-      <div className="mx-auto max-w-6xl">
-        <div className="mb-8 flex items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold text-slate-950">Overview</h1>
-          <div className="flex shrink-0 items-center gap-2 text-sm">
-            <span className="font-medium text-slate-500">Group:</span>
-            <span className="font-semibold text-slate-950">CCIB Therapeutics</span>
-          </div>
-        </div>
-
-        <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <section className="min-w-0 border border-slate-200 bg-white p-4">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-slate-950">Recently edited pages</h2>
-              </div>
-            </div>
-            <div className="grid min-w-0 gap-2">
-              {recentPages.slice(0, 3).map(({ page, project, notebook }) => (
-                <PageCard
-                  key={page.id}
-                  page={page}
-                  accentColor={notebook.color}
-                  contextLabel={notebook.name}
-                  tinted
-                  onClick={() => selectPage(project, notebook, page)}
-                />
-              ))}
-              {recentPages.length === 0 ? <p className="p-3 text-sm text-slate-500">No recent pages yet.</p> : null}
-            </div>
-          </section>
-
-          <aside className="min-w-0 space-y-6">
-            <section className="border border-slate-200 bg-white p-4">
-              <div className="mb-4 flex items-center gap-2">
-                <Users size={17} className="text-slate-500" />
-                <h2 className="text-base font-semibold text-slate-950">Group members</h2>
-              </div>
-              <div className="space-y-2">
-                {members.map((member) => (
-                  <div key={member.id} className="grid grid-cols-[32px_minmax(0,1fr)] items-center gap-3 border border-slate-100 px-3 py-2">
-                    <div className="grid size-8 place-items-center rounded-full bg-slate-950 text-xs font-semibold text-white">{userInitials(member)}</div>
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-slate-950">{userDisplayName(member)}</div>
-                      <div className="mt-1 truncate text-xs text-slate-500">{member.email}</div>
-                    </div>
-                  </div>
-                ))}
-                {members.length === 0 ? <p className="text-sm text-slate-500">No group members yet.</p> : null}
-              </div>
-            </section>
-          </aside>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ResizeHandle({ onPointerDown, disabled = false }: { onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void; disabled?: boolean }) {
-  return (
-    <div className={`group relative z-20 w-px bg-slate-200 ${disabled ? "" : "hover:bg-cyan-500"}`} title={disabled ? undefined : "Drag to resize"}>
-      <div onPointerDown={disabled ? undefined : onPointerDown} className={`absolute -left-[5px] top-0 h-full w-[11px] ${disabled ? "" : "cursor-col-resize"}`} />
-    </div>
-  );
-}
-
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -1626,22 +1463,6 @@ function readPreviewKeysFromUrl() {
   const url = new URL(window.location.href);
   const values = url.searchParams.getAll("preview").flatMap((value) => value.split(","));
   return new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean));
-}
-
-async function performAppUpdate() {
-  if (typeof window === "undefined") return;
-  if ("caches" in window) {
-    try {
-      const cacheNames = await window.caches.keys();
-      await Promise.all(cacheNames.map((cacheName) => window.caches.delete(cacheName)));
-    } catch {
-      // Cache cleanup is best-effort; the cache-busted navigation below is the important part.
-    }
-  }
-
-  const url = new URL(window.location.href);
-  url.searchParams.set("_novoUpdate", Date.now().toString());
-  window.location.replace(url.toString());
 }
 
 function cleanupUpdateCacheBusterFromUrl() {

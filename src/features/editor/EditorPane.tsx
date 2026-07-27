@@ -1,21 +1,9 @@
 import type { JSONContent } from "@tiptap/react";
 import {
-  Beaker,
-  ChevronDown,
-  ChevronRight,
-  Download,
-  FileArchive,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
   Flag,
-  GripVertical,
   History,
-  Image as ImageIcon,
   Lock,
   Loader2,
-  Paperclip,
-  Plus,
   Tag,
   Unlock,
   X,
@@ -24,20 +12,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { PrintPageDocument } from "@/components/PrintPageDocument";
 import {
-  INLINE_ATTACHMENT_DRAG_TYPE,
   RichTextEditor,
-  attachmentToInlineAttrs,
   type InlineAttachmentAttrs,
 } from "@/components/RichTextEditor";
 import { PageActivityDrawer } from "@/features/editor/PageActivityDrawer";
 import { PageCommentPopover } from "@/features/editor/PageCommentPopover";
+import { PageAttachmentsPanel } from "@/features/editor/attachments/PageAttachmentsPanel";
+import { usePageAttachments } from "@/features/editor/attachments/usePageAttachments";
 import { PAGE_STATUS_OPTIONS, StatusDot } from "@/features/pages/PageStatus";
-import { formatBytes } from "@/lib/formatBytes";
+import type { PageUpdater } from "@/features/pages/workspacePageState";
 import { normalizeTagList } from "@/lib/tags";
 import type {
-  Attachment,
   AuditEvent,
-  BlockType,
   Notebook,
   PageCommentThread,
   PageEntry,
@@ -46,22 +32,27 @@ import type {
 } from "@/lib/types";
 import { colorWithAlpha, projectColor } from "@/lib/workspaceDisplay";
 
-const blockIcons: Record<BlockType, typeof ImageIcon> = {
-  image: ImageIcon,
-  sheet: FileSpreadsheet,
-  pdf: FileText,
-  slides: FileArchive,
-  sequence: Beaker,
-  file: FileImage,
-};
-
 const PAGE_ACTIVITY_PAGE_SIZE = 25;
 
-export type PendingAttachmentUpload = {
-  id: string;
-  name: string;
-  size: number;
-  status: "uploading" | "failed";
+type EditorPaneProps = {
+  page: PageEntry;
+  selectedProject?: Project;
+  selectedNotebook?: Notebook;
+  saving: string;
+  pageLoading: boolean;
+  canEdit: boolean;
+  canManageLock: boolean;
+  updatePage: (pageId: string, updater: PageUpdater) => void;
+  reportSaveStatus: (status: string, options?: { clearAfterMs?: number }) => void;
+  successStatusClearAfterMs: number;
+  openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void;
+  openPresentation: (attachment: InlineAttachmentAttrs) => void;
+  patchSelectedPage: (patch: Partial<PageEntry>) => void;
+  savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>;
+  markUnsaved: (body: string) => void;
+  setPageTags: (tags: string[]) => Promise<void>;
+  tagSuggestions: string[];
+  setPageLocked: (locked: boolean) => Promise<void>;
 };
 
 function filenameFromContentDisposition(disposition: string | null) {
@@ -84,9 +75,26 @@ function safeDownloadName(value: string) {
   return value.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 90) || "page";
 }
 
-export function EditorPane({ page, selectedProject, selectedNotebook, saving, pageLoading, canEdit, canManageLock, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, deleteAttachment, patchSelectedPage, savePage, markUnsaved, setPageTags, tagSuggestions, setPageLocked, uploadAttachments, pendingAttachmentUploads, openFilePicker }: { page: PageEntry; selectedProject?: Project; selectedNotebook?: Notebook; saving: string; pageLoading: boolean; canEdit: boolean; canManageLock: boolean; uploadInlineFile: (file: File, blockType: BlockType) => Promise<Attachment | null>; onInlineAttachmentInserted: (attachment: Attachment, body: string) => void; openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; deleteAttachment: (attachment: Attachment) => Promise<boolean>; patchSelectedPage: (patch: Partial<PageEntry>) => void; savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>; markUnsaved: (body: string) => void; setPageTags: (tags: string[]) => Promise<void>; tagSuggestions: string[]; setPageLocked: (locked: boolean) => Promise<void>; uploadAttachments: (files: File[]) => Promise<void>; pendingAttachmentUploads: PendingAttachmentUpload[]; openFilePicker: () => void }) {
-  const [attachmentsOpen, setAttachmentsOpen] = useState(false);
-  const [attachmentsDragging, setAttachmentsDragging] = useState(false);
+export function EditorPane({
+  page,
+  selectedProject,
+  selectedNotebook,
+  saving,
+  pageLoading,
+  canEdit,
+  canManageLock,
+  updatePage,
+  reportSaveStatus,
+  successStatusClearAfterMs,
+  openSpreadsheet,
+  openPresentation,
+  patchSelectedPage,
+  savePage,
+  markUnsaved,
+  setPageTags,
+  tagSuggestions,
+  setPageLocked,
+}: EditorPaneProps) {
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityEvents, setActivityEvents] = useState<AuditEvent[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -102,13 +110,17 @@ export function EditorPane({ page, selectedProject, selectedNotebook, saving, pa
   const [printPage, setPrintPage] = useState<PageEntry | null>(null);
   const [printContent, setPrintContent] = useState<JSONContent[] | undefined>(undefined);
   const [exportingPage, setExportingPage] = useState<"pdf" | "archive" | null>(null);
-  const attachmentCount = page.attachmentCount ?? page.attachments.length;
-  const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
   const color = projectColor(selectedNotebook ?? selectedProject);
   const locked = Boolean(page.lockedAt);
   const titleFieldRef = useRef<HTMLTextAreaElement>(null);
-  const attachmentDragDepthRef = useRef(0);
   const closeComments = useCallback(() => setCommentsOpen(false), []);
+  const attachments = usePageAttachments({
+    page,
+    canEdit,
+    updatePage,
+    reportSaveStatus,
+    successStatusClearAfterMs,
+  });
 
   const loadComments = useCallback(async () => {
     setCommentsLoading(true);
@@ -299,48 +311,6 @@ export function EditorPane({ page, selectedProject, selectedNotebook, saving, pa
     });
   }
 
-  function hasDraggedFiles(event: React.DragEvent<HTMLElement>) {
-    return Array.from(event.dataTransfer.types).includes("Files");
-  }
-
-  function resetAttachmentDrag() {
-    attachmentDragDepthRef.current = 0;
-    setAttachmentsDragging(false);
-  }
-
-  function handleAttachmentDragEnter(event: React.DragEvent<HTMLDivElement>) {
-    if (!canEdit || !attachmentsOpen || pageLoading || !hasDraggedFiles(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    attachmentDragDepthRef.current += 1;
-    setAttachmentsDragging(true);
-  }
-
-  function handleAttachmentDragOver(event: React.DragEvent<HTMLDivElement>) {
-    if (!canEdit || !attachmentsOpen || pageLoading || !hasDraggedFiles(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = "copy";
-    setAttachmentsDragging(true);
-  }
-
-  function handleAttachmentDragLeave(event: React.DragEvent<HTMLDivElement>) {
-    if (!canEdit || !attachmentsOpen || pageLoading || !hasDraggedFiles(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    attachmentDragDepthRef.current = Math.max(0, attachmentDragDepthRef.current - 1);
-    if (attachmentDragDepthRef.current === 0) setAttachmentsDragging(false);
-  }
-
-  async function handleAttachmentDrop(event: React.DragEvent<HTMLDivElement>) {
-    if (!canEdit || !attachmentsOpen || pageLoading || !hasDraggedFiles(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const files = Array.from(event.dataTransfer.files);
-    resetAttachmentDrag();
-    await uploadAttachments(files);
-  }
-
   return (
     <>
       <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-white">
@@ -407,8 +377,8 @@ export function EditorPane({ page, selectedProject, selectedNotebook, saving, pa
                 if (canEdit) markUnsaved(body);
               }}
               onBlur={(body) => void savePage({ body })}
-              uploadInlineFile={uploadInlineFile}
-              onInlineAttachmentInserted={onInlineAttachmentInserted}
+              uploadInlineFile={attachments.uploadInlineFile}
+              onInlineAttachmentInserted={attachments.markInlineAttachmentInserted}
               openSpreadsheet={openSpreadsheet}
               openPresentation={openPresentation}
               readOnly={!canEdit}
@@ -428,53 +398,14 @@ export function EditorPane({ page, selectedProject, selectedNotebook, saving, pa
               }}
             />
           )}
-          <div className="mt-4 border border-slate-200 bg-slate-50 p-2">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => setAttachmentsOpen((open) => !open)}
-              className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-800 hover:text-slate-950"
-              aria-expanded={attachmentsOpen}
-            >
-              {attachmentsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              <Paperclip size={16} />
-              <span>Attachments</span>
-              <span className="bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">{attachmentLabel}</span>
-            </button>
-            {canEdit ? <button onClick={openFilePicker} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100"><Plus size={14} />File</button> : null}
-            </div>
-            {attachmentsOpen ? (
-              <div
-                onDragEnter={handleAttachmentDragEnter}
-                onDragOver={handleAttachmentDragOver}
-                onDragLeave={handleAttachmentDragLeave}
-                onDrop={(event) => void handleAttachmentDrop(event)}
-                className={`relative mt-3 border border-dashed transition-colors ${
-                  canEdit
-                    ? attachmentsDragging
-                      ? "border-cyan-500 bg-cyan-50"
-                      : "border-slate-300 bg-white"
-                    : "border-transparent bg-transparent"
-                }`}
-              >
-                {attachmentsDragging ? (
-                  <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-cyan-50/90 px-4 text-sm font-semibold text-cyan-800">
-                    Drop files to attach
-                  </div>
-                ) : null}
-                {pageLoading ? (
-                  <p className="p-4 text-sm text-slate-500">Loading files...</p>
-                ) : pendingAttachmentUploads.length || page.attachments.length ? (
-                  <div className="grid max-h-80 gap-2 overflow-y-auto scroll-contained p-2">
-                    {pendingAttachmentUploads.map((upload) => <PendingAttachmentUploadRow key={upload.id} upload={upload} />)}
-                    {page.attachments.map((attachment, index) => <AttachmentRow key={attachment.id} index={index + 1} attachment={attachment} canEdit={canEdit} onDelete={() => deleteAttachment(attachment)} />)}
-                  </div>
-                ) : (
-                  <p className="p-4 text-sm text-slate-500">{canEdit ? "Drop files here or use + File." : "No files attached yet."}</p>
-                )}
-              </div>
-            ) : null}
-          </div>
+          <PageAttachmentsPanel
+            page={page}
+            pageLoading={pageLoading}
+            canEdit={canEdit}
+            pendingUploads={attachments.pendingUploads}
+            uploadAttachments={attachments.uploadAttachments}
+            deleteAttachment={attachments.deleteAttachment}
+          />
         </div>
       </section>
       {activityOpen ? (
@@ -690,97 +621,4 @@ function PageStatusRow({ status, canEdit, setStatus }: { status: PageStatus; can
       </div>
     </div>
   );
-}
-
-function PendingAttachmentUploadRow({ upload }: { upload: PendingAttachmentUpload }) {
-  const failed = upload.status === "failed";
-  return (
-    <div className="flex items-center justify-between gap-4 border border-slate-200 bg-white px-3 py-2">
-      <div className="flex min-w-0 items-center gap-2">
-        <GripVertical className="shrink-0 text-slate-300" size={15} aria-hidden="true" />
-        <span className="w-5 shrink-0 text-center text-xs font-medium tabular-nums text-slate-300">-</span>
-        {failed ? <X className="shrink-0 text-rose-500" size={17} /> : <Loader2 className="shrink-0 animate-spin text-cyan-600" size={17} />}
-        <div className="min-w-0">
-          <div className="truncate text-sm text-slate-800">{upload.name}</div>
-          <div className={`mt-0.5 text-xs ${failed ? "text-rose-600" : "text-slate-500"}`}>
-            {formatBytes(upload.size)} · {failed ? "Upload failed" : "Uploading..."}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AttachmentRow({ attachment, index, canEdit, onDelete }: { attachment: Attachment; index: number; canEdit: boolean; onDelete: () => Promise<boolean> }) {
-  const Icon = blockIcons[attachment.blockType];
-  const [deleting, setDeleting] = useState(false);
-  const [deleteFailed, setDeleteFailed] = useState(false);
-
-  function handleDragStart(event: React.DragEvent<HTMLDivElement>) {
-    if (!canEdit || deleting) return;
-    event.dataTransfer.effectAllowed = "copy";
-    event.dataTransfer.setData(INLINE_ATTACHMENT_DRAG_TYPE, JSON.stringify(attachmentToInlineAttrs(attachment)));
-    event.dataTransfer.setData("text/plain", attachment.originalName);
-  }
-
-  async function handleDelete() {
-    if (deleting) return;
-    setDeleteFailed(false);
-    setDeleting(true);
-    const deleted = await onDelete();
-    if (!deleted) {
-      setDeleteFailed(true);
-      setDeleting(false);
-    }
-  }
-
-  return (
-    <div
-      draggable={canEdit && !deleting}
-      onDragStart={handleDragStart}
-      className={`flex items-center justify-between gap-4 border border-slate-200 bg-white px-3 py-2 ${canEdit && !deleting ? "cursor-grab active:cursor-grabbing" : ""}`}
-      title={canEdit && !deleting ? "Drag into the page to place this attachment inline" : undefined}
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        {canEdit ? <GripVertical className={`shrink-0 ${deleting ? "text-slate-300" : "text-slate-400"}`} size={15} aria-hidden="true" /> : null}
-        <span className="w-5 shrink-0 text-center text-xs font-medium tabular-nums text-slate-400">{index}</span>
-        <Icon className="shrink-0 text-slate-500" size={17} />
-        <div className="min-w-0">
-          <div className="truncate text-sm text-slate-800">{attachment.originalName}</div>
-          <div className={`mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs ${deleteFailed ? "text-rose-600" : "text-slate-500"}`}>
-            <span>{attachment.blockType}</span>
-            <span>{Math.max(1, Math.round(attachment.size / 1024))} KB</span>
-            <span>{deleteFailed ? "Delete failed" : `Added ${formatAttachmentDate(attachment.createdAt)}`}</span>
-          </div>
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2 text-xs">
-        <a href={`/api/attachments/${attachment.id}/download`} className="inline-flex h-8 items-center gap-1 border border-slate-300 bg-white px-2 text-slate-700 hover:bg-slate-100"><Download size={13} />Download</a>
-        {canEdit ? (
-          <button
-            onClick={() => void handleDelete()}
-            disabled={deleting}
-            className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-wait disabled:border-slate-300 disabled:bg-slate-50 disabled:text-slate-400"
-            title={deleting ? "Deleting attachment" : "Delete attachment"}
-          >
-            {deleting ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function formatAttachmentDate(value: string) {
-  const parsed = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
-  if (Number.isNaN(parsed)) return value;
-  const date = new Date(parsed);
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-  });
 }

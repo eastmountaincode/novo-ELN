@@ -9,11 +9,16 @@ import { AppLoadingView } from "@/features/app/AppLoadingView";
 import { ResizeHandle } from "@/features/app/ResizeHandle";
 import { UpdateAvailableBanner } from "@/features/app/UpdateAvailableBanner";
 import { AuthView, type AuthMode } from "@/features/auth/AuthView";
-import { EditorPane, type PendingAttachmentUpload } from "@/features/editor/EditorPane";
+import { EditorPane } from "@/features/editor/EditorPane";
 import { HomeView } from "@/features/home/HomeView";
 import { NotebookSettingsView } from "@/features/notebooks/settings/NotebookSettingsView";
 import { PagesSidebar } from "@/features/pages/PagesSidebar";
-import { addPageToWorkspace, removePageFromWorkspace } from "@/features/pages/workspacePageState";
+import {
+  addPageToWorkspace,
+  removePageFromWorkspace,
+  updatePageInWorkspace,
+  type PageUpdater,
+} from "@/features/pages/workspacePageState";
 import { SearchOverlay } from "@/features/search/SearchOverlay";
 import {
   emptySearchAdvancedFilters,
@@ -26,9 +31,8 @@ import {
   type SearchAdvancedFilters,
 } from "@/features/search/searchModel";
 import { UnifiedSidebar } from "@/features/sidebar/UnifiedSidebar";
-import { bodyToEditorText } from "@/lib/editor";
 import { normalizeTagList, tagListsEqual } from "@/lib/tags";
-import type { Attachment, BlockType, Notebook, PageEntry, PageStatus, Project, SearchResult, Workspace } from "@/lib/types";
+import type { Notebook, PageEntry, PageStatus, Project, SearchResult, Workspace } from "@/lib/types";
 import { NameModal, type NameDialogState } from "@/features/workspace/NameModal";
 import { NotebookDeleteModal } from "@/features/workspace/modals/NotebookDeleteModal";
 import { PageDeleteModal } from "@/features/workspace/modals/PageDeleteModal";
@@ -91,7 +95,6 @@ export default function Home() {
   const lastSearchKeyRef = useRef("");
   const [saving, setSaving] = useState("");
   const [loadingPageId, setLoadingPageId] = useState("");
-  const [pendingAttachmentUploads, setPendingAttachmentUploads] = useState<PendingAttachmentUpload[]>([]);
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedPageIdRef = useRef("");
   const latestBodyDraftsRef = useRef(new Map<string, string>());
@@ -122,7 +125,6 @@ export default function Home() {
   const [previewKeys, setPreviewKeys] = useState<Set<string>>(new Set());
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const spreadsheetSavedRef = useRef<((attachment: InlineAttachmentAttrs) => void) | null>(null);
   const loadedVersionRef = useRef("");
 
@@ -380,10 +382,6 @@ export default function Home() {
   const selectedPageCanEdit = selectedNotebookCanEdit && !selectedPage?.lockedAt;
   const selectedPageCanManageLock = selectedNotebookCanEdit;
 
-  useEffect(() => {
-    setPendingAttachmentUploads([]);
-  }, [selectedPage?.id]);
-
   const selectedNotebookTagSuggestions = useMemo(
     () => normalizeTagList(selectedNotebook?.pages.flatMap((page) => page.tags) ?? []).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
     [selectedNotebook],
@@ -618,18 +616,13 @@ export default function Home() {
     closeSearch();
   }
 
-  function patchPage(pageId: string, patch: Partial<PageEntry>) {
-    setWorkspace((current) => current ? {
-      ...current,
-      projects: current.projects.map((project) => ({
-        ...project,
-        notebooks: project.notebooks.map((notebook) => ({
-          ...notebook,
-          pages: notebook.pages.map((page) => (page.id === pageId ? { ...page, ...patch } : page)),
-        })),
-      })),
-    } : current);
-  }
+  const updatePage = useCallback((pageId: string, updater: PageUpdater) => {
+    setWorkspace((current) => current ? updatePageInWorkspace(current, pageId, updater) : current);
+  }, []);
+
+  const patchPage = useCallback((pageId: string, patch: Partial<PageEntry>) => {
+    updatePage(pageId, (page) => ({ ...page, ...patch }));
+  }, [updatePage]);
 
   function patchSelectedPage(patch: Partial<PageEntry>) {
     if (!workspace || !selectedPage || !selectedNotebookCanEdit) return;
@@ -657,7 +650,7 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [selectedPage?.id, selectedPage?.bodyLoaded]);
+  }, [patchPage, selectedPage?.id, selectedPage?.bodyLoaded]);
 
   function setSaveStatus(status: string, options: { clearAfterMs?: number } = {}) {
     if (saveStatusTimer.current) {
@@ -1111,95 +1104,6 @@ export default function Home() {
     }
   }
 
-  async function uploadAttachments(files: FileList | File[] | undefined) {
-    if (!selectedPage || !selectedPageCanEdit) return;
-    const uploadFiles = Array.from(files ?? []).filter((file) => file.size >= 0);
-    if (!uploadFiles.length) return;
-    const pageId = selectedPage.id;
-    const projectId = selectedProject?.id;
-    const notebookId = selectedNotebook?.id;
-    const pendingUploads = uploadFiles.map((file) => ({
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      name: file.name,
-      size: file.size,
-      status: "uploading" as const,
-    }));
-    setPendingAttachmentUploads((current) => [...current, ...pendingUploads]);
-
-    let shouldRefresh = false;
-    for (const [index, file] of uploadFiles.entries()) {
-      const pendingId = pendingUploads[index].id;
-      const form = new FormData();
-      form.set("file", file);
-      const response = await fetch(`/api/pages/${pageId}/attachments`, { method: "POST", body: form });
-      if (!response.ok) {
-        setPendingAttachmentUploads((current) =>
-          current.map((upload) => upload.id === pendingId ? { ...upload, status: "failed" } : upload),
-        );
-        continue;
-      }
-      shouldRefresh = true;
-      setPendingAttachmentUploads((current) => current.filter((upload) => upload.id !== pendingId));
-    }
-    if (shouldRefresh) {
-      await refreshWorkspace({ projectId, notebookId, pageId });
-    }
-  }
-
-  async function deletePageAttachment(attachment: Attachment) {
-    if (!selectedPage || !selectedPageCanEdit) return false;
-    const response = await fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" });
-    if (!response.ok) {
-      return false;
-    }
-    await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
-    return true;
-  }
-
-  async function uploadInlineFile(file: File, blockType: BlockType) {
-    if (!selectedPage || !selectedPageCanEdit) return null;
-    const pageId = selectedPage.id;
-    const form = new FormData();
-    form.set("file", file);
-    form.set("blockType", blockType);
-    setSaveStatus("Uploading");
-    const response = await fetch(`/api/pages/${pageId}/attachments`, { method: "POST", body: form });
-    setSaveStatus(response.ok ? "Uploaded" : "Upload failed", response.ok ? { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS } : {});
-    if (!response.ok) return null;
-    const body = (await response.json()) as { attachment: Attachment };
-    return body.attachment;
-  }
-
-  function markInlineAttachmentInserted(attachment: Attachment, body: string) {
-    if (!selectedPage || !selectedPageCanEdit) return;
-    const pageId = selectedPage.id;
-    setWorkspace((current) => current ? {
-      ...current,
-      projects: current.projects.map((project) => ({
-        ...project,
-        notebooks: project.notebooks.map((notebook) => ({
-          ...notebook,
-          pages: notebook.pages.map((page) => {
-            if (page.id !== pageId) return page;
-            const exists = page.attachments.some((candidate) => candidate.id === attachment.id);
-            const currentAttachmentCount = page.attachmentCount ?? page.attachments.length;
-            const currentAttachmentBytes = page.attachmentBytes ?? page.attachments.reduce((total, candidate) => total + candidate.size, 0);
-            return {
-              ...page,
-              body,
-              bodyLoaded: true,
-              bodyPreview: bodyToEditorText(body),
-              attachments: exists ? page.attachments : [...page.attachments, attachment],
-              attachmentCount: exists ? currentAttachmentCount : currentAttachmentCount + 1,
-              attachmentBytes: exists ? currentAttachmentBytes : currentAttachmentBytes + attachment.size,
-              updatedAt: "Just now",
-            };
-          }),
-        })),
-      })),
-    } : current);
-  }
-
   function openSpreadsheetModal(attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) {
     spreadsheetSavedRef.current = onSaved ?? null;
     setSpreadsheetModal(attachment);
@@ -1240,16 +1144,6 @@ export default function Home() {
 
   return (
     <main className="app-scroll-root overflow-x-auto bg-white text-slate-950">
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        className="hidden"
-        onChange={(event) => {
-          void uploadAttachments(event.target.files ?? undefined);
-          event.currentTarget.value = "";
-        }}
-      />
       {(updateAvailable || previewKeys.has("update-banner")) && !updateBannerDismissed ? (
         <UpdateAvailableBanner preview={previewKeys.has("update-banner")} onDismiss={() => setUpdateBannerDismissed(true)} />
       ) : null}
@@ -1339,20 +1233,17 @@ export default function Home() {
                 pageLoading={!selectedPage.bodyLoaded || loadingPageId === selectedPage.id}
                 canEdit={selectedPageCanEdit}
                 canManageLock={selectedPageCanManageLock}
-                uploadInlineFile={uploadInlineFile}
-                onInlineAttachmentInserted={markInlineAttachmentInserted}
+                updatePage={updatePage}
+                reportSaveStatus={setSaveStatus}
+                successStatusClearAfterMs={SUCCESS_STATUS_CLEAR_AFTER_MS}
                 openSpreadsheet={openSpreadsheetModal}
                 openPresentation={setPresentationModal}
-                deleteAttachment={deletePageAttachment}
                 patchSelectedPage={patchSelectedPage}
                 savePage={savePage}
                 markUnsaved={(body) => markBodyUnsaved(selectedPage.id, body)}
                 setPageTags={setSelectedPageTags}
                 tagSuggestions={editorTagSuggestions}
                 setPageLocked={setSelectedPageLocked}
-                uploadAttachments={uploadAttachments}
-                pendingAttachmentUploads={pendingAttachmentUploads}
-                openFilePicker={() => fileInputRef.current?.click()}
               />
             ) : (
               <section className="grid place-items-center border-l border-slate-200 bg-white p-8 text-slate-500">Create a page to start writing.</section>

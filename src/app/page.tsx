@@ -309,19 +309,31 @@ export default function Home() {
   useEffect(() => {
     if (!dragState) return;
     const activeDrag = dragState;
+    const root = document.documentElement;
+    const previousUserSelect = root.style.userSelect;
+    const previousCursor = root.style.cursor;
+    root.style.userSelect = "none";
+    root.style.cursor = "col-resize";
+
     function onPointerMove(event: PointerEvent) {
       const nextWidth = activeDrag.startWidth + event.clientX - activeDrag.startX;
       if (activeDrag.pane === "sidebar") setSidebarWidth(clamp(nextWidth, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH));
       if (activeDrag.pane === "pages") setPagesWidth(clamp(nextWidth, PAGES_MIN_WIDTH, PAGES_MAX_WIDTH));
     }
-    function onPointerUp() {
+
+    function finishDrag() {
       setDragState(null);
     }
+
     window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointerup", finishDrag);
+    window.addEventListener("pointercancel", finishDrag);
     return () => {
+      root.style.userSelect = previousUserSelect;
+      root.style.cursor = previousCursor;
       window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointerup", finishDrag);
+      window.removeEventListener("pointercancel", finishDrag);
     };
   }, [dragState]);
 

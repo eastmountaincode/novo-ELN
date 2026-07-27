@@ -19,6 +19,7 @@ import { PageActivityDrawer } from "@/features/editor/PageActivityDrawer";
 import { PageCommentPopover } from "@/features/editor/PageCommentPopover";
 import { PageAttachmentsPanel } from "@/features/editor/attachments/PageAttachmentsPanel";
 import { usePageAttachments } from "@/features/editor/attachments/usePageAttachments";
+import { usePageEditorController } from "@/features/editor/page/usePageEditorController";
 import { PAGE_STATUS_OPTIONS, StatusDot } from "@/features/pages/PageStatus";
 import type { PageUpdater } from "@/features/pages/workspacePageState";
 import { normalizeTagList } from "@/lib/tags";
@@ -36,23 +37,16 @@ const PAGE_ACTIVITY_PAGE_SIZE = 25;
 
 type EditorPaneProps = {
   page: PageEntry;
+  sessionScope: string;
   selectedProject?: Project;
   selectedNotebook?: Notebook;
-  saving: string;
   pageLoading: boolean;
   canEdit: boolean;
   canManageLock: boolean;
   updatePage: (pageId: string, updater: PageUpdater) => void;
-  reportSaveStatus: (status: string, options?: { clearAfterMs?: number }) => void;
-  successStatusClearAfterMs: number;
   openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void;
   openPresentation: (attachment: InlineAttachmentAttrs) => void;
-  patchSelectedPage: (patch: Partial<PageEntry>) => void;
-  savePage: (patch: { title?: string; body?: string; status?: PageStatus }) => Promise<void>;
-  markUnsaved: (body: string) => void;
-  setPageTags: (tags: string[]) => Promise<void>;
   tagSuggestions: string[];
-  setPageLocked: (locked: boolean) => Promise<void>;
 };
 
 function filenameFromContentDisposition(disposition: string | null) {
@@ -77,23 +71,16 @@ function safeDownloadName(value: string) {
 
 export function EditorPane({
   page,
+  sessionScope,
   selectedProject,
   selectedNotebook,
-  saving,
   pageLoading,
   canEdit,
   canManageLock,
   updatePage,
-  reportSaveStatus,
-  successStatusClearAfterMs,
   openSpreadsheet,
   openPresentation,
-  patchSelectedPage,
-  savePage,
-  markUnsaved,
-  setPageTags,
   tagSuggestions,
-  setPageLocked,
 }: EditorPaneProps) {
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityEvents, setActivityEvents] = useState<AuditEvent[]>([]);
@@ -106,7 +93,6 @@ export function EditorPane({
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentsError, setCommentsError] = useState("");
   const [selectedCommentThreadId, setSelectedCommentThreadId] = useState("");
-  const [commentThreadToRemove, setCommentThreadToRemove] = useState("");
   const [printPage, setPrintPage] = useState<PageEntry | null>(null);
   const [printContent, setPrintContent] = useState<JSONContent[] | undefined>(undefined);
   const [exportingPage, setExportingPage] = useState<"pdf" | "archive" | null>(null);
@@ -114,12 +100,23 @@ export function EditorPane({
   const locked = Boolean(page.lockedAt);
   const titleFieldRef = useRef<HTMLTextAreaElement>(null);
   const closeComments = useCallback(() => setCommentsOpen(false), []);
+  const pageController = usePageEditorController({
+    page,
+    sessionScope,
+    canEdit,
+    canManageLock,
+    updatePage,
+  });
+  const effectiveCanEdit = pageController.canEdit;
   const attachments = usePageAttachments({
     page,
-    canEdit,
+    canEdit: effectiveCanEdit,
     updatePage,
-    reportSaveStatus,
-    successStatusClearAfterMs,
+    reportSaveStatus: pageController.reportSaveStatus,
+    successStatusClearAfterMs: pageController.successStatusClearAfterMs,
+    runPageMutation: pageController.runExternalMutation,
+    canApplyEditorMutation: pageController.canApplyEditorMutation,
+    removeAttachmentFromDraft: pageController.removeAttachmentFromDraft,
   });
 
   const loadComments = useCallback(async () => {
@@ -247,25 +244,46 @@ export function EditorPane({
     return body.thread;
   }
 
+  async function discardComment(threadId: string) {
+    const response = await fetch(`/api/comments/${threadId}?pageId=${encodeURIComponent(page.id)}`, { method: "DELETE" });
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok && response.status !== 404) {
+      throw new Error(body?.error ?? "Could not discard comment.");
+    }
+    setCommentThreads((current) => current.filter((thread) => thread.id !== threadId));
+    setSelectedCommentThreadId((current) => current === threadId ? "" : current);
+  }
+
   async function addCommentReply(threadId: string, reply: string) {
-    const response = await fetch(`/api/comments/${threadId}/replies`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body: reply }),
+    const mutation = pageController.runExternalMutation(async () => {
+      const response = await fetch(`/api/comments/${threadId}/replies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: reply }),
+      });
+      const body = (await response.json().catch(() => null)) as { thread?: PageCommentThread; error?: string } | null;
+      if (!response.ok || !body?.thread) throw new Error(body?.error ?? "Could not add reply.");
+      replaceCommentThread(body.thread);
     });
-    const body = (await response.json().catch(() => null)) as { thread?: PageCommentThread; error?: string } | null;
-    if (!response.ok || !body?.thread) throw new Error(body?.error ?? "Could not add reply.");
-    replaceCommentThread(body.thread);
+    if (!mutation) throw new Error("Finish locking or signing out before adding a reply.");
+    await mutation;
   }
 
   async function deleteCommentThread(threadId: string) {
-    const response = await fetch(`/api/comments/${threadId}`, { method: "DELETE" });
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    if (!response.ok) throw new Error(body?.error ?? "Could not delete comment.");
-    setCommentThreads((current) => current.filter((thread) => thread.id !== threadId));
-    setSelectedCommentThreadId("");
-    setCommentsOpen(false);
-    setCommentThreadToRemove(threadId);
+    const mutation = pageController.runEditorMutation(async ({ flushBody, adoptBody }) => {
+      if (!await flushBody()) {
+        throw new Error("Could not save the page before deleting the comment.");
+      }
+      const response = await fetch(`/api/comments/${threadId}?pageId=${encodeURIComponent(page.id)}`, { method: "DELETE" });
+      const body = (await response.json().catch(() => null)) as { body?: string; error?: string } | null;
+      if (!response.ok || typeof body?.body !== "string") throw new Error(body?.error ?? "Could not delete comment.");
+      adoptBody(body.body, "Just now");
+      setCommentThreads((current) => current.filter((thread) => thread.id !== threadId));
+      setSelectedCommentThreadId("");
+      setCommentsOpen(false);
+    });
+    if (!mutation) throw new Error("Finish locking or signing out before deleting a comment.");
+    await mutation;
   }
 
   function printCurrentPage(selection?: { content: JSONContent[] }) {
@@ -322,11 +340,11 @@ export function EditorPane({
                 ref={titleFieldRef}
                 rows={1}
                 value={page.title}
-                readOnly={!canEdit}
+                readOnly={!effectiveCanEdit}
                 onChange={(event) => {
-                  if (!canEdit) return;
+                  if (!effectiveCanEdit) return;
                   const title = event.target.value.replace(/\s*\n+\s*/g, " ");
-                  patchSelectedPage({ title });
+                  pageController.patchSelectedPage({ title });
                   resizeTitleField(event.currentTarget);
                 }}
                 onKeyDown={(event) => {
@@ -334,11 +352,11 @@ export function EditorPane({
                   event.preventDefault();
                   event.currentTarget.blur();
                 }}
-                onBlur={(event) => canEdit && void savePage({ title: event.target.value })}
-                className={`min-w-0 flex-1 resize-none overflow-hidden break-words bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none [overflow-wrap:anywhere] ${canEdit ? "" : "cursor-default"}`}
+                onBlur={(event) => effectiveCanEdit && void pageController.savePage({ title: event.target.value })}
+                className={`min-w-0 flex-1 resize-none overflow-hidden break-words bg-transparent py-1 text-4xl font-semibold leading-tight tracking-normal text-slate-950 outline-none [overflow-wrap:anywhere] ${effectiveCanEdit ? "" : "cursor-default"}`}
               />
             </div>
-            {saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{saving}</span> : null}
+            {pageController.saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{pageController.saving}</span> : null}
             <button
               type="button"
               onClick={() => void openActivity()}
@@ -349,18 +367,18 @@ export function EditorPane({
               <History size={16} />
             </button>
           </div>
-          <PageTagsBar tags={page.tags} canEdit={canEdit} setPageTags={setPageTags} tagSuggestions={tagSuggestions} />
+          <PageTagsBar tags={page.tags} canEdit={effectiveCanEdit} setPageTags={pageController.setPageTags} tagSuggestions={tagSuggestions} />
           <div className="flex items-end justify-between gap-3">
             <PageStatusRow
               status={page.status}
-              canEdit={canEdit}
+              canEdit={effectiveCanEdit}
               setStatus={(status) => {
-                if (!canEdit) return;
-                patchSelectedPage({ status });
-                void savePage({ status });
+                if (!effectiveCanEdit) return;
+                pageController.patchSelectedPage({ status });
+                void pageController.savePage({ status });
               }}
             />
-            <PageLockControl locked={locked} canManage={canManageLock} setLocked={setPageLocked} />
+            <PageLockControl locked={locked} canManage={canManageLock} blocked={pageController.lockBlocked} setLocked={pageController.setPageLocked} />
           </div>
         </header>
         <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white px-6 pb-6 pt-4">
@@ -370,38 +388,36 @@ export function EditorPane({
             </div>
           ) : (
             <RichTextEditor
-              key={`${page.id}-${canEdit ? "edit" : "read"}`}
+              key={`${page.id}-${effectiveCanEdit ? "edit" : "read"}`}
               pageId={page.id}
-              value={page.body}
+              value={pageController.editorBody}
               onChange={(body) => {
-                if (canEdit) markUnsaved(body);
+                if (effectiveCanEdit) pageController.markBodyUnsaved(body);
               }}
-              onBlur={(body) => void savePage({ body })}
+              onBlur={(body) => void pageController.savePage({ body })}
               uploadInlineFile={attachments.uploadInlineFile}
               onInlineAttachmentInserted={attachments.markInlineAttachmentInserted}
               openSpreadsheet={openSpreadsheet}
               openPresentation={openPresentation}
-              readOnly={!canEdit}
+              readOnly={!effectiveCanEdit}
               onPrint={printCurrentPage}
               exporting={Boolean(exportingPage)}
               onExportPdf={() => downloadPageExport("pdf")}
               onExportArchive={() => downloadPageExport("archive")}
-              onCreateComment={canEdit ? createComment : undefined}
+              onCreateComment={effectiveCanEdit ? createComment : undefined}
+              onDiscardComment={discardComment}
+              runEditorMutation={pageController.runEditorMutation}
+              editorBusy={pageController.lockBlocked}
               onSelectCommentThread={(threadId) => {
                 setSelectedCommentThreadId(threadId);
                 setCommentsOpen(true);
-              }}
-              commentThreadToRemove={commentThreadToRemove}
-              onCommentThreadRemoved={(body) => {
-                setCommentThreadToRemove("");
-                if (body) void savePage({ body });
               }}
             />
           )}
           <PageAttachmentsPanel
             page={page}
             pageLoading={pageLoading}
-            canEdit={canEdit}
+            canEdit={effectiveCanEdit}
             pendingUploads={attachments.pendingUploads}
             uploadAttachments={attachments.uploadAttachments}
             deleteAttachment={attachments.deleteAttachment}
@@ -427,7 +443,7 @@ export function EditorPane({
           loading={commentsLoading}
           error={commentsError}
           selectedThreadId={selectedCommentThreadId}
-          canEdit={canEdit}
+          canEdit={effectiveCanEdit}
           onRefresh={loadComments}
           onReply={addCommentReply}
           onDelete={deleteCommentThread}
@@ -445,13 +461,13 @@ function compareCommentThreads(a: PageCommentThread, b: PageCommentThread) {
   return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
 }
 
-function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; canManage: boolean; setLocked: (locked: boolean) => Promise<void> }) {
+function PageLockControl({ locked, canManage, blocked, setLocked }: { locked: boolean; canManage: boolean; blocked: boolean; setLocked: (locked: boolean) => Promise<void> }) {
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const Icon = locked ? Lock : Unlock;
   if (!canManage) return null;
   async function toggleLocked() {
-    if (pending) return;
+    if (pending || blocked) return;
     setPending(true);
     setFailed(false);
     try {
@@ -466,13 +482,13 @@ function PageLockControl({ locked, canManage, setLocked }: { locked: boolean; ca
     <button
       type="button"
       onClick={() => void toggleLocked()}
-      disabled={pending}
+      disabled={pending || blocked}
       className={`inline-flex h-7 shrink-0 items-center gap-1.5 border bg-white px-2 text-xs font-medium hover:bg-slate-100 disabled:cursor-wait ${failed ? "border-rose-300 text-rose-700" : "border-slate-300 text-slate-700"}`}
-      title={locked ? "Unlock page" : "Lock page"}
-      aria-label={locked ? "Unlock page" : "Lock page"}
+      title={blocked ? "Finish the current editor action before locking" : locked ? "Unlock page" : "Lock page"}
+      aria-label={blocked ? "Finish current editor action" : locked ? "Unlock page" : "Lock page"}
     >
       {pending ? <Loader2 size={12} className="animate-spin" /> : <Icon size={12} />}
-      <span>{pending ? (locked ? "Unlocking" : "Locking") : failed ? "Lock failed" : locked ? "Unlock page" : "Lock page"}</span>
+      <span>{pending ? (locked ? "Unlocking" : "Locking") : blocked ? "Finishing edit" : failed ? "Lock failed" : locked ? "Unlock page" : "Lock page"}</span>
     </button>
   );
 }

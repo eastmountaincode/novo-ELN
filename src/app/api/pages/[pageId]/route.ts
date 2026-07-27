@@ -39,7 +39,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ pageI
       setPageLocked(user.id, pageId, true);
       changed = true;
     }
-    return NextResponse.json({ ok: true, changed });
+    return NextResponse.json({
+      ok: true,
+      changed,
+      ...(typeof body.locked === "boolean" ? { page: getPage(user.id, pageId) } : {}),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not update page";
     const status = message === "Forbidden" || message === "Only editors and owners can lock pages." ? 403 : message === "Page is locked." ? 423 : 400;

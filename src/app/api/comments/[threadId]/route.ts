@@ -17,16 +17,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ threa
   }
 }
 
-export async function DELETE(_request: Request, context: { params: Promise<{ threadId: string }> }) {
+export async function DELETE(request: Request, context: { params: Promise<{ threadId: string }> }) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { threadId } = await context.params;
+  const pageId = new URL(request.url).searchParams.get("pageId") ?? "";
 
   try {
-    deletePageCommentThread(user.id, threadId);
-    return NextResponse.json({ ok: true });
+    const result = deletePageCommentThread(user.id, threadId, pageId);
+    return NextResponse.json({ ok: true, body: result.body });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not delete comment";
-    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : 400 });
+    const status = message === "Forbidden" ? 403 : message === "Page is locked." ? 423 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }

@@ -10,6 +10,14 @@ import { ResizeHandle } from "@/features/app/ResizeHandle";
 import { UpdateAvailableBanner } from "@/features/app/UpdateAvailableBanner";
 import { AuthView, type AuthMode } from "@/features/auth/AuthView";
 import { EditorPane } from "@/features/editor/EditorPane";
+import {
+  cancelPageEditingSessionsRemoval,
+  cancelPageEditingSessionsLogout,
+  disposePageEditingSessions,
+  disposeRemovedPageEditingSessions,
+  preparePageEditingSessionsForLogout,
+  preparePageEditingSessionsForRemoval,
+} from "@/features/editor/page/pageEditingSession";
 import { HomeView } from "@/features/home/HomeView";
 import { NotebookSettingsView } from "@/features/notebooks/settings/NotebookSettingsView";
 import { PagesSidebar } from "@/features/pages/PagesSidebar";
@@ -31,8 +39,8 @@ import {
   type SearchAdvancedFilters,
 } from "@/features/search/searchModel";
 import { UnifiedSidebar } from "@/features/sidebar/UnifiedSidebar";
-import { normalizeTagList, tagListsEqual } from "@/lib/tags";
-import type { Notebook, PageEntry, PageStatus, Project, SearchResult, Workspace } from "@/lib/types";
+import { normalizeTagList } from "@/lib/tags";
+import type { Notebook, PageEntry, Project, SearchResult, Workspace } from "@/lib/types";
 import { NameModal, type NameDialogState } from "@/features/workspace/NameModal";
 import { NotebookDeleteModal } from "@/features/workspace/modals/NotebookDeleteModal";
 import { PageDeleteModal } from "@/features/workspace/modals/PageDeleteModal";
@@ -52,7 +60,6 @@ type DragState = {
   startWidth: number;
 };
 
-const SUCCESS_STATUS_CLEAR_AFTER_MS = 4400;
 const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 1000;
 
 type PageSelection = {
@@ -93,12 +100,7 @@ export default function Home() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchApproxLoading, setSearchApproxLoading] = useState(false);
   const lastSearchKeyRef = useRef("");
-  const [saving, setSaving] = useState("");
   const [loadingPageId, setLoadingPageId] = useState("");
-  const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const selectedPageIdRef = useRef("");
-  const latestBodyDraftsRef = useRef(new Map<string, string>());
-  const bodySaveStatesRef = useRef(new Map<string, { inFlight: boolean; pendingBody: string | null }>());
   const [creatingPage, setCreatingPage] = useState(false);
   const [deletingPage, setDeletingPage] = useState(false);
   const [deletingNotebook, setDeletingNotebook] = useState(false);
@@ -127,6 +129,8 @@ export default function Home() {
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
   const spreadsheetSavedRef = useRef<((attachment: InlineAttachmentAttrs) => void) | null>(null);
   const loadedVersionRef = useRef("");
+  const sessionTransitionInFlightRef = useRef(false);
+  const workspaceEpochRef = useRef(0);
 
   const applyPageSelection = useCallback((selection: PageSelection, urlMode: "none" | "push" | "replace" = "none") => {
     setPageMenuId(null);
@@ -377,7 +381,6 @@ export default function Home() {
   const selectedProject = workspace?.projects.find((project) => project.id === selectedProjectId) ?? workspace?.projects[0];
   const selectedNotebook = selectedProject?.notebooks.find((notebook) => notebook.id === selectedNotebookId) ?? selectedProject?.notebooks[0];
   const selectedPage = selectedNotebook?.pages.find((page) => page.id === selectedPageId) ?? selectedNotebook?.pages[0];
-  selectedPageIdRef.current = selectedPage?.id ?? "";
   const selectedNotebookCanEdit = canEditNotebook(workspace?.user, selectedNotebook);
   const selectedPageCanEdit = selectedNotebookCanEdit && !selectedPage?.lockedAt;
   const selectedPageCanManageLock = selectedNotebookCanEdit;
@@ -501,9 +504,11 @@ export default function Home() {
   }, [closeSearch, searchOpen]);
 
   async function refreshWorkspace(selection?: { projectId?: string; notebookId?: string; pageId?: string; view?: "notebookSettings" }) {
+    const workspaceEpoch = workspaceEpochRef.current;
     const response = await fetch("/api/workspace");
     if (!response.ok) return;
     const data = (await response.json()) as Workspace;
+    if (workspaceEpoch !== workspaceEpochRef.current) return;
     setWorkspace(data);
     if (!selection) {
       selectFirstAvailable(data);
@@ -570,9 +575,39 @@ export default function Home() {
   }
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    setWorkspace(null);
-    setAccountOpen(false);
+    if (sessionTransitionInFlightRef.current) return;
+    sessionTransitionInFlightRef.current = true;
+    try {
+      const sessionScope = workspace?.user.id;
+      if (sessionScope) {
+        const saved = await preparePageEditingSessionsForLogout(sessionScope);
+        if (!saved) {
+          setAccountOpen(false);
+          return;
+        }
+      }
+      const logoutAbort = new AbortController();
+      const logoutTimeout = window.setTimeout(() => logoutAbort.abort(), 15_000);
+      try {
+        const response = await fetch("/api/auth/logout", {
+          method: "POST",
+          signal: logoutAbort.signal,
+        });
+        if (!response.ok) throw new Error("Could not sign out.");
+        if (sessionScope) disposePageEditingSessions(sessionScope);
+        workspaceEpochRef.current += 1;
+        setWorkspace(null);
+        setAccountOpen(false);
+      } catch {
+        if (sessionScope) cancelPageEditingSessionsLogout(sessionScope);
+        setAccountOpen(false);
+        window.alert("Could not sign out. Please try again.");
+      } finally {
+        window.clearTimeout(logoutTimeout);
+      }
+    } finally {
+      sessionTransitionInFlightRef.current = false;
+    }
   }
 
   function selectProject(project: Project) {
@@ -624,11 +659,6 @@ export default function Home() {
     updatePage(pageId, (page) => ({ ...page, ...patch }));
   }, [updatePage]);
 
-  function patchSelectedPage(patch: Partial<PageEntry>) {
-    if (!workspace || !selectedPage || !selectedNotebookCanEdit) return;
-    patchPage(selectedPage.id, patch);
-  }
-
   useEffect(() => {
     if (!selectedPage?.id || selectedPage.bodyLoaded) return;
     let active = true;
@@ -651,125 +681,6 @@ export default function Home() {
       active = false;
     };
   }, [patchPage, selectedPage?.id, selectedPage?.bodyLoaded]);
-
-  function setSaveStatus(status: string, options: { clearAfterMs?: number } = {}) {
-    if (saveStatusTimer.current) {
-      clearTimeout(saveStatusTimer.current);
-      saveStatusTimer.current = null;
-    }
-    setSaving(status);
-    if (options.clearAfterMs && status) {
-      saveStatusTimer.current = setTimeout(() => {
-        setSaving("");
-        saveStatusTimer.current = null;
-      }, options.clearAfterMs);
-    }
-  }
-
-  useEffect(() => {
-    return () => {
-      if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
-    };
-  }, []);
-
-  function setPageSaveStatus(pageId: string, status: string, options: { clearAfterMs?: number } = {}) {
-    if (selectedPageIdRef.current !== pageId) return;
-    setSaveStatus(status, options);
-  }
-
-  function markBodyUnsaved(pageId: string, body: string) {
-    latestBodyDraftsRef.current.set(pageId, body);
-    setPageSaveStatus(pageId, "Unsaved");
-  }
-
-  async function saveBodyPage(pageId: string, body: string) {
-    const states = bodySaveStatesRef.current;
-    const state = states.get(pageId) ?? { inFlight: false, pendingBody: null };
-    state.pendingBody = body;
-    states.set(pageId, state);
-    if (state.inFlight) return;
-
-    state.inFlight = true;
-    try {
-      while (state.pendingBody !== null) {
-        const bodyToSave = state.pendingBody;
-        state.pendingBody = null;
-        setPageSaveStatus(pageId, "Saving...");
-        const response = await fetch(`/api/pages/${pageId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ body: bodyToSave }),
-        });
-        const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
-        const latestBody = latestBodyDraftsRef.current.get(pageId);
-        if (!response.ok) {
-          setPageSaveStatus(pageId, "Save failed");
-          return;
-        }
-        if (latestBody !== bodyToSave) continue;
-        if (result?.changed) patchPage(pageId, { body: bodyToSave, updatedAt: "Just now" });
-        else patchPage(pageId, { body: bodyToSave });
-        setPageSaveStatus(pageId, "Saved", { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS });
-      }
-    } finally {
-      state.inFlight = false;
-      if (state.pendingBody !== null) void saveBodyPage(pageId, state.pendingBody);
-    }
-  }
-
-  async function savePage(patch: { title?: string; body?: string; status?: PageStatus }) {
-    if (!selectedPage || !selectedPageCanEdit) return;
-    const pageId = selectedPage.id;
-    if (Object.prototype.hasOwnProperty.call(patch, "body")) {
-      await saveBodyPage(pageId, patch.body ?? "");
-      return;
-    }
-    setPageSaveStatus(pageId, "Saving...");
-    const response = await fetch(`/api/pages/${pageId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
-    if (!response.ok) {
-      setPageSaveStatus(pageId, "Save failed");
-      return;
-    }
-    if (!result?.changed) {
-      setPageSaveStatus(pageId, "");
-      return;
-    }
-    patchPage(pageId, { ...patch, updatedAt: "Just now" });
-    setPageSaveStatus(pageId, "Saved", { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS });
-  }
-
-  async function setSelectedPageTags(tags: string[]) {
-    if (!selectedPage || !selectedPageCanEdit) return;
-    const normalizedTags = normalizeTagList(tags);
-    if (tagListsEqual(normalizedTags, normalizeTagList(selectedPage.tags))) return;
-    patchSelectedPage({ tags: normalizedTags });
-    setSaveStatus("Saving...");
-    const response = await fetch(`/api/pages/${selectedPage.id}/tags`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags: normalizedTags }),
-    });
-    const result = (await response.json().catch(() => null)) as { changed?: boolean } | null;
-    setSaveStatus(response.ok ? "Saved" : "Tag save failed", response.ok ? { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS } : {});
-    if (response.ok && result?.changed) patchSelectedPage({ updatedAt: "Just now" });
-    if (!response.ok) await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
-  }
-
-  async function setSelectedPageLocked(locked: boolean) {
-    if (!selectedPage || !selectedPageCanManageLock) return;
-    const response = await fetch(`/api/pages/${selectedPage.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ locked }),
-    });
-    if (!response.ok) throw new Error("Could not update page lock.");
-    await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook?.id, pageId: selectedPage.id });
-  }
 
   function openHome() {
     setActiveView("home");
@@ -885,7 +796,8 @@ export default function Home() {
   }
 
   async function confirmPageDelete() {
-    if (!pagePendingDelete || !selectedNotebook || !selectedNotebookCanEdit || pagePendingDelete.lockedAt || deletingPage) return;
+    if (!pagePendingDelete || !selectedNotebook || !selectedNotebookCanEdit || pagePendingDelete.lockedAt || deletingPage || sessionTransitionInFlightRef.current) return;
+    sessionTransitionInFlightRef.current = true;
     const pageToDelete = pagePendingDelete;
     const workspaceBeforeDelete = workspace;
     const selectionBeforeDelete = {
@@ -909,6 +821,16 @@ export default function Home() {
     }
 
     setDeletingPage(true);
+    const sessionScope = workspace?.user.id;
+    const pageIds = [pageToDelete.id];
+    const sessionsPrepared = sessionScope
+      ? await preparePageEditingSessionsForRemoval(sessionScope, pageIds)
+      : true;
+    if (!sessionsPrepared) {
+      setDeletingPage(false);
+      sessionTransitionInFlightRef.current = false;
+      return;
+    }
     setPagePendingDelete(null);
     setWorkspace((current) => current ? removePageFromWorkspace(current, pageToDelete.id, new Date().toISOString()) : current);
     if (selectedPage?.id === pageToDelete.id) setSelectedPageId(nextPageId ?? "");
@@ -916,11 +838,18 @@ export default function Home() {
     else writeNotebookUrl(selectedNotebook.id, "replace");
     try {
       const response = await fetch(`/api/pages/${pageToDelete.id}`, { method: "DELETE" });
-      if (!response.ok) rollbackDelete();
+      if (!response.ok) {
+        if (sessionScope) cancelPageEditingSessionsRemoval(sessionScope, pageIds);
+        rollbackDelete();
+        return;
+      }
+      if (sessionScope) disposeRemovedPageEditingSessions(sessionScope, pageIds);
     } catch {
+      if (sessionScope) cancelPageEditingSessionsRemoval(sessionScope, pageIds);
       rollbackDelete();
     } finally {
       setDeletingPage(false);
+      sessionTransitionInFlightRef.current = false;
     }
   }
 
@@ -961,27 +890,54 @@ export default function Home() {
   }
 
   async function confirmNotebookDelete() {
-    if (!notebookPendingDelete || deletingNotebook) return;
+    if (!notebookPendingDelete || deletingNotebook || sessionTransitionInFlightRef.current) return;
+    sessionTransitionInFlightRef.current = true;
     setDeletingNotebook(true);
+    const sessionScope = workspace?.user.id;
+    const pageIds = notebookPendingDelete.pages.map((page) => page.id);
+    let sessionsPrepared = false;
     try {
+      sessionsPrepared = sessionScope
+        ? await preparePageEditingSessionsForRemoval(sessionScope, pageIds)
+        : true;
+      if (!sessionsPrepared) return;
       const response = await fetch(`/api/notebooks/${notebookPendingDelete.id}`, { method: "DELETE" });
-      if (!response.ok) return;
+      if (!response.ok) {
+        if (sessionScope) cancelPageEditingSessionsRemoval(sessionScope, pageIds);
+        return;
+      }
+      if (sessionScope) disposeRemovedPageEditingSessions(sessionScope, pageIds);
       setNotebookPendingDelete(null);
       setSelectedNotebookId("");
       setSelectedPageId("");
       writePageUrl(null, "replace");
       await refreshWorkspace({ projectId: selectedProject?.id });
+    } catch {
+      if (sessionsPrepared && sessionScope) cancelPageEditingSessionsRemoval(sessionScope, pageIds);
     } finally {
       setDeletingNotebook(false);
+      sessionTransitionInFlightRef.current = false;
     }
   }
 
   async function confirmProjectDelete() {
-    if (!projectPendingDelete || deletingProject) return;
+    if (!projectPendingDelete || deletingProject || sessionTransitionInFlightRef.current) return;
+    sessionTransitionInFlightRef.current = true;
     setDeletingProject(true);
+    const sessionScope = workspace?.user.id;
+    const pageIds = projectPendingDelete.notebooks.flatMap((notebook) => notebook.pages.map((page) => page.id));
+    let sessionsPrepared = false;
     try {
+      sessionsPrepared = sessionScope
+        ? await preparePageEditingSessionsForRemoval(sessionScope, pageIds)
+        : true;
+      if (!sessionsPrepared) return;
       const response = await fetch(`/api/projects/${projectPendingDelete.id}`, { method: "DELETE" });
-      if (!response.ok) return;
+      if (!response.ok) {
+        if (sessionScope) cancelPageEditingSessionsRemoval(sessionScope, pageIds);
+        return;
+      }
+      if (sessionScope) disposeRemovedPageEditingSessions(sessionScope, pageIds);
       setProjectPendingDelete(null);
       setSelectedProjectId("");
       setSelectedNotebookId("");
@@ -989,8 +945,11 @@ export default function Home() {
       setActiveView("home");
       writePageUrl(null, "replace");
       await refreshWorkspace();
+    } catch {
+      if (sessionsPrepared && sessionScope) cancelPageEditingSessionsRemoval(sessionScope, pageIds);
     } finally {
       setDeletingProject(false);
+      sessionTransitionInFlightRef.current = false;
     }
   }
 
@@ -1225,25 +1184,18 @@ export default function Home() {
 
             {selectedPage ? (
               <EditorPane
-                key={selectedPage.id}
+                key={`${workspace.user.id}:${selectedPage.id}`}
                 page={selectedPage}
+                sessionScope={workspace.user.id}
                 selectedProject={selectedProject}
                 selectedNotebook={selectedNotebook}
-                saving={saving}
                 pageLoading={!selectedPage.bodyLoaded || loadingPageId === selectedPage.id}
                 canEdit={selectedPageCanEdit}
                 canManageLock={selectedPageCanManageLock}
                 updatePage={updatePage}
-                reportSaveStatus={setSaveStatus}
-                successStatusClearAfterMs={SUCCESS_STATUS_CLEAR_AFTER_MS}
                 openSpreadsheet={openSpreadsheetModal}
                 openPresentation={setPresentationModal}
-                patchSelectedPage={patchSelectedPage}
-                savePage={savePage}
-                markUnsaved={(body) => markBodyUnsaved(selectedPage.id, body)}
-                setPageTags={setSelectedPageTags}
                 tagSuggestions={editorTagSuggestions}
-                setPageLocked={setSelectedPageLocked}
               />
             ) : (
               <section className="grid place-items-center border-l border-slate-200 bg-white p-8 text-slate-500">Create a page to start writing.</section>

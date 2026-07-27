@@ -13,6 +13,7 @@ import { EditorPane, type PendingAttachmentUpload } from "@/features/editor/Edit
 import { HomeView } from "@/features/home/HomeView";
 import { NotebookSettingsView } from "@/features/notebooks/settings/NotebookSettingsView";
 import { PagesSidebar } from "@/features/pages/PagesSidebar";
+import { addPageToWorkspace, removePageFromWorkspace } from "@/features/pages/workspacePageState";
 import { SearchOverlay } from "@/features/search/SearchOverlay";
 import {
   emptySearchAdvancedFilters,
@@ -892,18 +893,39 @@ export default function Home() {
 
   async function confirmPageDelete() {
     if (!pagePendingDelete || !selectedNotebook || !selectedNotebookCanEdit || pagePendingDelete.lockedAt || deletingPage) return;
-    const remainingPages = selectedNotebook.pages.filter((page) => page.id !== pagePendingDelete.id);
-    const deletedIndex = selectedNotebook.pages.findIndex((page) => page.id === pagePendingDelete.id);
+    const pageToDelete = pagePendingDelete;
+    const workspaceBeforeDelete = workspace;
+    const selectionBeforeDelete = {
+      projectId: selectedProject?.id ?? "",
+      notebookId: selectedNotebook.id,
+      pageId: selectedPage?.id ?? "",
+    };
+    const remainingPages = selectedNotebook.pages.filter((page) => page.id !== pageToDelete.id);
+    const deletedIndex = selectedNotebook.pages.findIndex((page) => page.id === pageToDelete.id);
     const nextPage = remainingPages[Math.min(Math.max(deletedIndex, 0), remainingPages.length - 1)];
-    const nextPageId = selectedPage?.id === pagePendingDelete.id ? nextPage?.id ?? "" : selectedPage?.id;
+    const nextPageId = selectedPage?.id === pageToDelete.id ? nextPage?.id ?? "" : selectedPage?.id;
+
+    function rollbackDelete() {
+      setWorkspace(workspaceBeforeDelete);
+      setSelectedProjectId(selectionBeforeDelete.projectId);
+      setSelectedNotebookId(selectionBeforeDelete.notebookId);
+      setSelectedPageId(selectionBeforeDelete.pageId);
+      setPagePendingDelete(pageToDelete);
+      if (selectionBeforeDelete.pageId) writePageUrl(selectionBeforeDelete.pageId, "replace");
+      else writeNotebookUrl(selectionBeforeDelete.notebookId, "replace");
+    }
+
     setDeletingPage(true);
+    setPagePendingDelete(null);
+    setWorkspace((current) => current ? removePageFromWorkspace(current, pageToDelete.id, new Date().toISOString()) : current);
+    if (selectedPage?.id === pageToDelete.id) setSelectedPageId(nextPageId ?? "");
+    if (nextPageId) writePageUrl(nextPageId, "replace");
+    else writeNotebookUrl(selectedNotebook.id, "replace");
     try {
-      const response = await fetch(`/api/pages/${pagePendingDelete.id}`, { method: "DELETE" });
-      if (!response.ok) return;
-      setPagePendingDelete(null);
-      if (nextPageId) writePageUrl(nextPageId, "replace");
-      else writeNotebookUrl(selectedNotebook.id, "replace");
-      await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: nextPageId });
+      const response = await fetch(`/api/pages/${pageToDelete.id}`, { method: "DELETE" });
+      if (!response.ok) rollbackDelete();
+    } catch {
+      rollbackDelete();
     } finally {
       setDeletingPage(false);
     }
@@ -1072,10 +1094,18 @@ export default function Home() {
         body: JSON.stringify({ notebookId: selectedNotebook.id }),
       });
       if (!response.ok) return;
-      const body = (await response.json()) as { pageId: string };
+      const body = (await response.json()) as { pageId: string; page?: PageEntry };
+      const createdPage = body.page;
+      if (!createdPage) {
+        await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: body.pageId });
+        return;
+      }
+      setWorkspace((current) => current ? addPageToWorkspace(current, createdPage) : current);
       setActiveView("project");
-      writePageUrl(body.pageId, "push");
-      await refreshWorkspace({ projectId: selectedProject?.id, notebookId: selectedNotebook.id, pageId: body.pageId });
+      setSelectedProjectId(selectedProject?.id ?? "workspace");
+      setSelectedNotebookId(selectedNotebook.id);
+      setSelectedPageId(createdPage.id);
+      writePageUrl(createdPage.id, "push");
     } finally {
       setCreatingPage(false);
     }

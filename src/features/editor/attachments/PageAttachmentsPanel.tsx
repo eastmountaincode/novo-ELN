@@ -13,8 +13,8 @@ import {
   Loader2,
   Paperclip,
   Plus,
+  ScrollText,
   SlidersHorizontal,
-  TextCursorInput,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -355,7 +355,7 @@ function AttachmentRow({
                 title="Used inline in this page"
                 className="grid size-4 shrink-0 place-items-center text-cyan-600"
               >
-                <TextCursorInput size={14} aria-hidden="true" />
+                <ScrollText size={14} aria-hidden="true" />
               </span>
             ) : null}
           </div>

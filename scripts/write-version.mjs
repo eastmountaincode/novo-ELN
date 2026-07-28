@@ -4,7 +4,7 @@ import { execSync } from "node:child_process";
 
 const generatedDir = path.join(process.cwd(), "src", "generated");
 
-function currentBuildStamp() {
+function formatBuildStamp(date) {
   const timeZone = process.env.NOVO_BUILD_TIME_ZONE || "America/New_York";
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -15,9 +15,18 @@ function currentBuildStamp() {
     minute: "2-digit",
     hour12: false,
     timeZoneName: "short",
-  }).formatToParts(new Date());
+  }).formatToParts(date);
   const get = (type) => parts.find((part) => part.type === type)?.value || "";
   return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")} ${get("timeZoneName")}`.trim();
+}
+
+function currentBuildStamp() {
+  const configuredBuildDate = process.env.NOVO_BUILD_DATE;
+  const buildDate = configuredBuildDate ? new Date(configuredBuildDate) : new Date();
+  if (Number.isNaN(buildDate.getTime())) {
+    throw new Error(`NOVO_BUILD_DATE is not a valid date: ${configuredBuildDate}`);
+  }
+  return formatBuildStamp(buildDate);
 }
 
 function currentGitCommit() {
@@ -28,7 +37,7 @@ function currentGitCommit() {
   }
 }
 
-const version = process.env.NOVO_APP_VERSION || process.env.NOVO_BUILD_DATE || currentBuildStamp();
+const version = process.env.NOVO_APP_VERSION || currentBuildStamp();
 const buildId = process.env.NOVO_BUILD_ID || currentGitCommit() || "unknown";
 
 fs.mkdirSync(generatedDir, { recursive: true });

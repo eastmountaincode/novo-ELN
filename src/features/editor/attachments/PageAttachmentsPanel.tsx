@@ -353,7 +353,7 @@ function AttachmentRow({
                 role="img"
                 aria-label="Used inline in this page"
                 title="Used inline in this page"
-                className="grid size-4 shrink-0 place-items-center text-cyan-600"
+                className="grid size-4 shrink-0 place-items-center text-slate-500"
               >
                 <ScrollText size={14} aria-hidden="true" />
               </span>

@@ -1,5 +1,6 @@
 import {
   Beaker,
+  Check,
   ChevronDown,
   ChevronRight,
   Download,
@@ -12,15 +13,24 @@ import {
   Loader2,
   Paperclip,
   Plus,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   INLINE_ATTACHMENT_DRAG_TYPE,
   attachmentToInlineAttrs,
 } from "@/components/RichTextEditor";
+import { writeStoredSortKey } from "@/lib/clientSorting";
 import { formatBytes } from "@/lib/formatBytes";
 import type { Attachment, BlockType, PageEntry } from "@/lib/types";
+import {
+  ATTACHMENT_SORT_OPTIONS,
+  ATTACHMENT_SORT_STORAGE_KEY,
+  readStoredAttachmentSortKey,
+  sortAttachments,
+  type AttachmentSortKey,
+} from "./attachmentSorting";
 import type { PendingAttachmentUpload } from "./usePageAttachments";
 
 const blockIcons: Record<BlockType, typeof ImageIcon> = {
@@ -51,10 +61,54 @@ export function PageAttachmentsPanel({
 }: PageAttachmentsPanelProps) {
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [sortKey, setSortKey] = useState<AttachmentSortKey>(readStoredAttachmentSortKey);
+  const [sortOptionsOpen, setSortOptionsOpen] = useState(false);
   const dragDepthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sortOptionsRef = useRef<HTMLDivElement>(null);
   const attachmentCount = page.attachmentCount ?? page.attachments.length;
   const attachmentLabel = `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`;
+  const sortedAttachments = useMemo(
+    () => sortAttachments(page.attachments, sortKey),
+    [page.attachments, sortKey],
+  );
+
+  useEffect(() => {
+    writeStoredSortKey(ATTACHMENT_SORT_STORAGE_KEY, sortKey);
+  }, [sortKey]);
+
+  useEffect(() => {
+    if (!sortOptionsOpen) return;
+
+    function isInsideSortOptions(target: EventTarget | null) {
+      return target instanceof Element && Boolean(sortOptionsRef.current?.contains(target));
+    }
+
+    function closeSortOptions() {
+      setSortOptionsOpen(false);
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      if (!isInsideSortOptions(event.target)) closeSortOptions();
+    }
+
+    function onFocusIn(event: FocusEvent) {
+      if (!isInsideSortOptions(event.target)) closeSortOptions();
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeSortOptions();
+    }
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sortOptionsOpen]);
 
   function hasDraggedFiles(event: React.DragEvent<HTMLElement>) {
     return Array.from(event.dataTransfer.types).includes("Files");
@@ -122,15 +176,62 @@ export function PageAttachmentsPanel({
           <span>Attachments</span>
           <span className="bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">{attachmentLabel}</span>
         </button>
-        {canEdit ? (
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            <Plus size={14} />File
-          </button>
-        ) : null}
+        <div className="flex items-center gap-2">
+          <div ref={sortOptionsRef} data-transient-menu="true" className="relative">
+            <button
+              type="button"
+              onClick={() => setSortOptionsOpen((current) => !current)}
+              className="grid size-7 place-items-center border border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900"
+              aria-label="Sort attachments"
+              aria-haspopup="dialog"
+              aria-expanded={sortOptionsOpen}
+              title={`Sort attachments: ${ATTACHMENT_SORT_OPTIONS.find((option) => option.key === sortKey)?.label}`}
+            >
+              <SlidersHorizontal size={14} />
+            </button>
+            {sortOptionsOpen ? (
+              <section
+                role="dialog"
+                aria-label="Sort attachments"
+                className="absolute bottom-9 right-0 z-30 w-52 border border-slate-200 bg-white p-1 text-slate-900 shadow-2xl shadow-slate-950/15"
+              >
+                <p className="px-3 pb-1.5 pt-2 text-xs font-semibold text-slate-500">Sort by</p>
+                <div className="space-y-1">
+                  {ATTACHMENT_SORT_OPTIONS.map((option) => {
+                    const selected = option.key === sortKey;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => {
+                          setSortKey(option.key);
+                          setSortOptionsOpen(false);
+                        }}
+                        className={`flex h-9 w-full items-center justify-between gap-3 px-3 text-left text-sm font-medium ${
+                          selected
+                            ? "bg-slate-100 text-slate-950"
+                            : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"
+                        }`}
+                      >
+                        <span>{option.label}</span>
+                        {selected ? <Check size={14} className="text-cyan-600" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+          </div>
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              <Plus size={14} />File
+            </button>
+          ) : null}
+        </div>
       </div>
       {open ? (
         <div
@@ -156,7 +257,7 @@ export function PageAttachmentsPanel({
           ) : pendingUploads.length || page.attachments.length ? (
             <div className="grid max-h-80 gap-2 overflow-y-auto scroll-contained p-2">
               {pendingUploads.map((upload) => <PendingAttachmentUploadRow key={upload.id} upload={upload} />)}
-              {page.attachments.map((attachment, index) => (
+              {sortedAttachments.map((attachment, index) => (
                 <AttachmentRow
                   key={attachment.id}
                   index={index + 1}

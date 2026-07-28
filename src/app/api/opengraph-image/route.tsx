@@ -24,13 +24,13 @@ export async function GET() {
           background: "#020617",
           color: "#f1f5f9",
           fontFamily: "Wulkan Novo",
-          fontSize: 420,
+          fontSize: 300,
           fontStyle: "italic",
           fontWeight: 300,
           lineHeight: 1,
         }}
       >
-        N
+        Novo
       </div>
     ),
     {

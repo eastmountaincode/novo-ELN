@@ -69,6 +69,14 @@ export function commentThreadIdsFromBody(body: string) {
   return [...threadIds];
 }
 
+export function attachmentIdsFromBody(body: string) {
+  const parsed = parseEditorDocument(body);
+  if (!parsed) return [];
+  const attachmentIds = new Set<string>();
+  collectAttachmentIds(parsed, attachmentIds);
+  return [...attachmentIds];
+}
+
 function parseEditorDocument(body: string): JSONContent | null {
   if (!body.trim().startsWith("{")) return null;
   try {
@@ -195,4 +203,14 @@ function collectCommentThreadIds(node: JSONContent, threadIds: Set<string>) {
     if (threadId) threadIds.add(threadId);
   }
   for (const child of node.content ?? []) collectCommentThreadIds(child, threadIds);
+}
+
+function collectAttachmentIds(node: JSONContent, attachmentIds: Set<string>) {
+  if (node.type === "attachmentCard") {
+    const attachmentId = String(node.attrs?.attachmentId ?? "");
+    if (attachmentId) attachmentIds.add(attachmentId);
+  }
+  for (const child of node.content ?? []) {
+    collectAttachmentIds(child, attachmentIds);
+  }
 }

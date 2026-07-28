@@ -7,7 +7,7 @@ import {
   ChevronRight,
   Home as HomeIcon,
   MoreHorizontal,
-  Notebook as NotebookIcon,
+  NotebookText as NotebookIcon,
   Palette,
   Pencil,
   Plus,

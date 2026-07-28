@@ -1,6 +1,6 @@
 "use client";
 
-import { Notebook as NotebookIcon, Users } from "lucide-react";
+import { NotebookText as NotebookIcon, Users } from "lucide-react";
 import { useState } from "react";
 import { NotebookAccessList } from "@/features/notebooks/settings/NotebookAccessList";
 import { NotebookMemberRemovalModal } from "@/features/notebooks/settings/NotebookMemberRemovalModal";

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
 import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminTag, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageComment, PageCommentThread, PageEntry, PageStatus, Project, ShareMember, UserRole, Workspace } from "./types";
-import { bodyToEditorDocument, bodyToEditorText, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody } from "./editor";
+import { bodyToEditorDocument, bodyToEditorText, commentThreadIdsFromBody, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody, removeCommentMarksFromBody, removeUnknownCommentMarksFromBody } from "./editor";
 import { uploadDir } from "./paths";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
 import { execSql, queryOne, querySql, sql } from "./sqlite";
@@ -1231,13 +1231,140 @@ export function setPageCommentThreadResolved(userId: string, threadId: string, r
   return updated;
 }
 
-export function deletePageCommentThread(userId: string, threadId: string) {
+export function deletePageCommentThread(userId: string, threadId: string, expectedPageId = "") {
   ensureDatabase();
-  const thread = queryOne(`SELECT page_id FROM page_comment_threads WHERE id = ${sql(threadId)} LIMIT 1`);
-  if (!thread) throw new Error("Comment thread not found.");
+  const thread = queryOne(`
+    SELECT
+      pct.page_id,
+      p.notebook_id,
+      p.body
+    FROM page_comment_threads pct
+    JOIN pages p ON p.id = pct.page_id
+    WHERE pct.id = ${sql(threadId)}
+    LIMIT 1
+  `);
+  if (!thread) {
+    if (!expectedPageId) throw new Error("Comment thread not found.");
+    assertPageReadAccess(userId, expectedPageId);
+    const page = queryOne(`SELECT body FROM pages WHERE id = ${sql(expectedPageId)} LIMIT 1`);
+    if (!page) throw new Error("Page not found");
+    return { pageId: expectedPageId, body: String(page.body ?? "") };
+  }
+  if (expectedPageId && thread.page_id !== expectedPageId) throw new Error("Comment thread not found.");
   assertPageEditAccess(userId, thread.page_id);
-  execSql(`DELETE FROM page_comment_threads WHERE id = ${sql(threadId)};`);
-  recordPageAuditEvent(userId, thread.page_id, "page.comment.deleted", "deleted comment", { threadId });
+  const storedBody = String(thread.body ?? "");
+  const previousBody = normalizePageBody(storedBody);
+  const nextBody = removeCommentMarksFromBody(previousBody, threadId);
+  const bodyChanged = nextBody !== previousBody;
+  const authoritativeBody = bodyChanged ? nextBody : storedBody;
+  const auditMetadata = JSON.stringify({
+    threadId,
+    markerRemoved: bodyChanged,
+    ...(bodyChanged ? {
+      oldHash: hashAuditValue(previousBody),
+      newHash: hashAuditValue(nextBody),
+      oldLength: previousBody.length,
+      newLength: nextBody.length,
+    } : {}),
+  });
+
+  try {
+    execSql(`
+      BEGIN IMMEDIATE;
+      CREATE TEMP TABLE novo_comment_delete_guard (
+        value INTEGER NOT NULL CHECK (value = 1)
+      );
+      INSERT INTO novo_comment_delete_guard (value)
+      VALUES (
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM pages p
+          JOIN page_comment_threads pct ON pct.page_id = p.id
+          WHERE p.id = ${sql(thread.page_id)}
+            AND pct.id = ${sql(threadId)}
+            AND COALESCE(p.locked_at, '') = ''
+            AND p.body = ${sql(storedBody)}
+            AND p.notebook_id = ${sql(thread.notebook_id)}
+            AND (
+              EXISTS (
+                SELECT 1
+                FROM users u
+                WHERE u.id = ${sql(userId)}
+                  AND u.role = 'admin'
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM notebook_members nm
+                WHERE nm.notebook_id = p.notebook_id
+                  AND nm.user_id = ${sql(userId)}
+                  AND nm.role IN ('owner', 'editor')
+              )
+            )
+        ) THEN 1 ELSE 0 END
+      );
+      DELETE FROM page_comment_threads WHERE id = ${sql(threadId)};
+      ${bodyChanged ? `
+        UPDATE pages
+        SET body = ${sql(nextBody)},
+            preview_text = ${sql(bodyToEditorText(nextBody).slice(0, 500))},
+            updated_at = datetime('now')
+        WHERE id = ${sql(thread.page_id)};
+        UPDATE notebooks
+        SET updated_at = datetime('now')
+        WHERE id = ${sql(thread.notebook_id)};
+      ` : ""}
+      INSERT INTO audit_events (
+        id,
+        entity_type,
+        entity_id,
+        page_id,
+        notebook_id,
+        actor_user_id,
+        action,
+        summary,
+        metadata_json,
+        event_count
+      ) VALUES (
+        ${sql(randomUUID())},
+        'page',
+        ${sql(thread.page_id)},
+        ${sql(thread.page_id)},
+        ${sql(thread.notebook_id)},
+        ${sql(userId)},
+        'page.comment.deleted',
+        'deleted comment',
+        ${sql(auditMetadata)},
+        1
+      );
+      INSERT INTO search_index_queue (page_id, queued_at)
+      VALUES (${sql(thread.page_id)}, strftime('%s', 'now'))
+      ON CONFLICT(page_id) DO UPDATE SET queued_at = excluded.queued_at;
+      COMMIT;
+    `);
+  } catch (error) {
+    const currentPage = queryOne(`
+      SELECT notebook_id, body, COALESCE(locked_at, '') AS locked_at
+      FROM pages
+      WHERE id = ${sql(thread.page_id)}
+      LIMIT 1
+    `);
+    const currentThread = queryOne(`
+      SELECT 1 AS exists_flag
+      FROM page_comment_threads
+      WHERE id = ${sql(threadId)}
+      LIMIT 1
+    `);
+    if (!currentPage) throw new Error("Page not found");
+    if (!currentThread) throw new Error("Comment thread not found.");
+    assertPageEditAccess(userId, thread.page_id);
+    if (currentPage.notebook_id !== thread.notebook_id || currentPage.body !== storedBody) {
+      throw new Error("Page changed while deleting the comment. Try again.");
+    }
+    throw error;
+  }
+
+  scheduleSearchIndexDrain();
+  return { pageId: thread.page_id, body: authoritativeBody };
 }
 
 export function getAdminActivityEvents(adminUserId: string, options: { limit?: number; offset?: number } = {}): AdminActivityOverview {
@@ -1383,76 +1510,128 @@ export function createPage(userId: string, notebookId: string) {
 
 export function updatePage(userId: string, pageId: string, patch: { title?: string; body?: string; status?: PageStatus }) {
   ensureDatabase();
-  assertPageEditAccess(userId, pageId);
-  const row = queryOne(`SELECT notebook_id, title, body, status FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
-  if (!row) throw new Error("Page not found");
-  const assignments: string[] = [];
-  const normalizedStatus = patch.status !== undefined ? normalizePageStatus(patch.status) : undefined;
-  const previousTitle = String(row.title ?? "");
-  const previousBody = String(row.body ?? "");
-  const previousStatus = normalizePageStatus(row.status);
-  const previousNormalizedBody = patch.body !== undefined ? normalizePageBody(previousBody) : "";
-  const nextNormalizedBody = patch.body !== undefined ? normalizePageBody(patch.body) : "";
-  const titleChanged = patch.title !== undefined && patch.title !== previousTitle;
-  const bodyChanged = patch.body !== undefined && nextNormalizedBody !== previousNormalizedBody;
-  const statusChanged = normalizedStatus !== undefined && normalizedStatus !== previousStatus;
-  if (titleChanged) assignments.push(`title = ${sql(patch.title)}`);
-  if (bodyChanged) {
-    assignments.push(`body = ${sql(nextNormalizedBody)}`);
-    assignments.push(`preview_text = ${sql(bodyToEditorText(nextNormalizedBody).slice(0, 500))}`);
-  }
-  if (statusChanged) assignments.push(`status = ${sql(normalizedStatus)}`);
-  if (!assignments.length) return false;
-  assignments.push("updated_at = datetime('now')");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    assertPageEditAccess(userId, pageId);
+    const row = queryOne(`SELECT notebook_id, title, body, status FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+    if (!row) throw new Error("Page not found");
+    const assignments: string[] = [];
+    const normalizedStatus = patch.status !== undefined ? normalizePageStatus(patch.status) : undefined;
+    const previousTitle = String(row.title ?? "");
+    const previousBody = String(row.body ?? "");
+    const previousStatus = normalizePageStatus(row.status);
+    const previousNormalizedBody = patch.body !== undefined ? normalizePageBody(previousBody) : "";
+    const nextNormalizedBody = patch.body !== undefined
+      ? removeUnknownPageCommentMarks(pageId, normalizePageBody(patch.body))
+      : "";
+    const titleChanged = patch.title !== undefined && patch.title !== previousTitle;
+    const bodyChanged = patch.body !== undefined && nextNormalizedBody !== previousNormalizedBody;
+    const statusChanged = normalizedStatus !== undefined && normalizedStatus !== previousStatus;
+    if (titleChanged) assignments.push(`title = ${sql(patch.title)}`);
+    if (bodyChanged) {
+      assignments.push(`body = ${sql(nextNormalizedBody)}`);
+      assignments.push(`preview_text = ${sql(bodyToEditorText(nextNormalizedBody).slice(0, 500))}`);
+    }
+    if (statusChanged) assignments.push(`status = ${sql(normalizedStatus)}`);
+    if (!assignments.length) return false;
+    assignments.push("updated_at = datetime('now')");
+    const referencedThreadIds = bodyChanged ? commentThreadIdsFromBody(nextNormalizedBody) : [];
+    const referencedThreadGuard = referencedThreadIds.length
+      ? `AND (
+          SELECT COUNT(*)
+          FROM page_comment_threads pct
+          WHERE pct.page_id = p.id
+            AND pct.id IN (${referencedThreadIds.map(sql).join(", ")})
+        ) = ${referencedThreadIds.length}`
+      : "";
 
-  execSql(`
-    UPDATE pages SET ${assignments.join(", ")} WHERE id = ${sql(pageId)};
-    UPDATE notebooks SET updated_at = datetime('now') WHERE id = (SELECT notebook_id FROM pages WHERE id = ${sql(pageId)});
-  `);
-  if (titleChanged) {
-    recordAuditEvent({
-      entityType: "page",
-      entityId: pageId,
-      pageId,
-      notebookId: row.notebook_id,
-      actorUserId: userId,
-      action: "page.title.updated",
-      summary: `renamed page from ${quoteAuditValue(previousTitle || "Untitled")} to ${quoteAuditValue(patch.title || "Untitled")}`,
-      metadata: { oldTitle: previousTitle, newTitle: patch.title ?? "" },
-    });
+    try {
+      execSql(`
+        BEGIN IMMEDIATE;
+        CREATE TEMP TABLE novo_page_update_guard (
+          value INTEGER NOT NULL CHECK (value = 1)
+        );
+        INSERT INTO novo_page_update_guard (value)
+        VALUES (
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM pages p
+            WHERE p.id = ${sql(pageId)}
+              AND p.notebook_id = ${sql(row.notebook_id)}
+              AND COALESCE(p.locked_at, '') = ''
+              AND (
+                EXISTS (
+                  SELECT 1
+                  FROM users u
+                  WHERE u.id = ${sql(userId)}
+                    AND u.role = 'admin'
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM notebook_members nm
+                  WHERE nm.notebook_id = p.notebook_id
+                    AND nm.user_id = ${sql(userId)}
+                    AND nm.role IN ('owner', 'editor')
+                )
+              )
+              ${referencedThreadGuard}
+          ) THEN 1 ELSE 0 END
+        );
+        UPDATE pages SET ${assignments.join(", ")} WHERE id = ${sql(pageId)};
+        UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(row.notebook_id)};
+        COMMIT;
+      `);
+    } catch (error) {
+      if (attempt === 0 && patch.body !== undefined) continue;
+      assertPageEditAccess(userId, pageId);
+      throw error;
+    }
+
+    if (titleChanged) {
+      recordAuditEvent({
+        entityType: "page",
+        entityId: pageId,
+        pageId,
+        notebookId: row.notebook_id,
+        actorUserId: userId,
+        action: "page.title.updated",
+        summary: `renamed page from ${quoteAuditValue(previousTitle || "Untitled")} to ${quoteAuditValue(patch.title || "Untitled")}`,
+        metadata: { oldTitle: previousTitle, newTitle: patch.title ?? "" },
+      });
+    }
+    if (statusChanged) {
+      recordAuditEvent({
+        entityType: "page",
+        entityId: pageId,
+        pageId,
+        notebookId: row.notebook_id,
+        actorUserId: userId,
+        action: "page.status.updated",
+        summary: `changed status from ${quoteAuditValue(statusLabel(previousStatus))} to ${quoteAuditValue(statusLabel(normalizedStatus))}`,
+        metadata: { oldStatus: previousStatus, newStatus: normalizedStatus },
+      });
+    }
+    if (bodyChanged) {
+      recordAuditEvent({
+        entityType: "page",
+        entityId: pageId,
+        pageId,
+        notebookId: row.notebook_id,
+        actorUserId: userId,
+        action: "page.body.updated",
+        summary: "edited page body",
+        metadata: {
+          oldHash: hashAuditValue(previousNormalizedBody),
+          newHash: hashAuditValue(nextNormalizedBody),
+          oldLength: previousNormalizedBody.length,
+          newLength: nextNormalizedBody.length,
+        },
+        coalesce: true,
+      });
+    }
+    queueSearchIndexForPage(pageId);
+    return true;
   }
-  if (statusChanged) {
-    recordAuditEvent({
-      entityType: "page",
-      entityId: pageId,
-      pageId,
-      notebookId: row.notebook_id,
-      actorUserId: userId,
-      action: "page.status.updated",
-      summary: `changed status from ${quoteAuditValue(statusLabel(previousStatus))} to ${quoteAuditValue(statusLabel(normalizedStatus))}`,
-      metadata: { oldStatus: previousStatus, newStatus: normalizedStatus },
-    });
-  }
-  if (bodyChanged) {
-    recordAuditEvent({
-      entityType: "page",
-      entityId: pageId,
-      pageId,
-      notebookId: row.notebook_id,
-      actorUserId: userId,
-      action: "page.body.updated",
-      summary: "edited page body",
-      metadata: {
-        oldHash: hashAuditValue(previousNormalizedBody),
-        newHash: hashAuditValue(nextNormalizedBody),
-        oldLength: previousNormalizedBody.length,
-        newLength: nextNormalizedBody.length,
-      },
-      coalesce: true,
-    });
-  }
-  queueSearchIndexForPage(pageId);
-  return true;
+  return false;
 }
 
 export function setPageLocked(userId: string, pageId: string, locked: boolean) {
@@ -2008,6 +2187,18 @@ function normalizePageStatus(value: unknown): PageStatus {
 
 function normalizePageBody(body: string) {
   return editorDocumentToBody(bodyToEditorDocument(body));
+}
+
+function removeUnknownPageCommentMarks(pageId: string, body: string) {
+  if (!body.includes('"comment"')) return body;
+  const validThreadIds = new Set(
+    querySql(`
+      SELECT id
+      FROM page_comment_threads
+      WHERE page_id = ${sql(pageId)}
+    `).map((row) => row.id),
+  );
+  return removeUnknownCommentMarksFromBody(body, validThreadIds);
 }
 
 function getNotebookRole(userId: string, notebookId: string): AccessRole | null {

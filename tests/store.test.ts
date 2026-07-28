@@ -118,6 +118,108 @@ describe("store", () => {
     expect(page.status).toBe("Completed");
   });
 
+  it("removes an inline attachment card from the authoritative page after deletion", async () => {
+    const { bodyToEditorText, editorDocumentToBody } = await import("../src/lib/editor");
+    const { createAttachment, createPage, deleteAttachment, getPage, getWorkspace, updatePage } = await import("../src/lib/store");
+    const user = await createTestAdmin();
+    const notebookId = getWorkspace(user.id).notebooks[0].id;
+    const pageId = createPage(user.id, notebookId);
+    const attachmentId = createAttachment({
+      userId: user.id,
+      pageId,
+      originalName: "inline.txt",
+      mimeType: "text/plain",
+      size: 12,
+      storageKey: "inline.txt",
+      blockType: "file",
+    });
+
+    updatePage(user.id, pageId, {
+      body: editorDocumentToBody({
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Before attachment" }] },
+          {
+            type: "attachmentCard",
+            attrs: {
+              attachmentId,
+              kind: "file",
+              filename: "inline.txt",
+              mimeType: "text/plain",
+              size: 12,
+            },
+          },
+          { type: "paragraph", content: [{ type: "text", text: "After attachment" }] },
+        ],
+      }),
+    });
+
+    expect(getPage(user.id, pageId).body).toContain(attachmentId);
+
+    deleteAttachment(user.id, attachmentId);
+
+    const authoritativePage = getPage(user.id, pageId);
+    expect(authoritativePage.attachments).toEqual([]);
+    expect(authoritativePage.attachmentCount).toBe(0);
+    expect(authoritativePage.body).not.toContain(attachmentId);
+    expect(bodyToEditorText(authoritativePage.body).trim()).toBe("Before attachment\nAfter attachment");
+  });
+
+  it("atomically deletes a comment thread and its page marker", async () => {
+    const { editorDocumentToBody } = await import("../src/lib/editor");
+    const {
+      createPage,
+      createPageCommentThread,
+      deletePageCommentThread,
+      getPage,
+      getPageActivityEvents,
+      getPageCommentThreads,
+      getWorkspace,
+      setPageLocked,
+      updatePage,
+    } = await import("../src/lib/store");
+    const user = await createTestAdmin();
+    const notebookId = getWorkspace(user.id).notebooks[0].id;
+    const pageId = createPage(user.id, notebookId);
+    const thread = createPageCommentThread(user.id, pageId, {
+      selectedText: "Commented text",
+      body: "Review this",
+    });
+    const markedBody = editorDocumentToBody({
+      type: "doc",
+      content: [{
+        type: "paragraph",
+        content: [{
+          type: "text",
+          text: "Commented text",
+          marks: [{ type: "comment", attrs: { threadId: thread.id } }],
+        }],
+      }],
+    });
+    updatePage(user.id, pageId, { body: markedBody });
+
+    setPageLocked(user.id, pageId, true);
+    expect(() => deletePageCommentThread(user.id, thread.id)).toThrow("Page is locked.");
+    expect(getPage(user.id, pageId).body).toContain(thread.id);
+    expect(getPageCommentThreads(user.id, pageId)).toHaveLength(1);
+
+    setPageLocked(user.id, pageId, false);
+    const updatedPage = deletePageCommentThread(user.id, thread.id);
+
+    expect(updatedPage.body).not.toContain(thread.id);
+    expect(getPage(user.id, pageId).body).not.toContain(thread.id);
+    expect(getPageCommentThreads(user.id, pageId)).toEqual([]);
+    expect(getPageActivityEvents(user.id, pageId).events).toContainEqual(
+      expect.objectContaining({ action: "page.comment.deleted" }),
+    );
+    expect(deletePageCommentThread(user.id, thread.id, pageId).body).toBe(updatedPage.body);
+
+    updatePage(user.id, pageId, { body: markedBody });
+    const pageAfterStaleSave = getPage(user.id, pageId);
+    expect(pageAfterStaleSave.body).not.toContain(thread.id);
+    expect(pageAfterStaleSave.body).toContain("Commented text");
+  });
+
   it("does not timestamp or audit no-op page saves", async () => {
     const { queryOne } = await import("../src/lib/sqlite");
     const { bodyToEditorDocument, editorDocumentToBody } = await import("../src/lib/editor");

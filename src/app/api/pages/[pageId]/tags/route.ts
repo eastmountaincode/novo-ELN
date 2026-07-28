@@ -15,6 +15,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ pageI
     return NextResponse.json({ ok: true, changed });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not update page tags";
-    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : 400 });
+    return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : message === "Page is locked." ? 423 : 400 });
   }
 }

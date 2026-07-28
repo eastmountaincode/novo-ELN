@@ -59,7 +59,11 @@ import {
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { PresentationPreviewCarousel } from "@/components/PresentationPreviewCarousel";
-import { bodyToEditorDocument, editorDocumentToBody } from "@/lib/editor";
+import {
+  bodyToEditorDocument,
+  editorDocumentToBody,
+  removeCommentMarksFromBody,
+} from "@/lib/editor";
 import type { SpreadsheetPreview, SpreadsheetPreviewCell } from "@/lib/spreadsheetPreview";
 import type { Attachment, BlockType, PageCommentThread } from "@/lib/types";
 
@@ -90,6 +94,13 @@ type RichTextEditorProps = {
   onExportArchive?: () => void;
   exporting?: boolean;
   onCreateComment?: (input: { selectedText: string; body: string }) => Promise<PageCommentThread | null>;
+  onDiscardComment?: (threadId: string) => Promise<void>;
+  runEditorMutation?: <T>(
+    mutation: (context: {
+      saveBody: (body: string) => Promise<boolean>;
+    }) => Promise<T>,
+  ) => Promise<T> | null;
+  editorBusy?: boolean;
   onSelectCommentThread?: (threadId: string) => void;
   commentThreadToRemove?: string;
   onCommentThreadRemoved?: (body: string | null) => void;
@@ -202,7 +213,7 @@ export function attachmentToInlineAttrs(attachment: Attachment): InlineAttachmen
   };
 }
 
-export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, onPrint, onExportPdf, onExportArchive, exporting = false, onCreateComment, onSelectCommentThread, commentThreadToRemove = "", onCommentThreadRemoved, readOnly = false }: RichTextEditorProps) {
+export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, onPrint, onExportPdf, onExportArchive, exporting = false, onCreateComment, onDiscardComment, runEditorMutation, editorBusy = false, onSelectCommentThread, commentThreadToRemove = "", onCommentThreadRemoved, readOnly = false }: RichTextEditorProps) {
   const lastPageId = useRef(pageId);
   const dirty = useRef(false);
   const initialCanonicalBody = useRef<string | null>(null);
@@ -210,6 +221,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   const latestBody = useRef<string>(initialCanonicalBody.current ?? "");
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const pendingCommentThread = useRef<PageCommentThread | null>(null);
   const AttachmentCard = useMemo(() => createAttachmentCardExtension({ openSpreadsheet, openPresentation, readOnly }), [openPresentation, openSpreadsheet, readOnly]);
   const [commentDraftOpen, setCommentDraftOpen] = useState(false);
   const [commentDraft, setCommentDraft] = useState("");
@@ -217,6 +229,9 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   const [commentSubmitting, setCommentSubmitting] = useState(false);
   const [commentError, setCommentError] = useState("");
   const [commentBlockMessage, setCommentBlockMessage] = useState("");
+  const editorInteractionBlocked = readOnly || editorBusy || commentSubmitting;
+  const editorInteractionBlockedRef = useRef(editorInteractionBlocked);
+  editorInteractionBlockedRef.current = editorInteractionBlocked;
 
   function clearAutosaveTimer() {
     if (!autosaveTimer.current) return;
@@ -316,8 +331,8 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
 
   useEffect(() => {
     if (!editor) return;
-    editor.setEditable(!readOnly);
-  }, [editor, readOnly]);
+    editor.setEditable(!readOnly && !editorBusy);
+  }, [editor, editorBusy, readOnly]);
 
   useEffect(() => {
     if (!editor) return;
@@ -427,43 +442,90 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       setCommentError("Write a comment first.");
       return;
     }
+    const restoreEditorEditing = editor.isEditable && !readOnly;
+    editor.setEditable(false);
     setCommentSubmitting(true);
     setCommentError("");
     try {
-      const thread = await onCreateComment({ selectedText: commentSelection.selectedText, body });
-      if (!thread) throw new Error("Comment was not created.");
-      editor.chain().focus().setTextSelection({ from: commentSelection.from, to: commentSelection.to }).setMark("comment", { threadId: thread.id }).run();
-      clearCommentDraftSelectionHighlight(editor);
-      const nextBody = editorDocumentToBody(editor.getJSON());
-      latestBody.current = nextBody;
-      dirty.current = false;
-      clearAutosaveTimer();
-      onChange(nextBody);
-      onBlur(nextBody);
-      setCommentDraftOpen(false);
-      setCommentDraft("");
-      setCommentSelection(null);
-      onSelectCommentThread?.(thread.id);
+      const createThreadAndMarkBody = async ({ saveBody }: { saveBody: (nextBody: string) => Promise<boolean> }) => {
+        const thread = pendingCommentThread.current
+          ?? await onCreateComment({ selectedText: commentSelection.selectedText, body });
+        if (!thread) throw new Error("Comment was not created.");
+        pendingCommentThread.current = thread;
+        if (editor.isDestroyed) {
+          await onDiscardComment?.(thread.id);
+          pendingCommentThread.current = null;
+          throw new Error("The page changed before the comment could be added.");
+        }
+        const currentSelection = commentDraftSelectionKey.getState(editor.state);
+        if (!currentSelection) {
+          await onDiscardComment?.(thread.id);
+          pendingCommentThread.current = null;
+          throw new Error("The selected text is no longer available.");
+        }
+        editor.chain().focus().setTextSelection(currentSelection).setMark("comment", { threadId: thread.id }).run();
+        clearCommentDraftSelectionHighlight(editor);
+        const nextBody = editorDocumentToBody(editor.getJSON());
+        latestBody.current = nextBody;
+        dirty.current = false;
+        clearAutosaveTimer();
+        onChange(nextBody);
+        if (!(await saveBody(nextBody))) {
+          if (!editor.isDestroyed) removeCommentMarkByThreadId(editor, thread.id);
+          const cleanBody = removeCommentMarksFromBody(nextBody, thread.id);
+          latestBody.current = cleanBody;
+          dirty.current = false;
+          onChange(cleanBody);
+          await saveBody(cleanBody);
+          try {
+            await onDiscardComment?.(thread.id);
+            pendingCommentThread.current = null;
+          } catch {
+            // Keep the same thread available for a retry if compensating deletion fails.
+            throw new Error("The comment marker was not saved, and the comment could not be removed. Try again.");
+          }
+          throw new Error("Could not save the comment marker.");
+        }
+        pendingCommentThread.current = null;
+        if (editor.isDestroyed) return;
+        setCommentDraftOpen(false);
+        setCommentDraft("");
+        setCommentSelection(null);
+        onSelectCommentThread?.(thread.id);
+      };
+      if (runEditorMutation) {
+        const mutation = runEditorMutation(createThreadAndMarkBody);
+        if (!mutation) throw new Error("Finish locking or signing out before adding a comment.");
+        await mutation;
+      } else {
+        await createThreadAndMarkBody({
+          saveBody: async (nextBody) => {
+            onBlur(nextBody);
+            return true;
+          },
+        });
+      }
     } catch (error) {
       setCommentError(error instanceof Error ? error.message : "Could not add comment.");
     } finally {
+      if (!editor.isDestroyed && restoreEditorEditing) editor.setEditable(true);
       setCommentSubmitting(false);
     }
   }
 
   async function insertInlineFile(blockType: BlockType, accept: string) {
-    if (!editor || readOnly) return;
+    if (!editor || readOnly || editorBusy || commentSubmitting) return;
     const file = await pickFile(accept);
     if (!file) return;
     const attachment = await uploadInlineFile(file, blockType);
-    if (!attachment) return;
+    if (!attachment || editor.isDestroyed || editorInteractionBlockedRef.current) return;
     insertAttachmentCard(attachmentToInlineAttrs(attachment));
     const body = editorDocumentToBody(editor.getJSON());
     onInlineAttachmentInserted(attachment, body);
   }
 
   function insertAttachmentCard(attrs: InlineAttachmentAttrs, position?: number) {
-    if (!editor || readOnly) return;
+    if (!editor || readOnly || editorBusy || commentSubmitting) return;
     const content = { type: "attachmentCard", attrs };
     if (typeof position === "number") {
       editor.chain().focus().insertContentAt(position, content).run();
@@ -476,18 +538,18 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
   }
 
   function handleEditorDragOver(event: DragEvent<HTMLDivElement>) {
-    if (!readOnly && hasExternalFilePayload(event.dataTransfer)) {
+    if (!readOnly && !editorBusy && !commentSubmitting && hasExternalFilePayload(event.dataTransfer)) {
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
       return;
     }
-    if (readOnly || !hasInlineAttachmentPayload(event.dataTransfer)) return;
+    if (readOnly || editorBusy || commentSubmitting || !hasInlineAttachmentPayload(event.dataTransfer)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
   }
 
   async function handleEditorDrop(event: DragEvent<HTMLDivElement>) {
-    if (!editor || readOnly) return;
+    if (!editor || readOnly || editorBusy || commentSubmitting) return;
     if (hasExternalFilePayload(event.dataTransfer)) {
       const files = Array.from(event.dataTransfer.files);
       if (!files.length) return;
@@ -497,7 +559,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       let insertPosition = dropPosition;
       for (const file of files) {
         const attachment = await uploadInlineFile(file, blockTypeForDroppedFile(file));
-        if (!attachment) continue;
+        if (!attachment || editor.isDestroyed || editorInteractionBlockedRef.current) continue;
         insertAttachmentCard(attachmentToInlineAttrs(attachment), insertPosition);
         onInlineAttachmentInserted(attachment, editorDocumentToBody(editor.getJSON()));
         insertPosition += 1;
@@ -519,7 +581,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border border-slate-300 bg-white"
     >
       {!readOnly || onPrint || onExportPdf || onExportArchive ? <div role="group" aria-label="Text editor controls" className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
-        {!readOnly ? (
+        {!editorInteractionBlocked ? (
           <>
             <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
             <ToolbarButton active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()} label="Italic"><Italic size={15} /></ToolbarButton>
@@ -612,7 +674,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
           </>
         ) : null}
       </div> : null}
-      <div className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden scroll-contained p-4" onDragOverCapture={readOnly ? undefined : handleEditorDragOver} onDropCapture={readOnly ? undefined : handleEditorDrop}>
+      <div className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden scroll-contained p-4" onDragOverCapture={editorInteractionBlocked ? undefined : handleEditorDragOver} onDropCapture={editorInteractionBlocked ? undefined : handleEditorDrop}>
         <EditorContent editor={editor} />
       </div>
       {commentDraftOpen ? (

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { uploadDir } from "@/lib/paths";
-import { assertAttachmentEditAccess, deleteAttachment, getAttachmentForUser, updateAttachmentFile } from "@/lib/store";
+import { assertAttachmentEditAccess, deleteAttachment, getAttachmentForUser, getPage, updateAttachmentFile } from "@/lib/store";
 
 export async function PUT(request: Request, context: { params: Promise<{ attachmentId: string }> }) {
   const user = await currentUser();
@@ -57,7 +57,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ att
   try {
     const attachment = deleteAttachment(user.id, attachmentId);
     await fs.rm(path.join(uploadDir, attachment.storageKey), { force: true });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, page: getPage(user.id, attachment.pageId) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not delete attachment";
     return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : message === "Attachment not found" ? 404 : 400 });

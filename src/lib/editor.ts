@@ -55,6 +55,20 @@ export function removeCommentMarksFromBody(body: string, threadId: string) {
   return editorDocumentToBody(removeCommentMarks(parsed, threadId));
 }
 
+export function removeUnknownCommentMarksFromBody(body: string, validThreadIds: ReadonlySet<string>) {
+  const parsed = parseEditorDocument(body);
+  if (!parsed) return body;
+  return editorDocumentToBody(removeUnknownCommentMarks(parsed, validThreadIds));
+}
+
+export function commentThreadIdsFromBody(body: string) {
+  const parsed = parseEditorDocument(body);
+  if (!parsed) return [];
+  const threadIds = new Set<string>();
+  collectCommentThreadIds(parsed, threadIds);
+  return [...threadIds];
+}
+
 function parseEditorDocument(body: string): JSONContent | null {
   if (!body.trim().startsWith("{")) return null;
   try {
@@ -156,4 +170,29 @@ function removeCommentMarks(node: JSONContent, threadId: string): JSONContent {
   }
   if (node.content?.length) next.content = node.content.map((child) => removeCommentMarks(child, threadId));
   return next;
+}
+
+function removeUnknownCommentMarks(node: JSONContent, validThreadIds: ReadonlySet<string>): JSONContent {
+  const next: JSONContent = { ...node };
+  if (node.marks?.length) {
+    const marks = node.marks.filter((mark) => {
+      if (mark.type !== "comment") return true;
+      return validThreadIds.has(String(mark.attrs?.threadId ?? ""));
+    });
+    if (marks.length) next.marks = marks;
+    else delete next.marks;
+  }
+  if (node.content?.length) {
+    next.content = node.content.map((child) => removeUnknownCommentMarks(child, validThreadIds));
+  }
+  return next;
+}
+
+function collectCommentThreadIds(node: JSONContent, threadIds: Set<string>) {
+  for (const mark of node.marks ?? []) {
+    if (mark.type !== "comment") continue;
+    const threadId = String(mark.attrs?.threadId ?? "");
+    if (threadId) threadIds.add(threadId);
+  }
+  for (const child of node.content ?? []) collectCommentThreadIds(child, threadIds);
 }

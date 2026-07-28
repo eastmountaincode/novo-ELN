@@ -23,6 +23,9 @@ export function writeStoredSortKey(storageKey: string, value: string) {
 
 export function timestampForSort(value: string) {
   if (value === "Just now") return Number.POSITIVE_INFINITY;
-  const timestamp = Date.parse(value);
+  const normalizedValue = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
+    ? `${value.replace(" ", "T")}Z`
+    : value;
+  const timestamp = Date.parse(normalizedValue);
   return Number.isFinite(timestamp) ? timestamp : 0;
 }

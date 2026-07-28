@@ -22,6 +22,7 @@ import { usePageAttachments } from "@/features/editor/attachments/usePageAttachm
 import { usePageEditorController } from "@/features/editor/page/usePageEditorController";
 import { PAGE_STATUS_OPTIONS, StatusDot } from "@/features/pages/PageStatus";
 import type { PageUpdater } from "@/features/pages/workspacePageState";
+import { attachmentIdsFromBody } from "@/lib/editor";
 import { normalizeTagList } from "@/lib/tags";
 import type {
   AuditEvent,
@@ -107,6 +108,10 @@ export function EditorPane({
     canManageLock,
     updatePage,
   });
+  const inlineAttachmentIds = useMemo(
+    () => new Set(attachmentIdsFromBody(pageController.editorBody)),
+    [pageController.editorBody],
+  );
   const effectiveCanEdit = pageController.canEdit;
   const attachments = usePageAttachments({
     page,
@@ -418,6 +423,7 @@ export function EditorPane({
             page={page}
             pageLoading={pageLoading}
             canEdit={effectiveCanEdit}
+            inlineAttachmentIds={inlineAttachmentIds}
             pendingUploads={attachments.pendingUploads}
             uploadAttachments={attachments.uploadAttachments}
             deleteAttachment={attachments.deleteAttachment}

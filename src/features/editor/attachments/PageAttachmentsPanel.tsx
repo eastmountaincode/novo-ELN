@@ -14,6 +14,7 @@ import {
   Paperclip,
   Plus,
   SlidersHorizontal,
+  TextCursorInput,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -46,6 +47,7 @@ type PageAttachmentsPanelProps = {
   page: PageEntry;
   pageLoading: boolean;
   canEdit: boolean;
+  inlineAttachmentIds: ReadonlySet<string>;
   pendingUploads: PendingAttachmentUpload[];
   uploadAttachments: (files: FileList | File[] | undefined) => Promise<void>;
   deleteAttachment: (attachment: Attachment) => Promise<boolean>;
@@ -55,6 +57,7 @@ export function PageAttachmentsPanel({
   page,
   pageLoading,
   canEdit,
+  inlineAttachmentIds,
   pendingUploads,
   uploadAttachments,
   deleteAttachment,
@@ -263,6 +266,7 @@ export function PageAttachmentsPanel({
                   index={index + 1}
                   attachment={attachment}
                   canEdit={canEdit}
+                  usedInline={inlineAttachmentIds.has(attachment.id)}
                   onDelete={() => deleteAttachment(attachment)}
                 />
               ))}
@@ -299,11 +303,13 @@ function AttachmentRow({
   attachment,
   index,
   canEdit,
+  usedInline,
   onDelete,
 }: {
   attachment: Attachment;
   index: number;
   canEdit: boolean;
+  usedInline: boolean;
   onDelete: () => Promise<boolean>;
 }) {
   const Icon = blockIcons[attachment.blockType];
@@ -340,7 +346,19 @@ function AttachmentRow({
         <span className="w-5 shrink-0 text-center text-xs font-medium tabular-nums text-slate-400">{index}</span>
         <Icon className="shrink-0 text-slate-500" size={17} />
         <div className="min-w-0">
-          <div className="truncate text-sm text-slate-800">{attachment.originalName}</div>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div className="truncate text-sm text-slate-800">{attachment.originalName}</div>
+            {usedInline ? (
+              <span
+                role="img"
+                aria-label="Used inline in this page"
+                title="Used inline in this page"
+                className="grid size-4 shrink-0 place-items-center text-cyan-600"
+              >
+                <TextCursorInput size={14} aria-hidden="true" />
+              </span>
+            ) : null}
+          </div>
           <div className={`mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs ${deleteFailed ? "text-rose-600" : "text-slate-500"}`}>
             <span>{attachment.blockType}</span>
             <span>{Math.max(1, Math.round(attachment.size / 1024))} KB</span>

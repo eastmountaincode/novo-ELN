@@ -1,7 +1,8 @@
+import { readFile } from "fs/promises";
+import { join } from "path";
 import { ImageResponse } from "next/og";
-import { getNovoBrand } from "@/lib/novoInstance";
 
-export const runtime = "edge";
+const wulkanFont = readFile(join(process.cwd(), "public/fonts/Wulkan_Text_Light_Italic.otf"));
 
 const size = {
   width: 1200,
@@ -9,7 +10,7 @@ const size = {
 };
 
 export async function GET() {
-  const { wordmark, deploymentLabel } = getNovoBrand();
+  const fontData = await wulkanFont;
 
   return new ImageResponse(
     (
@@ -18,79 +19,30 @@ export async function GET() {
           width: "100%",
           height: "100%",
           display: "flex",
-          position: "relative",
-          overflow: "hidden",
+          alignItems: "center",
+          justifyContent: "center",
           background: "#020617",
-          color: "#f8fafc",
-          padding: "76px 84px",
+          color: "#f1f5f9",
+          fontFamily: "Wulkan Novo",
+          fontSize: 420,
+          fontStyle: "italic",
+          fontWeight: 300,
+          lineHeight: 1,
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "100%",
-            height: 12,
-            display: "flex",
-            background: "#0891b2",
-          }}
-        />
-
-        <div
-          style={{
-            width: "100%",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <div
-              style={{
-                display: "flex",
-                fontSize: 128,
-                fontWeight: 500,
-                fontStyle: "italic",
-                letterSpacing: -6,
-                lineHeight: 1,
-              }}
-            >
-              {wordmark}
-            </div>
-            {deploymentLabel ? (
-              <div
-                style={{
-                  display: "flex",
-                  marginTop: 18,
-                  color: "#94a3b8",
-                  fontSize: 24,
-                  letterSpacing: 1,
-                }}
-              >
-                {deploymentLabel}
-              </div>
-            ) : null}
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <div style={{ width: 88, height: 5, display: "flex", background: "#0891b2" }} />
-            <div
-              style={{
-                display: "flex",
-                marginTop: 28,
-                color: "#e2e8f0",
-                fontSize: 46,
-                fontWeight: 600,
-                letterSpacing: -1.5,
-              }}
-            >
-              Electronic lab notebook.
-            </div>
-          </div>
-        </div>
+        N
       </div>
     ),
-    size,
+    {
+      ...size,
+      fonts: [
+        {
+          name: "Wulkan Novo",
+          data: fontData,
+          style: "italic",
+          weight: 300,
+        },
+      ],
+    },
   );
 }

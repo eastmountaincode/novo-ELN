@@ -7,6 +7,7 @@ import { SpreadsheetModal } from "@/components/SpreadsheetModal";
 import { AccountView } from "@/features/account/AccountView";
 import { AppLoadingView } from "@/features/app/AppLoadingView";
 import { ResizeHandle } from "@/features/app/ResizeHandle";
+import { useNovoDocumentTitle } from "@/features/app/useNovoDocumentTitle";
 import { UpdateAvailableBanner } from "@/features/app/UpdateAvailableBanner";
 import { AuthView, type AuthMode } from "@/features/auth/AuthView";
 import { EditorPane } from "@/features/editor/EditorPane";
@@ -381,6 +382,7 @@ export default function Home() {
   const selectedProject = workspace?.projects.find((project) => project.id === selectedProjectId) ?? workspace?.projects[0];
   const selectedNotebook = selectedProject?.notebooks.find((notebook) => notebook.id === selectedNotebookId) ?? selectedProject?.notebooks[0];
   const selectedPage = selectedNotebook?.pages.find((page) => page.id === selectedPageId) ?? selectedNotebook?.pages[0];
+  useNovoDocumentTitle(workspace && activeView === "project" && selectedPage ? selectedPage.title : null);
   const selectedNotebookCanEdit = canEditNotebook(workspace?.user, selectedNotebook);
   const selectedPageCanEdit = selectedNotebookCanEdit && !selectedPage?.lockedAt;
   const selectedPageCanManageLock = selectedNotebookCanEdit;

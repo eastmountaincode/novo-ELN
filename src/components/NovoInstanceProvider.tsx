@@ -28,12 +28,16 @@ export function NovoInstanceProvider({
   );
 }
 
+export function useNovoBrand() {
+  return useContext(NovoBrandContext);
+}
+
 export function NovoWordmark() {
-  return <>{useContext(NovoBrandContext).wordmark}</>;
+  return <>{useNovoBrand().wordmark}</>;
 }
 
 export function NovoDeploymentLabel({ className }: { className?: string }) {
-  const { deploymentLabel } = useContext(NovoBrandContext);
+  const { deploymentLabel } = useNovoBrand();
 
   if (!deploymentLabel) return null;
 

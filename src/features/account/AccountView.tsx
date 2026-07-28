@@ -1,4 +1,4 @@
-import { Database, History, KeyRound, NotebookText as NotebookIcon, Settings, Tag, UserCircle, Users } from "lucide-react";
+import { Database, History, KeyRound, Notebook as NotebookIcon, Settings, Tag, UserCircle, Users } from "lucide-react";
 import { useState } from "react";
 import type { AppUser, Notebook } from "@/lib/types";
 import { AccountNotebooks } from "@/features/account/AccountNotebooks";

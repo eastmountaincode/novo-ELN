@@ -65,6 +65,7 @@ export function ensureDatabase() {
       color TEXT NOT NULL DEFAULT '#0891b2',
       page_title_template TEXT NOT NULL DEFAULT '',
       page_title_template_enabled INTEGER NOT NULL DEFAULT 0,
+      content_revision INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -213,6 +214,7 @@ export function ensureDatabase() {
   migratePageStatusValues();
   migrateGroupedTagsToPageTags();
   ensureGlobalTagSchema();
+  ensureNotebookContentRevisionTriggers();
   const searchIndexCount = Number(queryOne("SELECT COUNT(*) AS count FROM search_pages_fts")?.count ?? 0);
   if (searchIndexCount === 0 && countRows("pages") > 0) rebuildSearchIndex();
   initialized = true;
@@ -332,6 +334,140 @@ function ensureNotebookColumns() {
   if (!names.has("color")) execSql("ALTER TABLE notebooks ADD COLUMN color TEXT NOT NULL DEFAULT '#0891b2';");
   if (!names.has("page_title_template")) execSql("ALTER TABLE notebooks ADD COLUMN page_title_template TEXT NOT NULL DEFAULT '';");
   if (!names.has("page_title_template_enabled")) execSql("ALTER TABLE notebooks ADD COLUMN page_title_template_enabled INTEGER NOT NULL DEFAULT 0;");
+  if (!names.has("content_revision")) execSql("ALTER TABLE notebooks ADD COLUMN content_revision INTEGER NOT NULL DEFAULT 1;");
+}
+
+function ensureNotebookContentRevisionTriggers() {
+  execSql(`
+    -- Recreate these application-owned triggers so a deployed schema upgrade
+    -- cannot silently retain an older trigger body.
+    DROP TRIGGER IF EXISTS novo_content_revision_notebook_name;
+    DROP TRIGGER IF EXISTS novo_content_revision_page_insert;
+    DROP TRIGGER IF EXISTS novo_content_revision_page_delete;
+    DROP TRIGGER IF EXISTS novo_content_revision_page_update;
+    DROP TRIGGER IF EXISTS novo_content_revision_page_tag_insert;
+    DROP TRIGGER IF EXISTS novo_content_revision_page_tag_delete;
+    DROP TRIGGER IF EXISTS novo_content_revision_page_tag_update;
+    DROP TRIGGER IF EXISTS novo_content_revision_tag_label;
+    DROP TRIGGER IF EXISTS novo_content_revision_attachment_insert;
+    DROP TRIGGER IF EXISTS novo_content_revision_attachment_delete;
+    DROP TRIGGER IF EXISTS novo_content_revision_attachment_update;
+
+    CREATE TRIGGER novo_content_revision_notebook_name
+    AFTER UPDATE OF name ON notebooks
+    WHEN OLD.name IS NOT NEW.name
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id = NEW.id;
+    END;
+
+    CREATE TRIGGER novo_content_revision_page_insert
+    AFTER INSERT ON pages
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id = NEW.notebook_id;
+    END;
+
+    CREATE TRIGGER novo_content_revision_page_delete
+    AFTER DELETE ON pages
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id = OLD.notebook_id;
+    END;
+
+    CREATE TRIGGER novo_content_revision_page_update
+    AFTER UPDATE OF notebook_id, title, body, status, created_at ON pages
+    WHEN OLD.notebook_id IS NOT NEW.notebook_id
+      OR OLD.title IS NOT NEW.title
+      OR OLD.body IS NOT NEW.body
+      OR OLD.status IS NOT NEW.status
+      OR OLD.created_at IS NOT NEW.created_at
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id IN (OLD.notebook_id, NEW.notebook_id);
+    END;
+
+    CREATE TRIGGER novo_content_revision_page_tag_insert
+    AFTER INSERT ON page_tags
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id = (SELECT notebook_id FROM pages WHERE id = NEW.page_id);
+    END;
+
+    CREATE TRIGGER novo_content_revision_page_tag_delete
+    AFTER DELETE ON page_tags
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id = (SELECT notebook_id FROM pages WHERE id = OLD.page_id);
+    END;
+
+    CREATE TRIGGER novo_content_revision_page_tag_update
+    AFTER UPDATE OF page_id, tag_id ON page_tags
+    WHEN OLD.page_id IS NOT NEW.page_id OR OLD.tag_id IS NOT NEW.tag_id
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id IN (
+        SELECT notebook_id FROM pages WHERE id IN (OLD.page_id, NEW.page_id)
+      );
+    END;
+
+    CREATE TRIGGER novo_content_revision_tag_label
+    AFTER UPDATE OF label ON tags
+    WHEN OLD.label IS NOT NEW.label
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id IN (
+        SELECT DISTINCT p.notebook_id
+        FROM page_tags pt
+        JOIN pages p ON p.id = pt.page_id
+        WHERE pt.tag_id = NEW.id
+      );
+    END;
+
+    CREATE TRIGGER novo_content_revision_attachment_insert
+    AFTER INSERT ON attachments
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id = (
+        SELECT notebook_id FROM pages WHERE id = NEW.page_id
+      );
+    END;
+
+    CREATE TRIGGER novo_content_revision_attachment_delete
+    AFTER DELETE ON attachments
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id = (
+        SELECT notebook_id FROM pages WHERE id = OLD.page_id
+      );
+    END;
+
+    CREATE TRIGGER novo_content_revision_attachment_update
+    AFTER UPDATE OF page_id, original_name, mime_type, size, storage_key, block_type ON attachments
+    WHEN OLD.page_id IS NOT NEW.page_id
+      OR OLD.original_name IS NOT NEW.original_name
+      OR OLD.mime_type IS NOT NEW.mime_type
+      OR OLD.size IS NOT NEW.size
+      OR OLD.storage_key IS NOT NEW.storage_key
+      OR OLD.block_type IS NOT NEW.block_type
+    BEGIN
+      UPDATE notebooks
+      SET content_revision = content_revision + 1
+      WHERE id IN (
+        SELECT notebook_id FROM pages WHERE id IN (OLD.page_id, NEW.page_id)
+      );
+    END;
+  `);
 }
 
 function ensurePageLockColumns() {

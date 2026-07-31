@@ -560,16 +560,24 @@ export default function Home() {
     setAuthError("");
     setAuthSubmitting(true);
     try {
+      const returnTo = readLoginReturnPathFromUrl();
       const response = await fetch(authMode === "register" ? "/api/auth/register" : "/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(authMode === "register" ? { email, firstName, lastName, password } : { email, password, rememberDevice }),
+        body: JSON.stringify(authMode === "register"
+          ? { email, firstName, lastName, password, returnTo }
+          : { email, password, rememberDevice, returnTo }),
       });
+      const body = (await response.json().catch(() => null)) as { error?: string; returnTo?: string | null } | null;
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
         setAuthError(body?.error ?? (authMode === "register" ? "Registration failed." : "Login failed."));
         return;
       }
+      if (body?.returnTo) {
+        window.location.assign(body.returnTo);
+        return;
+      }
+      removeLoginReturnPathFromUrl();
       await refreshWorkspace();
     } finally {
       setAuthSubmitting(false);
@@ -1350,6 +1358,19 @@ function readPreviewKeysFromUrl() {
   const url = new URL(window.location.href);
   const values = url.searchParams.getAll("preview").flatMap((value) => value.split(","));
   return new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean));
+}
+
+function readLoginReturnPathFromUrl() {
+  if (typeof window === "undefined") return undefined;
+  return new URL(window.location.href).searchParams.get("returnTo") ?? undefined;
+}
+
+function removeLoginReturnPathFromUrl() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("returnTo")) return;
+  url.searchParams.delete("returnTo");
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 function cleanupUpdateCacheBusterFromUrl() {

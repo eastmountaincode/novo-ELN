@@ -61,7 +61,9 @@ export NOVO_RUNTIME_DIR="$production_runtime"
 export NOVO_IMAGE="$image"
 
 git checkout --detach "$commit"
-docker compose up -d --no-build novo
+source "$ROOT_DIR/scripts/lib/novo-chat-compose.sh"
+novo_configure_compose_args "$production_env" "$ROOT_DIR"
+docker compose "${NOVO_COMPOSE_ARGS[@]}" up -d --no-build novo
 
 page=""
 for _attempt in $(seq 1 60); do
@@ -76,7 +78,7 @@ if ! grep -Fq '<title>Novo</title>' <<<"$page"; then
   echo "Production failed its health check; attempting rollback." >&2
   if [[ -n "$previous_image" ]]; then
     export NOVO_IMAGE="$previous_image"
-    docker compose up -d --no-build novo || true
+    docker compose "${NOVO_COMPOSE_ARGS[@]}" up -d --no-build novo || true
   fi
   exit 1
 fi

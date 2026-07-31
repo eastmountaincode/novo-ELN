@@ -46,6 +46,28 @@ In the staging checkout, create `.env.staging` with a separate session secret,
 production explicit with `NOVO_INSTANCE=prod` in the production checkout's
 `.env.local`.
 
+Novo Chat remains opt-in. To enable it for an instance, add only the secret's
+container path and the same-origin route to that instance's service environment
+file:
+
+```dotenv
+NOVO_INTEGRATION_SECRET_FILE=/run/secrets/novo-integration
+NOVO_CHAT_URL=/chat/
+```
+
+Keep the secret itself in a non-empty file outside the Git checkout. Before the
+deployment command, export its absolute host path (not its contents):
+
+```bash
+export NOVO_INTEGRATION_SECRET_HOST_FILE=/absolute/path/outside/the/checkout/novo-integration.secret
+```
+
+`deploy-staging.sh` and `promote-production.sh` validate both paths and
+automatically add `docker-compose.chat.yml`. Use the appropriate secret file for
+each instance. The secret is mounted read-only through Compose and is never
+added to the image or a service environment variable. With all integration
+settings unset, the scripts use only `docker-compose.yml` and behave as before.
+
 Refresh the disposable staging database from a transactionally consistent production snapshot:
 
 ```bash

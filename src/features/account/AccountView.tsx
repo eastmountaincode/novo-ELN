@@ -47,7 +47,7 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
               >
                 <Icon size={16} />
                 {tab.label}
-                {tab.adminOnly ? <Shield size={13} className="text-cyan-700" aria-label="Admin only" /> : null}
+                {tab.adminOnly ? <Shield size={13} fill="currentColor" strokeWidth={0} className="text-cyan-700" aria-label="Admin only" /> : null}
               </button>
             );
           })}

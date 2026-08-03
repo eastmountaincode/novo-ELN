@@ -34,16 +34,17 @@ export async function syncSchemaToErflow(schema: DatabaseSchemaOverview, options
 
   const activeDiagram = await getActiveDiagram(endpoint);
   const existingTables = await listExistingTables(endpoint);
-  const operations = [
-    ...existingTables.map((table) => ({ op: "delete-table", tableId: table.tableId })),
+  const deleteOperations = existingTables.map((table) => ({ op: "delete-table", tableId: table.tableId }));
+  const createOperations = [
     ...syncTables.map((table) => buildCreateTableOperation(table, activeDiagram.id)),
     ...relationships.map(buildForeignKeyOperation),
   ];
+  const operations = [...deleteOperations, ...createOperations];
 
-  const responseText = await callErflowTool(endpoint, "batch-operations", {
-    dryRun: options.dryRun === true,
-    operations,
-  });
+  const responseText = options.dryRun === true
+    ? await callErflowTool(endpoint, "batch-operations", { dryRun: true, operations })
+    : await applyErflowOperations(endpoint, deleteOperations, createOperations);
+
   return {
     syncedAt: new Date().toISOString(),
     dryRun: options.dryRun === true,
@@ -52,6 +53,21 @@ export async function syncSchemaToErflow(schema: DatabaseSchemaOverview, options
     operationCount: operations.length,
     responseText,
   };
+}
+
+async function applyErflowOperations(
+  endpoint: string,
+  deleteOperations: Array<Record<string, unknown>>,
+  createOperations: Array<Record<string, unknown>>,
+) {
+  const responses: string[] = [];
+  if (deleteOperations.length > 0) {
+    responses.push(await callErflowTool(endpoint, "batch-operations", { dryRun: false, operations: deleteOperations }));
+  }
+  if (createOperations.length > 0) {
+    responses.push(await callErflowTool(endpoint, "batch-operations", { dryRun: false, operations: createOperations }));
+  }
+  return responses.filter(Boolean).join("\n");
 }
 
 async function getActiveDiagram(endpoint: string) {

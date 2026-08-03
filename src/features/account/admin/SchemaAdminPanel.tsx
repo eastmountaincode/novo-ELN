@@ -86,7 +86,7 @@ export function SchemaAdminPanel() {
 
   return (
     <section className="max-w-3xl border border-slate-200 bg-white">
-      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 p-5">
+      <div className="border-b border-slate-200 p-5">
         <div className="flex items-start gap-3">
           <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
             <Workflow size={21} />
@@ -94,15 +94,6 @@ export function SchemaAdminPanel() {
           <div>
             <h2 className="text-lg font-semibold text-slate-950">Schema</h2>
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span
-            className={`inline-flex h-9 items-center border px-3 font-medium ${
-              configured ? "border-cyan-200 bg-cyan-50 text-cyan-800" : "border-slate-200 bg-slate-50 text-slate-500"
-            }`}
-          >
-            {configured ? "ER Flow configured" : "ER Flow not configured"}
-          </span>
         </div>
       </div>
 

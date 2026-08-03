@@ -444,20 +444,24 @@ describe("store", () => {
     expect(verifyCredentials("lab.member@example.local", "Temporary-password-2026!")?.id).toBe(member.id);
   });
 
-  it("manages user signing keys through password changes and admin resets", async () => {
-    const { adminSetUserPassword, changeOwnPassword, createUser, getActiveUserSigningPrivateKeyForSigning, listUserSigningKeys } = await import("../src/lib/store");
+  it("manages user signing keys with a separate signing passphrase", async () => {
+    const { adminSetUserPassword, changeOwnPassword, createUser, ensureUserSigningKey, getActiveUserSigningPrivateKeyForSigning, listUserSigningKeys } = await import("../src/lib/store");
     const admin = await createTestAdmin();
     const originalPassword = "Member-password-2026!";
     const changedPassword = "Changed-password-2026!";
     const resetPassword = "Temporary-password-2026!";
+    const signingPassphrase = "Signing passphrase 2026";
     const member = createUser({ email: "signed.member@example.local", firstName: "Signed", lastName: "Member", password: originalPassword });
 
+    expect(listUserSigningKeys(member.id)).toEqual([]);
+    const createdKey = ensureUserSigningKey(member.id, signingPassphrase);
     const initialKeys = listUserSigningKeys(member.id);
     expect(initialKeys).toHaveLength(1);
     expect(initialKeys[0]).toEqual(expect.objectContaining({ active: true, algorithm: "ed25519", revokedAt: "", revocationReason: "" }));
+    expect(initialKeys[0].id).toBe(createdKey.id);
     expect(initialKeys[0].publicKey).toContain("BEGIN PUBLIC KEY");
     expect(initialKeys[0].publicKeyFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(getActiveUserSigningPrivateKeyForSigning(member.id, originalPassword)).toContain("BEGIN PRIVATE KEY");
+    expect(getActiveUserSigningPrivateKeyForSigning(member.id, signingPassphrase)).toContain("BEGIN PRIVATE KEY");
 
     changeOwnPassword(member.id, originalPassword, changedPassword);
 
@@ -465,38 +469,32 @@ describe("store", () => {
     expect(afterOwnPasswordChange).toHaveLength(1);
     expect(afterOwnPasswordChange[0].id).toBe(initialKeys[0].id);
     expect(afterOwnPasswordChange[0].publicKey).toBe(initialKeys[0].publicKey);
-    expect(() => getActiveUserSigningPrivateKeyForSigning(member.id, originalPassword)).toThrow("Current password is incorrect.");
-    expect(getActiveUserSigningPrivateKeyForSigning(member.id, changedPassword)).toContain("BEGIN PRIVATE KEY");
+    expect(() => getActiveUserSigningPrivateKeyForSigning(member.id, originalPassword)).toThrow("Private signing key could not be decrypted.");
+    expect(() => getActiveUserSigningPrivateKeyForSigning(member.id, changedPassword)).toThrow("Private signing key could not be decrypted.");
+    expect(getActiveUserSigningPrivateKeyForSigning(member.id, signingPassphrase)).toContain("BEGIN PRIVATE KEY");
 
     adminSetUserPassword(admin.id, member.id, resetPassword);
 
     const afterAdminReset = listUserSigningKeys(member.id);
-    const activeKey = afterAdminReset.find((key) => key.active);
-    const historicKey = afterAdminReset.find((key) => key.id === initialKeys[0].id);
-    expect(afterAdminReset).toHaveLength(2);
-    expect(activeKey?.id).not.toBe(initialKeys[0].id);
-    expect(activeKey?.publicKey).toContain("BEGIN PUBLIC KEY");
-    expect(historicKey).toEqual(expect.objectContaining({
-      active: false,
-      publicKey: initialKeys[0].publicKey,
-      revocationReason: "password_reset",
-    }));
-    expect(historicKey?.revokedAt).toBeTruthy();
-    expect(() => getActiveUserSigningPrivateKeyForSigning(member.id, changedPassword)).toThrow("Current password is incorrect.");
-    expect(getActiveUserSigningPrivateKeyForSigning(member.id, resetPassword)).toContain("BEGIN PRIVATE KEY");
+    expect(afterAdminReset).toHaveLength(1);
+    expect(afterAdminReset[0].id).toBe(initialKeys[0].id);
+    expect(afterAdminReset[0].publicKey).toBe(initialKeys[0].publicKey);
+    expect(() => getActiveUserSigningPrivateKeyForSigning(member.id, resetPassword)).toThrow("Private signing key could not be decrypted.");
+    expect(getActiveUserSigningPrivateKeyForSigning(member.id, signingPassphrase)).toContain("BEGIN PRIVATE KEY");
   });
 
-  it("creates signing keys for legacy accounts after password verification", async () => {
+  it("creates signing keys from a signing passphrase", async () => {
     const { execSql } = await import("../src/lib/sqlite");
     const { createUser, ensureUserSigningKey, listUserSigningKeys } = await import("../src/lib/store");
     const password = "Legacy-password-2026!";
+    const signingPassphrase = "Legacy signing passphrase";
     const member = createUser({ email: "legacy.signing@example.local", firstName: "Legacy", lastName: "Signer", password });
     execSql(`DELETE FROM user_signing_keys WHERE user_id = '${member.id}';`);
 
     expect(listUserSigningKeys(member.id)).toEqual([]);
-    expect(() => ensureUserSigningKey(member.id, "wrong-password")).toThrow("Current password is incorrect.");
+    expect(() => ensureUserSigningKey(member.id, "too-short")).toThrow("Signing passphrase must be at least 12 characters.");
 
-    const key = ensureUserSigningKey(member.id, password);
+    const key = ensureUserSigningKey(member.id, signingPassphrase);
     expect(key.active).toBe(true);
     expect(key.publicKeyFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(listUserSigningKeys(member.id)).toHaveLength(1);

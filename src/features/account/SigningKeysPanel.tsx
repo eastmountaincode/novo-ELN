@@ -10,7 +10,7 @@ type SigningKeysResponse = {
 
 export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
   const [keys, setKeys] = useState<UserSigningKey[]>([]);
-  const [currentPassword, setCurrentPassword] = useState("");
+  const [signingPassphrase, setSigningPassphrase] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -47,7 +47,7 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
     const response = await fetch("/api/account/signing-keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ currentPassword }),
+      body: JSON.stringify({ signingPassphrase }),
     });
     const body = (await response.json().catch(() => null)) as SigningKeysResponse | null;
     setSubmitting(false);
@@ -55,7 +55,7 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
       setError(body?.error ?? "Signing key setup failed.");
       return;
     }
-    setCurrentPassword("");
+    setSigningPassphrase("");
     setKeys(body?.keys ?? []);
     setStatus("Signing key ready.");
   }
@@ -115,20 +115,21 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
           <form onSubmit={(event) => void submitSigningKey(event)} className="grid max-w-2xl gap-4 border-t border-slate-100 pt-4">
             <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
               <dt className="text-slate-500">Status</dt>
-              <dd className="text-slate-950">Pending next sign-in</dd>
+              <dd className="text-slate-950">No active key</dd>
             </div>
             <label className="block text-sm font-medium text-slate-700">
-              Current password
+              Signing passphrase
               <input
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
+                value={signingPassphrase}
+                onChange={(event) => setSigningPassphrase(event.target.value)}
                 type="password"
-                autoComplete="current-password"
+                autoComplete="new-password"
+                minLength={12}
                 className="mt-1 h-10 w-full border border-slate-300 px-3 text-slate-950 outline-none focus:border-cyan-600"
               />
             </label>
             <div>
-              <button disabled={submitting || !currentPassword} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+              <button disabled={submitting || !signingPassphrase} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
                 {submitting ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
                 {submitting ? "Creating" : "Create signing key"}
               </button>

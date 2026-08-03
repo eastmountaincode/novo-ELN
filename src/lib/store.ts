@@ -15,6 +15,7 @@ const passwordRequirementMessage = "Password must be at least 12 characters and 
 const loginRateLimitWindowMs = 15 * 60 * 1000;
 const loginRateLimitMaxFailures = 10;
 const loginAttemptRetentionMs = 24 * 60 * 60 * 1000;
+const signingPassphraseRequirementMessage = "Signing passphrase must be at least 12 characters.";
 const signingKeyAlgorithm = "ed25519";
 const signingKeyKdf = "scrypt:N=16384,r=8,p=1,dk=32";
 const signingKeyCipher = "aes-256-gcm";
@@ -25,6 +26,10 @@ function validatePassword(password: string) {
   if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
     throw new Error(passwordRequirementMessage);
   }
+}
+
+function validateSigningPassphrase(passphrase: string) {
+  if (passphrase.length < 12) throw new Error(signingPassphraseRequirementMessage);
 }
 
 function normalizeLoginEmail(email: string) {
@@ -748,13 +753,10 @@ export function createUser(input: { email: string; firstName: string; lastName?:
   const userId = randomUUID();
   const notebookId = randomUUID();
   const pageId = randomUUID();
-  const signingKey = createSigningKeyMaterial(password);
 
   execSql(`
     INSERT INTO users (id, email, first_name, last_name, password_hash, role)
     VALUES (${sql(userId)}, ${sql(email)}, ${sql(firstName)}, ${sql(lastName)}, ${sql(bcrypt.hashSync(password, 10))}, ${sql(role)});
-
-    ${insertSigningKeySql(userId, signingKey)}
 
     INSERT INTO notebooks (id, name, owner_id, color)
     VALUES (${sql(notebookId)}, 'Notebook', ${sql(userId)}, ${sql(defaultNotebookColor(notebookId))});
@@ -1005,27 +1007,7 @@ export function changeOwnPassword(userId: string, currentPassword: string, nextP
   ensureDatabase();
   validatePassword(nextPassword);
   if (!verifyUserPassword(userId, currentPassword)) throw new Error("Current password is incorrect.");
-  const activeSigningKey = readActiveUserSigningKeySecret(userId);
-
-  if (!activeSigningKey) {
-    const signingKey = createSigningKeyMaterial(nextPassword);
-    execSql(`
-      BEGIN;
-      ${insertSigningKeySql(userId, signingKey)}
-      ${updateUserPasswordSql(userId, nextPassword)}
-      COMMIT;
-    `);
-    return;
-  }
-
-  const privateKey = decryptSigningPrivateKey(activeSigningKey, currentPassword);
-  const encryptedPrivateKey = encryptSigningPrivateKey(privateKey, nextPassword);
-  execSql(`
-    BEGIN;
-    ${updateSigningKeyEnvelopeSql(activeSigningKey.id, encryptedPrivateKey)}
-    ${updateUserPasswordSql(userId, nextPassword)}
-    COMMIT;
-  `);
+  execSql(updateUserPasswordSql(userId, nextPassword));
 }
 
 export function updateOwnProfile(userId: string, input: { firstName: string; lastName?: string }): AppUser {
@@ -1044,19 +1026,7 @@ export function adminSetUserPassword(adminUserId: string, targetUserId: string, 
   assertAdmin(adminUserId);
   if (!findUserById(targetUserId)) throw new Error("User not found.");
   validatePassword(nextPassword);
-  const signingKey = createSigningKeyMaterial(nextPassword);
-  execSql(`
-    BEGIN;
-    ${updateUserPasswordSql(targetUserId, nextPassword)}
-    UPDATE user_signing_keys
-    SET revoked_at = datetime('now'),
-        revocation_reason = ${sql("password_reset")},
-        encrypted_private_key = NULL
-    WHERE user_id = ${sql(targetUserId)}
-      AND revoked_at IS NULL;
-    ${insertSigningKeySql(targetUserId, signingKey)}
-    COMMIT;
-  `);
+  execSql(updateUserPasswordSql(targetUserId, nextPassword));
 }
 
 export function listUserSigningKeys(userId: string): UserSigningKey[] {
@@ -1077,9 +1047,8 @@ export function listUserSigningKeys(userId: string): UserSigningKey[] {
   `).map(toUserSigningKey);
 }
 
-export function ensureUserSigningKey(userId: string, password: string): UserSigningKey {
+export function ensureUserSigningKey(userId: string, passphrase: string): UserSigningKey {
   ensureDatabase();
-  if (!verifyUserPassword(userId, password)) throw new Error("Current password is incorrect.");
   const existing = queryOne(`
     SELECT
       id,
@@ -1095,7 +1064,8 @@ export function ensureUserSigningKey(userId: string, password: string): UserSign
     LIMIT 1
   `);
   if (existing) return toUserSigningKey(existing);
-  const material = createSigningKeyMaterial(password);
+  validateSigningPassphrase(passphrase);
+  const material = createSigningKeyMaterial(passphrase);
   execSql(insertSigningKeySql(userId, material));
   return listUserSigningKeys(userId).find((key) => key.id === material.id) ?? toUserSigningKey({
     id: material.id,
@@ -1109,12 +1079,11 @@ export function ensureUserSigningKey(userId: string, password: string): UserSign
   });
 }
 
-export function getActiveUserSigningPrivateKeyForSigning(userId: string, password: string) {
+export function getActiveUserSigningPrivateKeyForSigning(userId: string, passphrase: string) {
   ensureDatabase();
-  if (!verifyUserPassword(userId, password)) throw new Error("Current password is incorrect.");
   const key = readActiveUserSigningKeySecret(userId);
   if (!key?.encryptedPrivateKey) throw new Error("No active signing key.");
-  return decryptSigningPrivateKey(key, password);
+  return decryptSigningPrivateKey(key, passphrase);
 }
 
 export function getWorkspace(userId: string): Workspace {
@@ -2659,11 +2628,11 @@ type SigningKeyMaterial = EncryptedSigningPrivateKey & {
   publicKeyFingerprint: string;
 };
 
-function createSigningKeyMaterial(password: string): SigningKeyMaterial {
+function createSigningKeyMaterial(passphrase: string): SigningKeyMaterial {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
   const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
-  const encryptedPrivateKey = encryptSigningPrivateKey(privateKeyPem, password);
+  const encryptedPrivateKey = encryptSigningPrivateKey(privateKeyPem, passphrase);
   return {
     id: randomUUID(),
     algorithm: signingKeyAlgorithm,
@@ -2673,10 +2642,10 @@ function createSigningKeyMaterial(password: string): SigningKeyMaterial {
   };
 }
 
-function encryptSigningPrivateKey(privateKeyPem: string, password: string): EncryptedSigningPrivateKey {
+function encryptSigningPrivateKey(privateKeyPem: string, passphrase: string): EncryptedSigningPrivateKey {
   const salt = randomBytes(16);
   const nonce = randomBytes(12);
-  const key = deriveSigningKeyEncryptionKey(password, salt);
+  const key = deriveSigningKeyEncryptionKey(passphrase, salt);
   const cipher = createCipheriv(signingKeyCipher, key, nonce);
   const encrypted = Buffer.concat([cipher.update(privateKeyPem, "utf8"), cipher.final()]);
   return {
@@ -2688,13 +2657,13 @@ function encryptSigningPrivateKey(privateKeyPem: string, password: string): Encr
   };
 }
 
-function decryptSigningPrivateKey(envelope: EncryptedSigningPrivateKey, password: string) {
+function decryptSigningPrivateKey(envelope: EncryptedSigningPrivateKey, passphrase: string) {
   if (envelope.kdf !== signingKeyKdf) throw new Error("Unsupported signing key KDF.");
   if (!envelope.encryptedPrivateKey || !envelope.kdfSalt || !envelope.encryptionNonce || !envelope.encryptionTag) {
     throw new Error("Signing key material is incomplete.");
   }
   try {
-    const key = deriveSigningKeyEncryptionKey(password, Buffer.from(envelope.kdfSalt, "base64"));
+    const key = deriveSigningKeyEncryptionKey(passphrase, Buffer.from(envelope.kdfSalt, "base64"));
     const decipher = createDecipheriv(signingKeyCipher, key, Buffer.from(envelope.encryptionNonce, "base64"));
     decipher.setAuthTag(Buffer.from(envelope.encryptionTag, "base64"));
     return Buffer.concat([decipher.update(Buffer.from(envelope.encryptedPrivateKey, "base64")), decipher.final()]).toString("utf8");
@@ -2703,8 +2672,8 @@ function decryptSigningPrivateKey(envelope: EncryptedSigningPrivateKey, password
   }
 }
 
-function deriveSigningKeyEncryptionKey(password: string, salt: Buffer) {
-  return scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
+function deriveSigningKeyEncryptionKey(passphrase: string, salt: Buffer) {
+  return scryptSync(passphrase, salt, 32, { N: 16384, r: 8, p: 1 });
 }
 
 function readActiveUserSigningKeySecret(userId: string): SigningKeySecret | null {
@@ -2751,18 +2720,6 @@ function insertSigningKeySql(userId: string, material: SigningKeyMaterial) {
       ${sql(material.encryptionNonce)},
       ${sql(material.encryptionTag)}
     );
-  `;
-}
-
-function updateSigningKeyEnvelopeSql(keyId: string, envelope: EncryptedSigningPrivateKey) {
-  return `
-    UPDATE user_signing_keys
-    SET encrypted_private_key = ${sql(envelope.encryptedPrivateKey)},
-        kdf = ${sql(envelope.kdf)},
-        kdf_salt = ${sql(envelope.kdfSalt)},
-        encryption_nonce = ${sql(envelope.encryptionNonce)},
-        encryption_tag = ${sql(envelope.encryptionTag)}
-    WHERE id = ${sql(keyId)};
   `;
 }
 

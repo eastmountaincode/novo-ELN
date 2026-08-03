@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { createUser, ensureUserSigningKey, findUserById, recordUserLogin, verifyCredentials } from "./store";
+import { createUser, findUserById, recordUserLogin, verifyCredentials } from "./store";
 
 const cookieName = "eln_session";
 const defaultMaxAgeSeconds = 60 * 60 * 12;
@@ -26,7 +26,6 @@ type SessionPayload = {
 export async function login(email: string, password: string, rememberDevice = false) {
   const user = verifyCredentials(email, password);
   if (!user) return null;
-  ensureUserSigningKey(user.id, password);
   recordUserLogin(user.id);
   await setSession(user.id, rememberDevice ? rememberedMaxAgeSeconds : defaultMaxAgeSeconds);
   return user;

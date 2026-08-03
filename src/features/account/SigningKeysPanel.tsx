@@ -1,4 +1,4 @@
-import { Fingerprint, KeyRound, Loader2 } from "lucide-react";
+import { Fingerprint, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { formatDateTime } from "@/lib/dateTime";
 import type { UserSigningKey } from "@/lib/types";
@@ -10,11 +10,8 @@ type SigningKeysResponse = {
 
 export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
   const [keys, setKeys] = useState<UserSigningKey[]>([]);
-  const [currentPassword, setCurrentPassword] = useState("");
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState("");
   const activeKey = keys.find((key) => key.active) ?? null;
 
   useEffect(() => {
@@ -37,28 +34,6 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
       cancelled = true;
     };
   }, []);
-
-  async function submitSigningKey(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (submitting) return;
-    setError("");
-    setStatus("");
-    setSubmitting(true);
-    const response = await fetch("/api/account/signing-keys", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ currentPassword }),
-    });
-    const body = (await response.json().catch(() => null)) as SigningKeysResponse | null;
-    setSubmitting(false);
-    if (!response.ok) {
-      setError(body?.error ?? "Signing key setup failed.");
-      return;
-    }
-    setCurrentPassword("");
-    setKeys(body?.keys ?? []);
-    setStatus("Signing key ready.");
-  }
 
   if (loading) {
     return (
@@ -88,7 +63,6 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
         )}
 
         {error ? <p className="mb-4 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
-        {status ? <p className="mb-4 border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{status}</p> : null}
 
         {activeKey ? (
           <dl className="grid gap-3 text-sm">
@@ -112,24 +86,12 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
             </div>
           </dl>
         ) : (
-          <form onSubmit={(event) => void submitSigningKey(event)} className="grid max-w-2xl gap-4 border-t border-slate-100 pt-4">
-            <label className="block text-sm font-medium text-slate-700">
-              Current password
-              <input
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-                type="password"
-                autoComplete="current-password"
-                className="mt-1 h-10 w-full border border-slate-300 px-3 text-slate-950 outline-none focus:border-cyan-600"
-              />
-            </label>
-            <div>
-              <button disabled={submitting || !currentPassword} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
-                {submitting ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
-                {submitting ? "Creating" : "Create signing key"}
-              </button>
+          <dl className="grid gap-3 text-sm">
+            <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
+              <dt className="text-slate-500">Status</dt>
+              <dd className="text-slate-950">Pending next sign-in</dd>
             </div>
-          </form>
+          </dl>
         )}
       </div>
 

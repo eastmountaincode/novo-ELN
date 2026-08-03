@@ -14,6 +14,7 @@ import {
   Plus,
   Search,
   Settings,
+  Shield,
   SlidersHorizontal,
   Trash2,
   UserCircle,
@@ -438,7 +439,12 @@ export function UnifiedSidebar({
           >
             <p className="text-sm font-medium text-white">{userDisplayName(workspace.user)}</p>
             <p className="mt-1 truncate text-xs text-slate-400">{workspace.user.email}</p>
-            <p className="mt-2 text-xs capitalize text-slate-500">{workspace.user.role}</p>
+            <p className="mt-2 flex items-center gap-1.5 text-xs capitalize text-slate-500">
+              <span>{workspace.user.role}</span>
+              {workspace.user.role === "admin" ? (
+                <Shield size={10} fill="currentColor" strokeWidth={0} aria-hidden="true" />
+              ) : null}
+            </p>
             <button
               onClick={openAccount}
               className="mt-3 h-8 w-full border border-white/10 text-sm text-slate-200 hover:bg-white/10"

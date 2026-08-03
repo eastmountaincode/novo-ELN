@@ -52,7 +52,7 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
                     size={9}
                     fill="currentColor"
                     strokeWidth={0}
-                    className={`pointer-events-none absolute right-1.5 top-1 ${selected ? "text-slate-700" : "text-slate-400"}`}
+                    className={`pointer-events-none absolute right-3 top-1 ${selected ? "text-slate-900" : "text-slate-600"}`}
                     aria-label="Admin only"
                   />
                 ) : null}

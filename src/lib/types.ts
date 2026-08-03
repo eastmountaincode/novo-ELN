@@ -73,6 +73,66 @@ export type AdminDataOverview = {
   files: AdminDataFile[];
 };
 
+export type DatabaseSchemaColumn = {
+  name: string;
+  type: string;
+  notNull: boolean;
+  defaultValue: string;
+  primaryKey: boolean;
+};
+
+export type DatabaseSchemaIndex = {
+  name: string;
+  unique: boolean;
+  columns: string[];
+};
+
+export type DatabaseSchemaRelationship = {
+  id: number;
+  sequence: number;
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+  onUpdate: string;
+  onDelete: string;
+};
+
+export type DatabaseSchemaTable = {
+  name: string;
+  type: string;
+  sql: string;
+  internal: boolean;
+  columns: DatabaseSchemaColumn[];
+  foreignKeys: DatabaseSchemaRelationship[];
+  indexes: DatabaseSchemaIndex[];
+};
+
+export type DatabaseSchemaOverview = {
+  generatedAt: string;
+  databasePath: string;
+  tables: DatabaseSchemaTable[];
+  relationships: DatabaseSchemaRelationship[];
+  tableCount: number;
+  columnCount: number;
+  relationshipCount: number;
+  internalTableCount: number;
+};
+
+export type ErflowAdminStatus = {
+  configured: boolean;
+  viewUrl: string;
+};
+
+export type ErflowSyncResult = {
+  syncedAt: string;
+  dryRun: boolean;
+  tableCount: number;
+  relationshipCount: number;
+  operationCount: number;
+  responseText: string;
+};
+
 export type ShareMember = {
   userId: string;
   email: string;

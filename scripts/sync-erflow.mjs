@@ -9,29 +9,45 @@ const databasePath = args.db ?? process.env.ELN_DATABASE_PATH ?? path.join(cwd, 
 const endpoint = normalizeEndpoint(args.endpoint ?? args.modelUrl ?? args.uuid ?? process.env.ELN_ERFLOW_MODEL ?? "");
 const dryRun = Boolean(args.dryRun);
 const replace = Boolean(args.replace);
+const includeInternal = Boolean(args.includeInternal);
 
-const appTables = [
+const preferredTables = [
   "users",
   "login_attempts",
+  "user_signing_keys",
   "notebooks",
   "notebook_members",
   "pages",
   "tags",
   "page_tags",
+  "page_comment_threads",
+  "page_comments",
   "attachments",
+  "attachment_annotations",
   "audit_events",
+  "app_settings",
+  "search_index_queue",
+  "search_pages_fts",
+  "search_pages_vocab",
 ];
+
+const preferredTableOrder = new Map(preferredTables.map((name, index) => [name, index]));
 
 const defaultPositions = {
   users: { x: 80, y: 80 },
   login_attempts: { x: 80, y: 520 },
+  user_signing_keys: { x: 80, y: 840 },
   notebooks: { x: 560, y: 80 },
-  notebook_members: { x: 560, y: 440 },
+  notebook_members: { x: 560, y: 500 },
   pages: { x: 1040, y: 80 },
-  tags: { x: 1040, y: 440 },
-  page_tags: { x: 1040, y: 760 },
-  attachments: { x: 1520, y: 80 },
-  audit_events: { x: 1520, y: 520 },
+  tags: { x: 1040, y: 560 },
+  page_tags: { x: 1040, y: 860 },
+  page_comment_threads: { x: 1520, y: 80 },
+  page_comments: { x: 1520, y: 460 },
+  attachments: { x: 2000, y: 80 },
+  attachment_annotations: { x: 2000, y: 500 },
+  audit_events: { x: 2480, y: 80 },
+  app_settings: { x: 2480, y: 520 },
 };
 
 if (!endpoint) fail("Pass --model-url, --uuid, --endpoint, or ELN_ERFLOW_MODEL.");
@@ -69,7 +85,18 @@ async function listExistingTables() {
 }
 
 function readSchema() {
-  return appTables.map((tableName) => {
+  const tableRows = querySql(`
+    SELECT name, sql
+    FROM sqlite_master
+    WHERE type IN ('table', 'view')
+      AND name NOT LIKE 'sqlite_%'
+    ORDER BY name;
+  `)
+    .filter((table) => includeInternal || !isInternalTable(table.name, table.sql ?? ""))
+    .sort(compareTableRows);
+
+  return tableRows.map((table) => {
+    const tableName = table.name;
     const columns = querySql(`PRAGMA table_info(${quoteIdentifier(tableName)});`).map((column) => ({
       id: columnId(tableName, column.name),
       name: column.name,
@@ -96,9 +123,32 @@ function readSchema() {
       tableId: tableId(tableName),
       columns,
       foreignKeys,
-      position: defaultPositions[tableName] ?? { x: 80, y: 80 },
+      position: defaultPositions[tableName] ?? fallbackPosition(tableName),
     };
   });
+}
+
+function isInternalTable(name, sql) {
+  return (
+    name === "search_index_queue" ||
+    name === "search_pages_vocab" ||
+    name.startsWith("search_pages_fts_") ||
+    /CREATE\s+VIRTUAL\s+TABLE\s+["']?search_pages_fts["']?\s+USING\s+fts/i.test(sql)
+  );
+}
+
+function compareTableRows(left, right) {
+  const leftOrder = preferredTableOrder.get(left.name) ?? 1000;
+  const rightOrder = preferredTableOrder.get(right.name) ?? 1000;
+  if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+  return left.name.localeCompare(right.name);
+}
+
+function fallbackPosition(tableName) {
+  const hash = Array.from(tableName).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const column = 2 + (hash % 4);
+  const row = Math.floor(hash / 4) % 5;
+  return { x: 80 + column * 480, y: 80 + row * 360 };
 }
 
 function buildCreateTableOperations(schema, diagramId) {
@@ -277,8 +327,9 @@ function parseArgs(values) {
     else if (value === "--uuid") parsed.uuid = values[++index];
     else if (value === "--dry-run") parsed.dryRun = true;
     else if (value === "--replace") parsed.replace = true;
+    else if (value === "--include-internal") parsed.includeInternal = true;
     else if (value === "--help" || value === "-h") {
-      console.log("Usage: npm run sync:erflow -- --model-url https://app.erflow.io/workspace/.../models/<uuid> [--dry-run] [--replace]");
+      console.log("Usage: npm run sync:erflow -- --model-url https://app.erflow.io/workspace/.../models/<uuid> [--dry-run] [--replace] [--include-internal]");
       process.exit(0);
     }
   }

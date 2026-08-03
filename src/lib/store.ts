@@ -2,7 +2,8 @@ import { createCipheriv, createDecipheriv, createHash, generateKeyPairSync, rand
 import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
-import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminTag, AdminUser, AppUser, Attachment, AuditEvent, BlockType, Notebook, PageComment, PageCommentThread, PageEntry, PageStatus, Project, ShareMember, UserRole, UserSigningKey, Workspace } from "./types";
+import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminTag, AdminUser, AppUser, Attachment, AuditEvent, BlockType, DatabaseSchemaOverview, Notebook, PageComment, PageCommentThread, PageEntry, PageStatus, Project, ShareMember, UserRole, UserSigningKey, Workspace } from "./types";
+import { readDatabaseSchema } from "./databaseSchema";
 import { bodyToEditorDocument, bodyToEditorText, commentThreadIdsFromBody, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody, removeCommentMarksFromBody, removeUnknownCommentMarksFromBody } from "./editor";
 import { uploadDir } from "./paths";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
@@ -974,6 +975,12 @@ export function getAdminDataOverview(adminUserId: string, options: { fileLimit?:
     },
     files,
   };
+}
+
+export function getAdminDatabaseSchema(adminUserId: string): DatabaseSchemaOverview {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  return readDatabaseSchema();
 }
 
 export function getAdminAppSettings(adminUserId: string): AdminAppSettings {

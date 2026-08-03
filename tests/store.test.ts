@@ -502,6 +502,26 @@ describe("store", () => {
     expect(listUserSigningKeys(member.id)).toHaveLength(1);
   });
 
+  it("returns the live database schema for admins", async () => {
+    const { createUser, getAdminDatabaseSchema } = await import("../src/lib/store");
+    const admin = await createTestAdmin();
+    const member = createUser({ email: "schema.member@example.local", firstName: "Schema", password: "Schema-password-2026!" });
+
+    const schema = getAdminDatabaseSchema(admin.id);
+
+    expect(schema.tables.some((table) => table.name === "user_signing_keys")).toBe(true);
+    expect(schema.tables.find((table) => table.name === "user_signing_keys")?.columns.map((column) => column.name)).toContain("public_key_fingerprint");
+    expect(schema.relationships).toContainEqual(expect.objectContaining({
+      fromTable: "user_signing_keys",
+      fromColumn: "user_id",
+      toTable: "users",
+      toColumn: "id",
+    }));
+    expect(schema.tableCount).toBeGreaterThan(0);
+    expect(schema.columnCount).toBeGreaterThan(0);
+    expect(() => getAdminDatabaseSchema(member.id)).toThrow("Forbidden");
+  });
+
   it("summarizes database and upload storage for admins", async () => {
     const { getWorkspace, createAttachment, getAdminDataOverview } = await import("../src/lib/store");
     const admin = await createTestAdmin();

@@ -1,4 +1,4 @@
-import { Database, Fingerprint, History, KeyRound, Notebook as NotebookIcon, Settings, Tag, UserCircle, Users } from "lucide-react";
+import { Database, Fingerprint, History, KeyRound, Notebook as NotebookIcon, Settings, Tag, UserCircle, Users, Workflow } from "lucide-react";
 import { useState } from "react";
 import type { AppUser, Notebook } from "@/lib/types";
 import { AccountNotebooks } from "@/features/account/AccountNotebooks";
@@ -8,10 +8,11 @@ import { SigningKeysPanel } from "@/features/account/SigningKeysPanel";
 import { AdminActivityPanel } from "@/features/account/admin/AdminActivityPanel";
 import { AppSettingsPanel } from "@/features/account/admin/AppSettingsPanel";
 import { DataAdminPanel } from "@/features/account/admin/DataAdminPanel";
+import { SchemaAdminPanel } from "@/features/account/admin/SchemaAdminPanel";
 import { TagsAdminPanel } from "@/features/account/admin/TagsAdminPanel";
 import { UsersAdminPanel } from "@/features/account/admin/UsersAdminPanel";
 
-type AccountTab = "profile" | "notebooks" | "security" | "signing" | "app" | "users" | "activity" | "data" | "tags";
+type AccountTab = "profile" | "notebooks" | "security" | "signing" | "app" | "users" | "activity" | "data" | "schema" | "tags";
 
 export function AccountView({ user, notebooks, onChanged }: { user: AppUser; notebooks: Notebook[]; onChanged: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<AccountTab>("profile");
@@ -23,6 +24,7 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
     ...(user.role === "admin" ? [{ id: "users" as AccountTab, label: "Users", icon: Users }] : []),
     ...(user.role === "admin" ? [{ id: "activity" as AccountTab, label: "Activity", icon: History }] : []),
     ...(user.role === "admin" ? [{ id: "data" as AccountTab, label: "Data", icon: Database }] : []),
+    ...(user.role === "admin" ? [{ id: "schema" as AccountTab, label: "Schema", icon: Workflow }] : []),
     ...(user.role === "admin" ? [{ id: "tags" as AccountTab, label: "Tags", icon: Tag }] : []),
     ...(user.role === "admin" ? [{ id: "app" as AccountTab, label: "App Settings", icon: Settings }] : []),
   ];
@@ -59,6 +61,7 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
         {activeTab === "users" && user.role === "admin" ? <UsersAdminPanel currentUserId={user.id} /> : null}
         {activeTab === "activity" && user.role === "admin" ? <AdminActivityPanel /> : null}
         {activeTab === "data" && user.role === "admin" ? <DataAdminPanel /> : null}
+        {activeTab === "schema" && user.role === "admin" ? <SchemaAdminPanel /> : null}
         {activeTab === "tags" && user.role === "admin" ? <TagsAdminPanel onChanged={onChanged} /> : null}
       </div>
     </section>

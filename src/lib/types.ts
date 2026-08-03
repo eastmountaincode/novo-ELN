@@ -279,11 +279,6 @@ export type Workspace = {
   members: AppUser[];
   notebooks: Notebook[];
   projects: Project[];
-  integrations?: {
-    chat?: {
-      url: string;
-    };
-  };
 };
 
 export type SearchMatchType = "title" | "content" | "attachment" | "fuzzy";

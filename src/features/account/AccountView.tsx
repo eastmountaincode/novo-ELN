@@ -1,10 +1,10 @@
-import { Database, Fingerprint, History, KeyRound, Notebook as NotebookIcon, Settings, Tag, UserCircle, Users, Workflow } from "lucide-react";
+import { Database, History, KeyRound, Notebook as NotebookIcon, Settings, Shield, Tag, UserCircle, Users, Workflow } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type { AppUser, Notebook } from "@/lib/types";
 import { AccountNotebooks } from "@/features/account/AccountNotebooks";
 import { AccountProfile } from "@/features/account/AccountProfile";
 import { PasswordPanel } from "@/features/account/PasswordPanel";
-import { SigningKeysPanel } from "@/features/account/SigningKeysPanel";
 import { AdminActivityPanel } from "@/features/account/admin/AdminActivityPanel";
 import { AppSettingsPanel } from "@/features/account/admin/AppSettingsPanel";
 import { DataAdminPanel } from "@/features/account/admin/DataAdminPanel";
@@ -12,21 +12,20 @@ import { SchemaAdminPanel } from "@/features/account/admin/SchemaAdminPanel";
 import { TagsAdminPanel } from "@/features/account/admin/TagsAdminPanel";
 import { UsersAdminPanel } from "@/features/account/admin/UsersAdminPanel";
 
-type AccountTab = "profile" | "notebooks" | "security" | "signing" | "app" | "users" | "activity" | "data" | "schema" | "tags";
+type AccountTab = "profile" | "notebooks" | "security" | "app" | "users" | "activity" | "data" | "schema" | "tags";
 
 export function AccountView({ user, notebooks, onChanged }: { user: AppUser; notebooks: Notebook[]; onChanged: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<AccountTab>("profile");
-  const tabs: Array<{ id: AccountTab; label: string; icon: typeof UserCircle }> = [
+  const tabs: Array<{ id: AccountTab; label: string; icon: LucideIcon; adminOnly?: boolean }> = [
     { id: "profile", label: "Profile", icon: UserCircle },
     { id: "notebooks", label: "Notebooks", icon: NotebookIcon },
     { id: "security", label: "Security", icon: KeyRound },
-    { id: "signing", label: "Signing keys", icon: Fingerprint },
-    ...(user.role === "admin" ? [{ id: "users" as AccountTab, label: "Users", icon: Users }] : []),
-    ...(user.role === "admin" ? [{ id: "activity" as AccountTab, label: "Activity", icon: History }] : []),
-    ...(user.role === "admin" ? [{ id: "data" as AccountTab, label: "Data", icon: Database }] : []),
-    ...(user.role === "admin" ? [{ id: "schema" as AccountTab, label: "Schema", icon: Workflow }] : []),
-    ...(user.role === "admin" ? [{ id: "tags" as AccountTab, label: "Tags", icon: Tag }] : []),
-    ...(user.role === "admin" ? [{ id: "app" as AccountTab, label: "App Settings", icon: Settings }] : []),
+    ...(user.role === "admin" ? [{ id: "users" as AccountTab, label: "Users", icon: Users, adminOnly: true }] : []),
+    ...(user.role === "admin" ? [{ id: "activity" as AccountTab, label: "Activity", icon: History, adminOnly: true }] : []),
+    ...(user.role === "admin" ? [{ id: "data" as AccountTab, label: "Data", icon: Database, adminOnly: true }] : []),
+    ...(user.role === "admin" ? [{ id: "schema" as AccountTab, label: "Schema", icon: Workflow, adminOnly: true }] : []),
+    ...(user.role === "admin" ? [{ id: "tags" as AccountTab, label: "Tags", icon: Tag, adminOnly: true }] : []),
+    ...(user.role === "admin" ? [{ id: "app" as AccountTab, label: "App Settings", icon: Settings, adminOnly: true }] : []),
   ];
 
   return (
@@ -48,6 +47,7 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
               >
                 <Icon size={16} />
                 {tab.label}
+                {tab.adminOnly ? <Shield size={13} className="text-cyan-700" aria-label="Admin only" /> : null}
               </button>
             );
           })}
@@ -56,7 +56,6 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
         {activeTab === "profile" ? <AccountProfile user={user} onChanged={onChanged} /> : null}
         {activeTab === "notebooks" ? <AccountNotebooks notebooks={notebooks} /> : null}
         {activeTab === "security" ? <PasswordPanel /> : null}
-        {activeTab === "signing" ? <SigningKeysPanel /> : null}
         {activeTab === "app" && user.role === "admin" ? <AppSettingsPanel onChanged={onChanged} /> : null}
         {activeTab === "users" && user.role === "admin" ? <UsersAdminPanel currentUserId={user.id} /> : null}
         {activeTab === "activity" && user.role === "admin" ? <AdminActivityPanel /> : null}

@@ -8,7 +8,7 @@ type SigningKeysResponse = {
   error?: string;
 };
 
-export function SigningKeysPanel() {
+export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
   const [keys, setKeys] = useState<UserSigningKey[]>([]);
   const [currentPassword, setCurrentPassword] = useState("");
   const [loading, setLoading] = useState(true);
@@ -62,7 +62,7 @@ export function SigningKeysPanel() {
 
   if (loading) {
     return (
-      <section className="max-w-4xl border border-slate-200 bg-white p-5">
+      <section className={embedded ? "" : "max-w-4xl border border-slate-200 bg-white p-5"}>
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <Loader2 size={16} className="animate-spin" />
           Loading signing keys
@@ -72,16 +72,20 @@ export function SigningKeysPanel() {
   }
 
   return (
-    <section className="max-w-4xl space-y-6">
-      <div className="border border-slate-200 bg-white p-5">
-        <div className="mb-5 flex items-start gap-3">
-          <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
-            <Fingerprint size={21} />
+    <section className={embedded ? "space-y-5" : "max-w-4xl space-y-6"}>
+      <div className={embedded ? "" : "border border-slate-200 bg-white p-5"}>
+        {embedded ? (
+          <h3 className="mb-4 text-sm font-semibold text-slate-950">Signing keys</h3>
+        ) : (
+          <div className="mb-5 flex items-start gap-3">
+            <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
+              <Fingerprint size={21} />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">Active signing key</h2>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-semibold text-slate-950">Active signing key</h2>
-          </div>
-        </div>
+        )}
 
         {error ? <p className="mb-4 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
         {status ? <p className="mb-4 border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{status}</p> : null}
@@ -129,8 +133,8 @@ export function SigningKeysPanel() {
         )}
       </div>
 
-      <div className="border border-slate-200 bg-white p-5">
-        <h2 className="text-lg font-semibold text-slate-950">Key history</h2>
+      <div className={embedded ? "border-t border-slate-100 pt-5" : "border border-slate-200 bg-white p-5"}>
+        <h2 className={embedded ? "text-sm font-semibold text-slate-950" : "text-lg font-semibold text-slate-950"}>Key history</h2>
         {keys.length ? (
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[680px] border-collapse text-left text-sm">

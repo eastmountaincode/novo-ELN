@@ -43,11 +43,19 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex h-10 items-center gap-2 border-b-2 px-3 text-sm font-medium ${selected ? "border-slate-950 text-slate-950" : "border-transparent text-slate-500 hover:text-slate-900"}`}
+                className={`relative inline-flex h-10 items-center gap-2 border-b-2 px-3 pr-5 text-sm font-medium ${selected ? "border-slate-950 text-slate-950" : "border-transparent text-slate-500 hover:text-slate-900"}`}
               >
                 <Icon size={16} />
                 {tab.label}
-                {tab.adminOnly ? <Shield size={13} fill="currentColor" strokeWidth={0} className="text-cyan-700" aria-label="Admin only" /> : null}
+                {tab.adminOnly ? (
+                  <Shield
+                    size={9}
+                    fill="currentColor"
+                    strokeWidth={0}
+                    className={`pointer-events-none absolute right-1.5 top-1 ${selected ? "text-slate-700" : "text-slate-400"}`}
+                    aria-label="Admin only"
+                  />
+                ) : null}
               </button>
             );
           })}

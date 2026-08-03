@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Home as HomeIcon,
+  MessageSquareText,
   MoreHorizontal,
   Notebook as NotebookIcon,
   Palette,
@@ -367,6 +368,20 @@ export function UnifiedSidebar({
             <span className="sidebar-wide min-w-0 truncate font-medium">Overview</span>
           </button>
         </div>
+        {workspace.integrations?.chat ? (
+          <div className={`mb-3 ${sidebarCollapsed ? "px-3" : "px-4"}`}>
+            <a
+              href={workspace.integrations.chat.url}
+              className={`flex w-full min-w-0 items-center overflow-hidden py-2 text-left text-sm text-slate-300 hover:bg-white/5 ${
+                sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
+              }`}
+              title="Novo Chat"
+            >
+              <MessageSquareText size={16} className="shrink-0" />
+              <span className="sidebar-wide min-w-0 truncate font-medium">Novo Chat</span>
+            </a>
+          </div>
+        ) : null}
         {!sidebarCollapsed ? (
           <>
             <SidebarSection

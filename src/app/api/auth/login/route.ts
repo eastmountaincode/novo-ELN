@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { login } from "@/lib/auth";
+import { validateNovoLoginReturnPath } from "@/lib/novoIntegrationConfig";
 import { clearFailedLogins, getLoginRateLimit, recordFailedLogin } from "@/lib/store";
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as { email?: string; password?: string; rememberDevice?: boolean } | null;
+  const body = (await request.json().catch(() => null)) as { email?: string; password?: string; rememberDevice?: boolean; returnTo?: string } | null;
   if (!body?.email || !body.password) {
     return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
   }
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
   }
 
   clearFailedLogins(body.email, clientIp);
-  return NextResponse.json({ user });
+  return NextResponse.json({ user, returnTo: validateNovoLoginReturnPath(body.returnTo) });
 }
 
 function getClientIp(request: Request) {

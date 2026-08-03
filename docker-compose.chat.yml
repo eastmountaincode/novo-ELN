@@ -1,0 +1,12 @@
+services:
+  novo:
+    environment:
+      NOVO_INTEGRATION_SECRET_FILE: ${NOVO_INTEGRATION_SECRET_FILE:?NOVO_INTEGRATION_SECRET_FILE must be configured}
+    secrets:
+      - source: novo_integration
+        target: novo-integration
+
+secrets:
+  novo_integration:
+    file: ${NOVO_INTEGRATION_SECRET_HOST_FILE:?NOVO_INTEGRATION_SECRET_HOST_FILE must name a host secret file}
+    name: ${NOVO_COMPOSE_PROJECT:-novo-eln}-integration-secret

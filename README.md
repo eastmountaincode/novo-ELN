@@ -92,6 +92,23 @@ runtime/previews/
 
 Inside Docker these are mounted at `/app-data`. Override with `ELN_DATABASE_PATH`, `ELN_DATA_DIR`, and `ELN_UPLOAD_DIR` only if you are deliberately running outside the provided compose file.
 
+## Optional Novo Chat integration
+
+Novo Chat is an optional companion service. Ordinary Novo deployments leave
+`NOVO_INTEGRATION_SECRET_FILE` and `NOVO_CHAT_URL` unset. To enable the narrow,
+read-only integration API in a deployed container, set
+`NOVO_INTEGRATION_SECRET_FILE=/run/secrets/novo-integration` in that instance's
+service environment file. Keep the actual secret in a readable, non-empty file
+outside the Git checkout and export only its host path as
+`NOVO_INTEGRATION_SECRET_HOST_FILE` before running the deployment script. The
+script then adds `docker-compose.chat.yml`, which mounts the file as a Compose
+secret without copying its contents into an environment variable or image.
+
+Set `NOVO_CHAT_URL` to a same-origin path such as `/chat/` only when the
+companion route is deployed and should appear in Novo navigation. If all Chat
+settings remain unset, deployment uses only the base Compose file exactly as
+before. Never expose `/api/integrations/` through the public reverse proxy.
+
 ## Backups
 
 Backups should include both the SQLite database and uploaded attachment files. See `ops/backup/README.md` for the Dockerized BorgBackup workflow and restore-test notes.

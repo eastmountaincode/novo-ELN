@@ -52,8 +52,11 @@ export NOVO_BUILD_ID="${commit:0:12}"
 export NOVO_GIT_SHA="$commit"
 export NOVO_BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
+source "$ROOT_DIR/scripts/lib/novo-chat-compose.sh"
+novo_configure_compose_args "$ROOT_DIR/$NOVO_ENV_FILE" "$ROOT_DIR"
+
 echo "Building staging image $NOVO_IMAGE from GitHub commit $commit"
-docker compose build novo
+docker compose "${NOVO_COMPOSE_ARGS[@]}" build novo
 
 image_revision="$(docker image inspect "$NOVO_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 if [[ "$image_revision" != "$commit" ]]; then
@@ -61,7 +64,7 @@ if [[ "$image_revision" != "$commit" ]]; then
   exit 1
 fi
 
-docker compose up -d --no-build novo
+docker compose "${NOVO_COMPOSE_ARGS[@]}" up -d --no-build novo
 
 page=""
 for _attempt in $(seq 1 60); do

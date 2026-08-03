@@ -111,9 +111,9 @@ before. Never expose `/api/integrations/` through the public reverse proxy.
 
 ## Optional ER Flow schema diagrams
 
-Admins can view the live SQLite schema in Account Settings -> Schema. ER Flow
-sync is optional. To connect it, create an ER Flow data model in your own ER
-Flow account and set:
+Admins can sync the current SQLite schema from Account Settings -> Schema. ER
+Flow sync is optional. To connect it, create an ER Flow data model in your own
+ER Flow account and set:
 
 ```text
 ELN_ERFLOW_MODEL=https://app.erflow.io/mcp/data-model/YOUR_MODEL_UUID
@@ -122,8 +122,8 @@ ELN_ERFLOW_VIEW_URL=https://app.erflow.io/share/YOUR_VIEW_ONLY_LINK
 
 `ELN_ERFLOW_MODEL` can also be just the model UUID. Treat it as a write
 credential for that ER Flow model and keep it server-side. Do not commit it.
-Without these variables, Novo still shows the live schema locally but disables
-ER Flow sync.
+`ELN_ERFLOW_VIEW_URL` is the admin-facing URL shown by the Open ER Flow button.
+Without these variables, Novo disables ER Flow sync.
 
 ## Backups
 

@@ -8,6 +8,8 @@ type SchemaResponse = {
   error?: string;
 };
 
+const erflowActionClass = "inline-flex h-9 items-center gap-2 px-3 !text-sm !font-medium !leading-5";
+
 export function SchemaAdminPanel() {
   const [erflow, setErflow] = useState<ErflowAdminStatus | null>(null);
   const [syncResult, setSyncResult] = useState<ErflowSyncResult | null>(null);
@@ -103,7 +105,7 @@ export function SchemaAdminPanel() {
             type="button"
             onClick={() => void syncErflow()}
             disabled={loading || !configured || syncing}
-            className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className={`${erflowActionClass} bg-slate-950 text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300`}
           >
             {syncing ? <Loader2 size={15} className="animate-spin" /> : <Workflow size={15} />}
             Sync ER Flow
@@ -113,7 +115,7 @@ export function SchemaAdminPanel() {
               href={erflow.viewUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              className={`${erflowActionClass} border border-slate-300 text-slate-700 hover:bg-slate-50`}
             >
               <ExternalLink size={15} />
               Open ER Flow
@@ -122,7 +124,7 @@ export function SchemaAdminPanel() {
             <button
               type="button"
               disabled
-              className="inline-flex h-9 cursor-not-allowed items-center gap-2 border border-slate-200 px-3 text-sm font-medium text-slate-400"
+              className={`${erflowActionClass} cursor-not-allowed border border-slate-200 text-slate-400`}
             >
               <ExternalLink size={15} />
               Open ER Flow

@@ -18,6 +18,18 @@ export type AdminUser = AppUser & {
   notebookCount: number;
 };
 
+export type UserSigningKey = {
+  id: string;
+  userId: string;
+  algorithm: string;
+  publicKey: string;
+  publicKeyFingerprint: string;
+  createdAt: string;
+  revokedAt: string;
+  revocationReason: string;
+  active: boolean;
+};
+
 export type AdminTag = {
   id: string;
   label: string;

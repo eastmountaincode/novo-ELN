@@ -1,12 +1,12 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { createUser, findUserById, recordUserLogin, verifyCredentials } from "./store";
+import { createUser, ensureUserSigningKey, findUserById, recordUserLogin, verifyCredentials } from "./store";
 
 const cookieName = "eln_session";
 const defaultMaxAgeSeconds = 60 * 60 * 12;
 const rememberedMaxAgeSeconds = 60 * 60 * 24 * 14;
 
-function useSecureCookies() {
+function shouldUseSecureCookies() {
   return process.env.NODE_ENV === "production" && process.env.ELN_ALLOW_INSECURE_COOKIES !== "true";
 }
 
@@ -26,6 +26,7 @@ type SessionPayload = {
 export async function login(email: string, password: string, rememberDevice = false) {
   const user = verifyCredentials(email, password);
   if (!user) return null;
+  ensureUserSigningKey(user.id, password);
   recordUserLogin(user.id);
   await setSession(user.id, rememberDevice ? rememberedMaxAgeSeconds : defaultMaxAgeSeconds);
   return user;
@@ -61,7 +62,7 @@ async function setSession(userId: string, maxAgeSeconds: number) {
   cookieStore.set(cookieName, signSession({ userId, expiresAt: Date.now() + maxAgeSeconds * 1000 }), {
     httpOnly: true,
     sameSite: "lax",
-    secure: useSecureCookies(),
+    secure: shouldUseSecureCookies(),
     path: "/",
     maxAge: maxAgeSeconds,
   });

@@ -1,4 +1,4 @@
-import { Database, History, KeyRound, Notebook as NotebookIcon, Settings, Shield, Tag, UserCircle, Users, Workflow } from "lucide-react";
+import { ChevronDown, Database, Fingerprint, History, KeyRound, Notebook as NotebookIcon, Settings, Shield, Tag, UserCircle, Users, Workflow } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type { AppUser, Notebook } from "@/lib/types";
@@ -17,6 +17,7 @@ type AccountTab = "profile" | "notebooks" | "security" | "app" | "users" | "acti
 
 export function AccountView({ user, notebooks, onChanged }: { user: AppUser; notebooks: Notebook[]; onChanged: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<AccountTab>("profile");
+  const [signingKeysOpen, setSigningKeysOpen] = useState(false);
   const tabs: Array<{ id: AccountTab; label: string; icon: LucideIcon; adminOnly?: boolean }> = [
     { id: "profile", label: "Profile", icon: UserCircle },
     { id: "notebooks", label: "Notebooks", icon: NotebookIcon },
@@ -67,9 +68,28 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
         {activeTab === "security" ? (
           <div className="space-y-4">
             <PasswordPanel />
-            <section className="max-w-4xl border border-slate-200 bg-white p-5">
-              <SigningKeysPanel embedded />
-            </section>
+            <details
+              open={signingKeysOpen}
+              onToggle={(event) => setSigningKeysOpen(event.currentTarget.open)}
+              className="group max-w-2xl border border-slate-200 bg-white"
+            >
+              <summary className="flex cursor-pointer list-none items-start justify-between gap-3 p-5 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+                <span className="flex items-start gap-3">
+                  <span className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
+                    <Fingerprint size={21} />
+                  </span>
+                  <span className="pt-1">
+                    <h2 className="text-lg font-semibold text-slate-950">Signing keys</h2>
+                  </span>
+                </span>
+                <ChevronDown size={16} className="mt-3 shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
+              </summary>
+              {signingKeysOpen ? (
+                <div className="border-t border-slate-100 p-5">
+                  <SigningKeysPanel embedded />
+                </div>
+              ) : null}
+            </details>
           </div>
         ) : null}
         {activeTab === "app" && user.role === "admin" ? <AppSettingsPanel onChanged={onChanged} /> : null}

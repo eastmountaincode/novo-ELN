@@ -74,15 +74,13 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
   return (
     <section className={embedded ? "space-y-5" : "max-w-4xl space-y-6"}>
       <div className={embedded ? "" : "border border-slate-200 bg-white p-5"}>
-        {embedded ? (
-          <h3 className="mb-4 text-sm font-semibold text-slate-950">Signing keys</h3>
-        ) : (
+        {embedded ? null : (
           <div className="mb-5 flex items-start gap-3">
             <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
               <Fingerprint size={21} />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-slate-950">Active signing key</h2>
+              <h2 className="text-lg font-semibold text-slate-950">Signing keys</h2>
             </div>
           </div>
         )}
@@ -112,7 +110,7 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
             </div>
           </dl>
         ) : (
-          <form onSubmit={(event) => void submitSigningKey(event)} className="grid max-w-2xl gap-4 border-t border-slate-100 pt-4">
+          <form onSubmit={(event) => void submitSigningKey(event)} className="grid max-w-2xl gap-4">
             <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
               <dt className="text-slate-500">Status</dt>
               <dd className="text-slate-950">No active key</dd>

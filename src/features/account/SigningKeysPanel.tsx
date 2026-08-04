@@ -11,11 +11,13 @@ type SigningKeysResponse = {
 export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
   const [keys, setKeys] = useState<UserSigningKey[]>([]);
   const [signingPassphrase, setSigningPassphrase] = useState("");
+  const [signingPassphraseConfirmation, setSigningPassphraseConfirmation] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const activeKey = keys.find((key) => key.active) ?? null;
+  const createDisabled = submitting || !signingPassphrase || !signingPassphraseConfirmation;
 
   useEffect(() => {
     let cancelled = false;
@@ -43,11 +45,15 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
     if (submitting) return;
     setError("");
     setStatus("");
+    if (signingPassphrase !== signingPassphraseConfirmation) {
+      setError("Signing passphrases do not match.");
+      return;
+    }
     setSubmitting(true);
     const response = await fetch("/api/account/signing-keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ signingPassphrase }),
+      body: JSON.stringify({ signingPassphrase, signingPassphraseConfirmation }),
     });
     const body = (await response.json().catch(() => null)) as SigningKeysResponse | null;
     setSubmitting(false);
@@ -56,6 +62,7 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
       return;
     }
     setSigningPassphrase("");
+    setSigningPassphraseConfirmation("");
     setKeys(body?.keys ?? []);
     setStatus("Signing key ready.");
   }
@@ -126,8 +133,19 @@ export function SigningKeysPanel({ embedded = false }: { embedded?: boolean }) {
                 className="mt-1 h-10 w-full border border-slate-300 px-3 text-slate-950 outline-none focus:border-cyan-600"
               />
             </label>
+            <label className="block text-sm font-medium text-slate-700">
+              Confirm signing passphrase
+              <input
+                value={signingPassphraseConfirmation}
+                onChange={(event) => setSigningPassphraseConfirmation(event.target.value)}
+                type="password"
+                autoComplete="new-password"
+                minLength={12}
+                className="mt-1 h-10 w-full border border-slate-300 px-3 text-slate-950 outline-none focus:border-cyan-600"
+              />
+            </label>
             <div>
-              <button disabled={submitting || !signingPassphrase} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+              <button disabled={createDisabled} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
                 {submitting ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
                 {submitting ? "Creating" : "Create signing key"}
               </button>

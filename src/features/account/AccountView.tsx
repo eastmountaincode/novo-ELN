@@ -5,6 +5,7 @@ import type { AppUser, Notebook } from "@/lib/types";
 import { AccountNotebooks } from "@/features/account/AccountNotebooks";
 import { AccountProfile } from "@/features/account/AccountProfile";
 import { PasswordPanel } from "@/features/account/PasswordPanel";
+import { SigningKeysPanel } from "@/features/account/SigningKeysPanel";
 import { AdminActivityPanel } from "@/features/account/admin/AdminActivityPanel";
 import { AppSettingsPanel } from "@/features/account/admin/AppSettingsPanel";
 import { DataAdminPanel } from "@/features/account/admin/DataAdminPanel";
@@ -63,7 +64,14 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
 
         {activeTab === "profile" ? <AccountProfile user={user} onChanged={onChanged} /> : null}
         {activeTab === "notebooks" ? <AccountNotebooks notebooks={notebooks} /> : null}
-        {activeTab === "security" ? <PasswordPanel /> : null}
+        {activeTab === "security" ? (
+          <div className="space-y-4">
+            <PasswordPanel />
+            <section className="max-w-4xl border border-slate-200 bg-white p-5">
+              <SigningKeysPanel embedded />
+            </section>
+          </div>
+        ) : null}
         {activeTab === "app" && user.role === "admin" ? <AppSettingsPanel onChanged={onChanged} /> : null}
         {activeTab === "users" && user.role === "admin" ? <UsersAdminPanel currentUserId={user.id} /> : null}
         {activeTab === "activity" && user.role === "admin" ? <AdminActivityPanel /> : null}

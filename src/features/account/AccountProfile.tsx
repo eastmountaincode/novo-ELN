@@ -1,6 +1,5 @@
-import { ChevronDown, Fingerprint, Loader2, Pencil, UserCircle } from "lucide-react";
+import { Loader2, Pencil, UserCircle } from "lucide-react";
 import { useEffect, useState } from "react";
-import { SigningKeysPanel } from "@/features/account/SigningKeysPanel";
 import type { AppUser } from "@/lib/types";
 import { userDisplayName } from "@/lib/workspaceDisplay";
 
@@ -8,7 +7,6 @@ export function AccountProfile({ user, onChanged }: { user: AppUser; onChanged: 
   const [editing, setEditing] = useState(false);
   const [firstName, setFirstName] = useState(user.firstName);
   const [lastName, setLastName] = useState(user.lastName);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -125,24 +123,6 @@ export function AccountProfile({ user, onChanged }: { user: AppUser; onChanged: 
         )}
       </div>
 
-      <details
-        open={advancedOpen}
-        onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
-        className="group border border-slate-200 bg-white"
-      >
-        <summary className="flex h-12 cursor-pointer list-none items-center justify-between gap-3 px-5 text-sm font-semibold text-slate-950 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
-          <span className="inline-flex min-w-0 items-center gap-2">
-            <Fingerprint size={16} className="text-slate-500" />
-            Advanced
-          </span>
-          <ChevronDown size={16} className="shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
-        </summary>
-        {advancedOpen ? (
-          <div className="border-t border-slate-200 p-5">
-            <SigningKeysPanel embedded />
-          </div>
-        ) : null}
-      </details>
     </section>
   );
 }

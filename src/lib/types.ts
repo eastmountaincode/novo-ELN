@@ -30,6 +30,27 @@ export type UserSigningKey = {
   active: boolean;
 };
 
+export type PageSignature = {
+  id: string;
+  pageId: string;
+  notebookId: string;
+  signerUserId: string;
+  signerEmail: string;
+  signerFirstName: string;
+  signerLastName: string;
+  signingKeyId: string;
+  signingKeyAlgorithm: string;
+  signingPublicKey: string;
+  signingPublicKeyFingerprint: string;
+  recordHashAlgorithm: string;
+  recordHash: string;
+  signatureAlgorithm: string;
+  signaturePayload: string;
+  signature: string;
+  recordManifestJson: string;
+  createdAt: string;
+};
+
 export type AdminTag = {
   id: string;
   label: string;

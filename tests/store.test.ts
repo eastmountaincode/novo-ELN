@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { verify } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const testAdminEmail = "test@example.local";
@@ -538,6 +539,45 @@ describe("store", () => {
     expect(listUserSigningKeys(member.id)).toHaveLength(1);
   });
 
+
+  it("creates verifiable page record signatures", async () => {
+    const { buildPageRecordPackage } = await import("../src/lib/pageRecordPackage");
+    const {
+      createPageRecordSignature,
+      ensureUserSigningKey,
+      getPage,
+      getPageCommentThreads,
+      getPageNotebook,
+      getWorkspace,
+      listPageRecordAuditEvents,
+      listPageRecordSignatures,
+    } = await import("../src/lib/store");
+    const admin = await createTestAdmin();
+    const signingPassphrase = "Signing passphrase 2026";
+    ensureUserSigningKey(admin.id, signingPassphrase);
+    const pageId = getWorkspace(admin.id).notebooks[0].pages[0].id;
+    const page = getPage(admin.id, pageId);
+    const notebook = getPageNotebook(admin.id, pageId);
+    const commentThreads = getPageCommentThreads(admin.id, pageId);
+    const auditEvents = listPageRecordAuditEvents(admin.id, pageId);
+    const recordPackage = await buildPageRecordPackage(page, notebook, { auditEvents, commentThreads });
+
+    const signature = createPageRecordSignature(admin.id, {
+      pageId,
+      recordHash: recordPackage.recordHash,
+      recordManifest: recordPackage.manifest,
+      signingPassphrase,
+    });
+
+    expect(signature.recordHash).toBe(recordPackage.recordHash);
+    expect(signature.signingPublicKey).toContain("BEGIN PUBLIC KEY");
+    expect(signature.signingPublicKeyFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(JSON.parse(signature.signaturePayload).record.hash).toBe(recordPackage.recordHash);
+    expect(verify(null, Buffer.from(signature.signaturePayload, "utf8"), signature.signingPublicKey, Buffer.from(signature.signature, "base64"))).toBe(true);
+    expect(listPageRecordSignatures(admin.id, pageId).map((candidate) => candidate.id)).toContain(signature.id);
+    expect(listPageRecordAuditEvents(admin.id, pageId).some((event) => event.action === "page.record.signed" && event.metadata.signatureId === signature.id)).toBe(true);
+  });
+
   it("returns the live database schema for admins", async () => {
     const { createUser, getAdminDatabaseSchema } = await import("../src/lib/store");
     const admin = await createTestAdmin();
@@ -546,11 +586,18 @@ describe("store", () => {
     const schema = getAdminDatabaseSchema(admin.id);
 
     expect(schema.tables.some((table) => table.name === "user_signing_keys")).toBe(true);
+    expect(schema.tables.some((table) => table.name === "page_signatures")).toBe(true);
     expect(schema.tables.find((table) => table.name === "user_signing_keys")?.columns.map((column) => column.name)).toContain("public_key_fingerprint");
     expect(schema.relationships).toContainEqual(expect.objectContaining({
       fromTable: "user_signing_keys",
       fromColumn: "user_id",
       toTable: "users",
+      toColumn: "id",
+    }));
+    expect(schema.relationships).toContainEqual(expect.objectContaining({
+      fromTable: "page_signatures",
+      fromColumn: "page_id",
+      toTable: "pages",
       toColumn: "id",
     }));
     expect(schema.tableCount).toBeGreaterThan(0);

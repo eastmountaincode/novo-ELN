@@ -1,5 +1,6 @@
 import type { JSONContent } from "@tiptap/react";
 import {
+  FileSignature,
   Flag,
   History,
   Lock,
@@ -8,8 +9,9 @@ import {
   Unlock,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
+import { ModalFrame } from "@/components/ModalFrame";
 import { PrintPageDocument } from "@/components/PrintPageDocument";
 import {
   RichTextEditor,
@@ -29,6 +31,7 @@ import type {
   Notebook,
   PageCommentThread,
   PageEntry,
+  PageSignature,
   PageStatus,
   Project,
 } from "@/lib/types";
@@ -99,6 +102,7 @@ export function EditorPane({
   const [printPage, setPrintPage] = useState<PageEntry | null>(null);
   const [printContent, setPrintContent] = useState<JSONContent[] | undefined>(undefined);
   const [exportingPage, setExportingPage] = useState<PageExportFormat | null>(null);
+  const [signingOpen, setSigningOpen] = useState(false);
   const color = projectColor(selectedNotebook ?? selectedProject);
   const locked = Boolean(page.lockedAt);
   const titleFieldRef = useRef<HTMLTextAreaElement>(null);
@@ -330,6 +334,24 @@ export function EditorPane({
     }
   }
 
+
+  async function signPageRecord(signingPassphrase: string, reportProgress: (message: string) => void): Promise<PageSignature> {
+    reportProgress("Saving page");
+    const flushResults = await pageController.flush();
+    if (!flushResults.every(Boolean)) throw new Error("Could not save the current page before signing.");
+
+    reportProgress("Signing record");
+    const response = await fetch(`/api/pages/${page.id}/proof/sign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ signingPassphrase }),
+    });
+    const body = (await response.json().catch(() => null)) as { signature?: PageSignature; error?: string } | null;
+    if (!response.ok || !body?.signature) throw new Error(body?.error ?? `Signing failed with ${response.status}`);
+    if (activityOpen) await loadActivity(0);
+    return body.signature;
+  }
+
   function openPagePrintDialog(selection?: { content: JSONContent[] }) {
     document.body.classList.add("novo-printing");
     setPrintContent(selection?.content);
@@ -392,7 +414,10 @@ export function EditorPane({
                 void pageController.savePage({ status });
               }}
             />
-            <PageLockControl locked={locked} canManage={canManageLock} blocked={pageController.lockBlocked} setLocked={pageController.setPageLocked} />
+            <div className="flex shrink-0 items-center gap-2">
+              <PageSignControl canSign={canManageLock} blocked={pageController.lockBlocked} onOpen={() => setSigningOpen(true)} />
+              <PageLockControl locked={locked} canManage={canManageLock} blocked={pageController.lockBlocked} setLocked={pageController.setPageLocked} />
+            </div>
           </div>
         </header>
         <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white px-6 pb-6 pt-4">
@@ -452,6 +477,13 @@ export function EditorPane({
           onClose={() => setActivityOpen(false)}
         />
       ) : null}
+      {signingOpen ? (
+        <PageSignatureModal
+          pageTitle={page.title}
+          onSign={signPageRecord}
+          onClose={() => setSigningOpen(false)}
+        />
+      ) : null}
       {commentsOpen ? (
         <PageCommentPopover
           key={selectedCommentThreadId}
@@ -476,6 +508,123 @@ export function EditorPane({
 function compareCommentThreads(a: PageCommentThread, b: PageCommentThread) {
   return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
 }
+
+
+function PageSignControl({ canSign, blocked, onOpen }: { canSign: boolean; blocked: boolean; onOpen: () => void }) {
+  if (!canSign) return null;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={blocked}
+      className="inline-flex h-7 shrink-0 items-center gap-1.5 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait"
+      title={blocked ? "Finish the current editor action before signing" : "Sign record"}
+      aria-label={blocked ? "Finish current editor action" : "Sign record"}
+    >
+      {blocked ? <Loader2 size={12} className="animate-spin" /> : <FileSignature size={12} />}
+      <span>{blocked ? "Finishing edit" : "Sign record"}</span>
+    </button>
+  );
+}
+
+function PageSignatureModal({
+  pageTitle,
+  onSign,
+  onClose,
+}: {
+  pageTitle: string;
+  onSign: (signingPassphrase: string, reportProgress: (message: string) => void) => Promise<PageSignature>;
+  onClose: () => void;
+}) {
+  const [signingPassphrase, setSigningPassphrase] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [error, setError] = useState("");
+  const [signature, setSignature] = useState<PageSignature | null>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting || signature) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const createdSignature = await onSign(signingPassphrase, setProgress);
+      setSignature(createdSignature);
+      setSigningPassphrase("");
+      setProgress("Signed");
+    } catch (caught) {
+      setProgress("");
+      setError(caught instanceof Error ? caught.message : "Could not sign page record.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <ModalFrame>
+      <form onSubmit={(event) => void submit(event)} className="space-y-4" role="dialog" aria-modal="true" aria-label="Sign page record">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-white">Sign page record</h2>
+            <p className="mt-1 truncate text-sm text-slate-400">{pageTitle || "Untitled page"}</p>
+          </div>
+          <button type="button" onClick={onClose} className="grid size-8 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Close signing dialog">
+            <X size={16} />
+          </button>
+        </div>
+
+        {signature ? (
+          <div className="space-y-3 border border-cyan-500/30 bg-cyan-500/10 p-3 text-sm text-cyan-50">
+            <div className="flex items-center gap-2 font-medium"><FileSignature size={15} />Signed</div>
+            <dl className="space-y-2 text-xs text-cyan-100/90">
+              <div>
+                <dt className="text-cyan-200/70">Record hash</dt>
+                <dd className="mt-1 break-all font-mono">{signature.recordHash}</dd>
+              </div>
+              <div>
+                <dt className="text-cyan-200/70">Signature ID</dt>
+                <dd className="mt-1 break-all font-mono">{signature.id}</dd>
+              </div>
+            </dl>
+          </div>
+        ) : (
+          <>
+            <label className="block text-sm font-medium text-slate-200">
+              Signing passphrase
+              <input
+                type="password"
+                value={signingPassphrase}
+                onChange={(event) => setSigningPassphrase(event.target.value)}
+                className="mt-2 h-10 w-full border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-cyan-400"
+                autoFocus
+              />
+            </label>
+            {progress ? (
+              <div className="flex items-center gap-2 text-sm text-slate-300">
+                <Loader2 size={15} className="animate-spin" />
+                <span>{progress}</span>
+              </div>
+            ) : null}
+            {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+          </>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" onClick={onClose} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">
+            {signature ? "Close" : "Cancel"}
+          </button>
+          {!signature ? (
+            <button type="submit" disabled={submitting || signingPassphrase.length === 0} className="inline-flex h-9 items-center gap-2 bg-white px-3 text-sm font-medium text-slate-950 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60">
+              {submitting ? <Loader2 size={15} className="animate-spin" /> : <FileSignature size={15} />}
+              <span>{submitting ? "Signing" : "Sign record"}</span>
+            </button>
+          ) : null}
+        </div>
+      </form>
+    </ModalFrame>
+  );
+}
+
 
 function PageLockControl({ locked, canManage, blocked, setLocked }: { locked: boolean; canManage: boolean; blocked: boolean; setLocked: (locked: boolean) => Promise<void> }) {
   const [pending, setPending] = useState(false);

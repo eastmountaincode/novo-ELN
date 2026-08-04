@@ -7,14 +7,15 @@ const erflowDefaultPositions: Record<string, { x: number; y: number }> = {
   notebooks: { x: 560, y: 80 },
   notebook_members: { x: 560, y: 500 },
   pages: { x: 1040, y: 80 },
-  tags: { x: 1040, y: 560 },
-  page_tags: { x: 1040, y: 860 },
+  page_signatures: { x: 1040, y: 560 },
+  tags: { x: 1040, y: 960 },
+  page_tags: { x: 1040, y: 1260 },
   page_comment_threads: { x: 1520, y: 80 },
   page_comments: { x: 1520, y: 460 },
   attachments: { x: 2000, y: 80 },
   attachment_annotations: { x: 2000, y: 500 },
   audit_events: { x: 2480, y: 80 },
-  app_settings: { x: 2480, y: 520 },
+  app_settings: { x: 2480, y: 560 },
 };
 
 export function getErflowAdminStatus(): ErflowAdminStatus {

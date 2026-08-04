@@ -1,10 +1,11 @@
-import { createCipheriv, createDecipheriv, createHash, generateKeyPairSync, randomBytes, randomUUID, scryptSync } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, generateKeyPairSync, randomBytes, randomUUID, scryptSync, sign as cryptoSign, verify as cryptoVerify } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
-import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminTag, AdminUser, AppUser, Attachment, AuditEvent, BlockType, DatabaseSchemaOverview, Notebook, PageComment, PageCommentThread, PageEntry, PageStatus, Project, ShareMember, UserRole, UserSigningKey, Workspace } from "./types";
+import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminTag, AdminUser, AppUser, Attachment, AuditEvent, BlockType, DatabaseSchemaOverview, Notebook, PageComment, PageCommentThread, PageEntry, PageSignature, PageStatus, Project, ShareMember, UserRole, UserSigningKey, Workspace } from "./types";
 import { readDatabaseSchema } from "./databaseSchema";
 import { bodyToEditorDocument, bodyToEditorText, commentThreadIdsFromBody, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody, removeCommentMarksFromBody, removeUnknownCommentMarksFromBody } from "./editor";
+import { stableJsonStringify, type PageRecordManifest } from "./pageRecordPackage";
 import { uploadDir } from "./paths";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
 import { execSql, queryOne, querySql, sql } from "./sqlite";
@@ -120,6 +121,33 @@ export function ensureDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS page_signatures (
+      id TEXT PRIMARY KEY,
+      page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      notebook_id TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
+      signer_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      signer_email TEXT NOT NULL,
+      signer_first_name TEXT NOT NULL DEFAULT '',
+      signer_last_name TEXT NOT NULL DEFAULT '',
+      signing_key_id TEXT NOT NULL REFERENCES user_signing_keys(id) ON DELETE RESTRICT,
+      signing_key_algorithm TEXT NOT NULL,
+      signing_public_key TEXT NOT NULL,
+      signing_public_key_fingerprint TEXT NOT NULL,
+      record_hash_algorithm TEXT NOT NULL,
+      record_hash TEXT NOT NULL,
+      signature_algorithm TEXT NOT NULL,
+      signature_payload TEXT NOT NULL,
+      signature TEXT NOT NULL,
+      record_manifest_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS page_signatures_page_idx ON page_signatures(page_id, created_at);
+    CREATE INDEX IF NOT EXISTS page_signatures_notebook_idx ON page_signatures(notebook_id, created_at);
+    CREATE INDEX IF NOT EXISTS page_signatures_signer_idx ON page_signatures(signer_user_id, created_at);
+    CREATE INDEX IF NOT EXISTS page_signatures_key_idx ON page_signatures(signing_key_id, created_at);
+    CREATE INDEX IF NOT EXISTS page_signatures_record_hash_idx ON page_signatures(record_hash);
 
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY DEFAULT (${tagIdSql()}),
@@ -1086,6 +1114,162 @@ export function getActiveUserSigningPrivateKeyForSigning(userId: string, passphr
   const key = readActiveUserSigningKeySecret(userId);
   if (!key?.encryptedPrivateKey) throw new Error("No active signing key.");
   return decryptSigningPrivateKey(key, passphrase);
+}
+
+
+export function listPageRecordSignatures(userId: string, pageId: string): PageSignature[] {
+  ensureDatabase();
+  assertPageReadAccess(userId, pageId);
+  return querySql(`
+    SELECT
+      id,
+      page_id,
+      notebook_id,
+      COALESCE(signer_user_id, '') AS signer_user_id,
+      signer_email,
+      signer_first_name,
+      signer_last_name,
+      signing_key_id,
+      signing_key_algorithm,
+      signing_public_key,
+      signing_public_key_fingerprint,
+      record_hash_algorithm,
+      record_hash,
+      signature_algorithm,
+      signature_payload,
+      signature,
+      record_manifest_json,
+      created_at
+    FROM page_signatures
+    WHERE page_id = ${sql(pageId)}
+    ORDER BY datetime(created_at) DESC, id DESC
+  `).map(toPageSignature);
+}
+
+export function createPageRecordSignature(
+  userId: string,
+  input: {
+    pageId: string;
+    recordHash: string;
+    recordManifest: PageRecordManifest;
+    signingPassphrase: string;
+  },
+): PageSignature {
+  ensureDatabase();
+  assertPageManageAccess(userId, input.pageId);
+
+  const signer = findUserById(userId);
+  if (!signer) throw new Error("User not found.");
+
+  const signingKey = readActiveUserSigningKeySecret(userId);
+  if (!signingKey?.encryptedPrivateKey) throw new Error("No active signing key.");
+
+  const page = queryOne(`
+    SELECT id, notebook_id, title, updated_at
+    FROM pages
+    WHERE id = ${sql(input.pageId)}
+    LIMIT 1
+  `);
+  if (!page) throw new Error("Page not found");
+
+  if (input.recordManifest.recordHash !== input.recordHash) throw new Error("Record manifest hash mismatch.");
+  if (input.recordManifest.page.id !== input.pageId || input.recordManifest.page.notebookId !== page.notebook_id) {
+    throw new Error("Record manifest does not match the page.");
+  }
+
+  const createdAt = new Date().toISOString();
+  const recordManifestJson = canonicalSigningJson(input.recordManifest);
+  const signaturePayload = canonicalSigningJson({
+    schemaVersion: 1,
+    payloadType: "novo.page.record.signature",
+    signatureMeaning: "The signer attests to this Novo page record package hash.",
+    signedAt: createdAt,
+    page: {
+      id: page.id,
+      notebookId: page.notebook_id,
+      title: page.title,
+      updatedAt: page.updated_at,
+    },
+    signer: {
+      userId: signer.id,
+      email: signer.email,
+      firstName: signer.firstName,
+      lastName: signer.lastName,
+    },
+    signingKey: {
+      id: signingKey.id,
+      algorithm: signingKey.algorithm,
+      publicKeyFingerprint: signingKey.publicKeyFingerprint,
+      publicKey: signingKey.publicKey,
+    },
+    record: {
+      packageType: input.recordManifest.packageType,
+      packageVersion: input.recordManifest.packageVersion,
+      hashAlgorithm: input.recordManifest.hashAlgorithm,
+      hash: input.recordHash,
+      manifestHashAlgorithm: "sha256",
+      manifestHash: hashAuditValue(recordManifestJson),
+    },
+  });
+
+  const privateKey = decryptSigningPrivateKey(signingKey, input.signingPassphrase);
+  const signature = cryptoSign(null, Buffer.from(signaturePayload, "utf8"), privateKey).toString("base64");
+  const verified = cryptoVerify(null, Buffer.from(signaturePayload, "utf8"), signingKey.publicKey, Buffer.from(signature, "base64"));
+  if (!verified) throw new Error("Signature verification failed.");
+
+  const signatureId = randomUUID();
+  execSql(`
+    INSERT INTO page_signatures (
+      id,
+      page_id,
+      notebook_id,
+      signer_user_id,
+      signer_email,
+      signer_first_name,
+      signer_last_name,
+      signing_key_id,
+      signing_key_algorithm,
+      signing_public_key,
+      signing_public_key_fingerprint,
+      record_hash_algorithm,
+      record_hash,
+      signature_algorithm,
+      signature_payload,
+      signature,
+      record_manifest_json,
+      created_at
+    ) VALUES (
+      ${sql(signatureId)},
+      ${sql(input.pageId)},
+      ${sql(page.notebook_id)},
+      ${sql(userId)},
+      ${sql(signer.email)},
+      ${sql(signer.firstName)},
+      ${sql(signer.lastName)},
+      ${sql(signingKey.id)},
+      ${sql(signingKey.algorithm)},
+      ${sql(signingKey.publicKey)},
+      ${sql(signingKey.publicKeyFingerprint)},
+      ${sql(input.recordManifest.hashAlgorithm)},
+      ${sql(input.recordHash)},
+      ${sql(signingKey.algorithm)},
+      ${sql(signaturePayload)},
+      ${sql(signature)},
+      ${sql(recordManifestJson)},
+      ${sql(createdAt)}
+    );
+  `);
+  recordPageAuditEvent(userId, input.pageId, "page.record.signed", "signed page record", {
+    signatureId,
+    recordHash: input.recordHash,
+    recordHashAlgorithm: input.recordManifest.hashAlgorithm,
+    signingKeyId: signingKey.id,
+    signingKeyFingerprint: signingKey.publicKeyFingerprint,
+    signatureAlgorithm: signingKey.algorithm,
+  });
+  const pageSignature = listPageRecordSignatures(userId, input.pageId).find((candidate) => candidate.id === signatureId);
+  if (!pageSignature) throw new Error("Page signature was not created.");
+  return pageSignature;
 }
 
 export function getWorkspace(userId: string): Workspace {
@@ -2643,6 +2827,9 @@ type EncryptedSigningPrivateKey = {
 
 type SigningKeySecret = EncryptedSigningPrivateKey & {
   id: string;
+  algorithm: string;
+  publicKey: string;
+  publicKeyFingerprint: string;
 };
 
 type SigningKeyMaterial = EncryptedSigningPrivateKey & {
@@ -2702,7 +2889,16 @@ function deriveSigningKeyEncryptionKey(passphrase: string, salt: Buffer) {
 
 function readActiveUserSigningKeySecret(userId: string): SigningKeySecret | null {
   const row = queryOne(`
-    SELECT id, encrypted_private_key, kdf, kdf_salt, encryption_nonce, encryption_tag
+    SELECT
+      id,
+      algorithm,
+      public_key,
+      public_key_fingerprint,
+      encrypted_private_key,
+      kdf,
+      kdf_salt,
+      encryption_nonce,
+      encryption_tag
     FROM user_signing_keys
     WHERE user_id = ${sql(userId)} AND revoked_at IS NULL
     LIMIT 1
@@ -2710,6 +2906,9 @@ function readActiveUserSigningKeySecret(userId: string): SigningKeySecret | null
   if (!row) return null;
   return {
     id: row.id,
+    algorithm: row.algorithm,
+    publicKey: row.public_key,
+    publicKeyFingerprint: row.public_key_fingerprint,
     encryptedPrivateKey: row.encrypted_private_key,
     kdf: row.kdf,
     kdfSalt: row.kdf_salt,
@@ -2747,6 +2946,11 @@ function insertSigningKeySql(userId: string, material: SigningKeyMaterial) {
   `;
 }
 
+
+function canonicalSigningJson(value: unknown) {
+  return `${stableJsonStringify(value)}\n`;
+}
+
 function updateUserPasswordSql(userId: string, nextPassword: string) {
   return `UPDATE users SET password_hash = ${sql(bcrypt.hashSync(nextPassword, 10))} WHERE id = ${sql(userId)};`;
 }
@@ -2763,6 +2967,30 @@ function toUserSigningKey(row: Record<string, string>): UserSigningKey {
     revokedAt,
     revocationReason: row.revocation_reason ?? "",
     active: !revokedAt,
+  };
+}
+
+
+function toPageSignature(row: Record<string, string>): PageSignature {
+  return {
+    id: row.id,
+    pageId: row.page_id,
+    notebookId: row.notebook_id,
+    signerUserId: row.signer_user_id,
+    signerEmail: row.signer_email,
+    signerFirstName: row.signer_first_name,
+    signerLastName: row.signer_last_name,
+    signingKeyId: row.signing_key_id,
+    signingKeyAlgorithm: row.signing_key_algorithm,
+    signingPublicKey: row.signing_public_key,
+    signingPublicKeyFingerprint: row.signing_public_key_fingerprint,
+    recordHashAlgorithm: row.record_hash_algorithm,
+    recordHash: row.record_hash,
+    signatureAlgorithm: row.signature_algorithm,
+    signaturePayload: row.signature_payload,
+    signature: row.signature,
+    recordManifestJson: row.record_manifest_json,
+    createdAt: row.created_at,
   };
 }
 

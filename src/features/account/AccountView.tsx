@@ -17,6 +17,7 @@ type AccountTab = "profile" | "notebooks" | "security" | "app" | "users" | "acti
 
 export function AccountView({ user, notebooks, onChanged }: { user: AppUser; notebooks: Notebook[]; onChanged: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<AccountTab>("profile");
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const [signingKeysOpen, setSigningKeysOpen] = useState(false);
   const tabs: Array<{ id: AccountTab; label: string; icon: LucideIcon; adminOnly?: boolean }> = [
     { id: "profile", label: "Profile", icon: UserCircle },
@@ -67,7 +68,28 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
         {activeTab === "notebooks" ? <AccountNotebooks notebooks={notebooks} /> : null}
         {activeTab === "security" ? (
           <div className="space-y-4">
-            <PasswordPanel />
+            <details
+              open={passwordOpen}
+              onToggle={(event) => setPasswordOpen(event.currentTarget.open)}
+              className="group max-w-2xl border border-slate-200 bg-white"
+            >
+              <summary className="flex cursor-pointer list-none items-start justify-between gap-3 p-5 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+                <span className="flex items-start gap-3">
+                  <span className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
+                    <KeyRound size={21} />
+                  </span>
+                  <span className="pt-1">
+                    <h2 className="text-lg font-semibold text-slate-950">Change password</h2>
+                  </span>
+                </span>
+                <ChevronDown size={16} className="mt-3 shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
+              </summary>
+              {passwordOpen ? (
+                <div className="border-t border-slate-100 p-5">
+                  <PasswordPanel embedded />
+                </div>
+              ) : null}
+            </details>
             <details
               open={signingKeysOpen}
               onToggle={(event) => setSigningKeysOpen(event.currentTarget.open)}

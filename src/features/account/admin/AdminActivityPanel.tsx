@@ -1,6 +1,6 @@
 import { History, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { AdminActivityContext, adminActivitySummary, auditActorName, auditInitials } from "@/features/activity/AuditEventDisplay";
+import { ActivityTextDiff, AdminActivityContext, adminActivitySummary, auditActorName, auditInitials } from "@/features/activity/AuditEventDisplay";
 import { formatDateTime } from "@/lib/dateTime";
 import type { AdminActivityOverview } from "@/lib/types";
 
@@ -80,6 +80,7 @@ export function AdminActivityPanel() {
                 <p className="mt-1 whitespace-normal break-words text-xs text-slate-500 [overflow-wrap:anywhere]">
                   <AdminActivityContext event={event} />
                 </p>
+                <ActivityTextDiff event={event} />
                 <p className="mt-1 text-xs font-medium text-slate-500">{formatDateTime(event.updatedAt)}</p>
               </div>
             </div>

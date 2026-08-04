@@ -93,5 +93,6 @@ export function usePageEditorController({
     runEditorMutation: session.runEditorMutation,
     canApplyEditorMutation: session.canApplyEditorMutation,
     removeAttachmentFromDraft: session.removeAttachmentFromDraft,
+    flush: session.flush,
   };
 }

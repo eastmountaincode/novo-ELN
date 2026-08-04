@@ -21,6 +21,8 @@ const signingKeyKdf = "scrypt:N=16384,r=8,p=1,dk=32";
 const signingKeyCipher = "aes-256-gcm";
 export const auditEventCoalesceSeconds = 5 * 60;
 export const pageBodyEditAuditCoalesceSeconds = auditEventCoalesceSeconds;
+const pageBodyAuditTextDiffContextLines = 2;
+const pageBodyAuditExactDiffMaxCells = 250_000;
 
 function validatePassword(password: string) {
   if (password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
@@ -1360,6 +1362,33 @@ export function getPageActivityEvents(userId: string, pageId: string, options: {
   };
 }
 
+export function listPageRecordAuditEvents(userId: string, pageId: string): AuditEvent[] {
+  ensureDatabase();
+  assertPageReadAccess(userId, pageId);
+  return querySql(`
+    SELECT
+      ae.id,
+      ae.entity_type,
+      ae.entity_id,
+      COALESCE(ae.page_id, '') AS page_id,
+      COALESCE(ae.notebook_id, '') AS notebook_id,
+      COALESCE(ae.actor_user_id, '') AS actor_user_id,
+      COALESCE(u.first_name, '') AS actor_first_name,
+      COALESCE(u.last_name, '') AS actor_last_name,
+      COALESCE(u.email, '') AS actor_email,
+      ae.action,
+      ae.summary,
+      ae.metadata_json,
+      ae.event_count,
+      ae.created_at,
+      ae.updated_at
+    FROM audit_events ae
+    LEFT JOIN users u ON u.id = ae.actor_user_id
+    WHERE ae.page_id = ${sql(pageId)}
+    ORDER BY ae.created_at ASC, ae.updated_at ASC, ae.rowid ASC
+  `).map(toAuditEvent);
+}
+
 export function getPageCommentThreads(userId: string, pageId: string): PageCommentThread[] {
   ensureDatabase();
   assertPageReadAccess(userId, pageId);
@@ -1853,12 +1882,7 @@ export function updatePage(userId: string, pageId: string, patch: { title?: stri
         actorUserId: userId,
         action: "page.body.updated",
         summary: "edited page body",
-        metadata: {
-          oldHash: hashAuditValue(previousNormalizedBody),
-          newHash: hashAuditValue(nextNormalizedBody),
-          oldLength: previousNormalizedBody.length,
-          newLength: nextNormalizedBody.length,
-        },
+        metadata: pageBodyUpdateAuditMetadata(previousNormalizedBody, nextNormalizedBody),
         coalesce: true,
       });
     }
@@ -2926,6 +2950,14 @@ function coalescedAuditMetadata(previousMetadata: Record<string, unknown>, nextM
   for (const [key, value] of Object.entries(previousMetadata)) {
     if (key.startsWith("old") && Object.prototype.hasOwnProperty.call(nextMetadata, key)) merged[key] = value;
   }
+  const coalescedTextDiff = coalescedPageBodyTextDiff(previousMetadata, nextMetadata);
+  if (coalescedTextDiff) {
+    merged.textDiff = coalescedTextDiff;
+    merged.oldTextHash = coalescedTextDiff.oldTextHash;
+    merged.newTextHash = coalescedTextDiff.newTextHash;
+    merged.oldTextLength = coalescedTextDiff.oldTextLength;
+    merged.newTextLength = coalescedTextDiff.newTextLength;
+  }
   return merged;
 }
 
@@ -3039,6 +3071,179 @@ function quoteAuditValue(value: string) {
 
 function hashAuditValue(value: string) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+type PageBodyTextDiffLine = {
+  type: "context" | "added" | "removed" | "omitted";
+  text: string;
+  count?: number;
+};
+
+type PageBodyTextDiff = {
+  format: "novo-plain-text-diff-v1";
+  oldText: string;
+  newText: string;
+  oldTextHash: string;
+  newTextHash: string;
+  oldTextLength: number;
+  newTextLength: number;
+  oldLineCount: number;
+  newLineCount: number;
+  truncated: boolean;
+  lines: PageBodyTextDiffLine[];
+  omittedLineCount?: number;
+  reason?: string;
+};
+
+function pageBodyUpdateAuditMetadata(previousBody: string, nextBody: string) {
+  const oldText = normalizeAuditText(bodyToEditorText(previousBody));
+  const newText = normalizeAuditText(bodyToEditorText(nextBody));
+  const textDiff = buildPageBodyTextDiff(oldText, newText);
+  return {
+    oldHash: hashAuditValue(previousBody),
+    newHash: hashAuditValue(nextBody),
+    oldLength: previousBody.length,
+    newLength: nextBody.length,
+    oldTextHash: textDiff.oldTextHash,
+    newTextHash: textDiff.newTextHash,
+    oldTextLength: textDiff.oldTextLength,
+    newTextLength: textDiff.newTextLength,
+    textDiff,
+  };
+}
+
+function coalescedPageBodyTextDiff(previousMetadata: Record<string, unknown>, nextMetadata: Record<string, unknown>) {
+  const previousTextDiff = readPageBodyTextDiff(previousMetadata.textDiff);
+  const nextTextDiff = readPageBodyTextDiff(nextMetadata.textDiff);
+  if (!previousTextDiff || !nextTextDiff) return null;
+  if (previousTextDiff.truncated || nextTextDiff.truncated) return null;
+  return buildPageBodyTextDiff(previousTextDiff.oldText, nextTextDiff.newText);
+}
+
+function readPageBodyTextDiff(value: unknown): PageBodyTextDiff | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<PageBodyTextDiff>;
+  if (candidate.format !== "novo-plain-text-diff-v1") return null;
+  if (typeof candidate.oldText !== "string" || typeof candidate.newText !== "string") return null;
+  return candidate as PageBodyTextDiff;
+}
+
+function normalizeAuditText(value: string) {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function buildPageBodyTextDiff(oldText: string, newText: string): PageBodyTextDiff {
+  const oldTextHash = hashAuditValue(oldText);
+  const newTextHash = hashAuditValue(newText);
+  const oldLines = splitAuditDiffLines(oldText);
+  const newLines = splitAuditDiffLines(newText);
+  const base = {
+    format: "novo-plain-text-diff-v1" as const,
+    oldText,
+    newText,
+    oldTextHash,
+    newTextHash,
+    oldTextLength: oldText.length,
+    newTextLength: newText.length,
+    oldLineCount: oldLines.length,
+    newLineCount: newLines.length,
+  };
+  const fullLines = diffAuditLines(oldLines, newLines);
+  const compactedLines = compactAuditDiffLines(fullLines);
+  return {
+    ...base,
+    truncated: false,
+    lines: compactedLines,
+  };
+}
+
+function splitAuditDiffLines(value: string) {
+  if (!value) return [];
+  return value.endsWith("\n") ? value.slice(0, -1).split("\n") : value.split("\n");
+}
+
+function diffAuditLines(oldLines: string[], newLines: string[]): PageBodyTextDiffLine[] {
+  if (oldLines.length * newLines.length > pageBodyAuditExactDiffMaxCells) {
+    return diffAuditLinesByCommonEdges(oldLines, newLines);
+  }
+
+  const rows = oldLines.length + 1;
+  const columns = newLines.length + 1;
+  const table = Array.from({ length: rows }, () => Array<number>(columns).fill(0));
+  for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex -= 1) {
+      table[oldIndex][newIndex] = oldLines[oldIndex] === newLines[newIndex]
+        ? table[oldIndex + 1][newIndex + 1] + 1
+        : Math.max(table[oldIndex + 1][newIndex], table[oldIndex][newIndex + 1]);
+    }
+  }
+
+  const lines: PageBodyTextDiffLine[] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+  while (oldIndex < oldLines.length || newIndex < newLines.length) {
+    if (oldIndex < oldLines.length && newIndex < newLines.length && oldLines[oldIndex] === newLines[newIndex]) {
+      lines.push({ type: "context", text: oldLines[oldIndex] });
+      oldIndex += 1;
+      newIndex += 1;
+    } else if (newIndex < newLines.length && (oldIndex >= oldLines.length || table[oldIndex][newIndex + 1] > table[oldIndex + 1][newIndex])) {
+      lines.push({ type: "added", text: newLines[newIndex] });
+      newIndex += 1;
+    } else if (oldIndex < oldLines.length) {
+      lines.push({ type: "removed", text: oldLines[oldIndex] });
+      oldIndex += 1;
+    }
+  }
+  return lines;
+}
+
+function diffAuditLinesByCommonEdges(oldLines: string[], newLines: string[]): PageBodyTextDiffLine[] {
+  let start = 0;
+  while (start < oldLines.length && start < newLines.length && oldLines[start] === newLines[start]) {
+    start += 1;
+  }
+
+  let oldEnd = oldLines.length;
+  let newEnd = newLines.length;
+  while (oldEnd > start && newEnd > start && oldLines[oldEnd - 1] === newLines[newEnd - 1]) {
+    oldEnd -= 1;
+    newEnd -= 1;
+  }
+
+  return [
+    ...oldLines.slice(0, start).map((text) => ({ type: "context" as const, text })),
+    ...oldLines.slice(start, oldEnd).map((text) => ({ type: "removed" as const, text })),
+    ...newLines.slice(start, newEnd).map((text) => ({ type: "added" as const, text })),
+    ...oldLines.slice(oldEnd).map((text) => ({ type: "context" as const, text })),
+  ];
+}
+
+function compactAuditDiffLines(lines: PageBodyTextDiffLine[]) {
+  const changedIndexes = lines
+    .map((line, index) => line.type === "context" ? -1 : index)
+    .filter((index) => index >= 0);
+  if (!changedIndexes.length) return lines;
+
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const index of changedIndexes) {
+    const start = Math.max(0, index - pageBodyAuditTextDiffContextLines);
+    const end = Math.min(lines.length, index + pageBodyAuditTextDiffContextLines + 1);
+    const previous = ranges.at(-1);
+    if (previous && start <= previous.end) previous.end = Math.max(previous.end, end);
+    else ranges.push({ start, end });
+  }
+
+  const compacted: PageBodyTextDiffLine[] = [];
+  let previousEnd = 0;
+  for (const range of ranges) {
+    const omittedCount = range.start - previousEnd;
+    if (omittedCount > 0) compacted.push({ type: "omitted", text: `${omittedCount} unchanged ${omittedCount === 1 ? "line" : "lines"}`, count: omittedCount });
+    compacted.push(...lines.slice(range.start, range.end));
+    previousEnd = range.end;
+  }
+  const trailingOmittedCount = lines.length - previousEnd;
+  if (trailingOmittedCount > 0) compacted.push({ type: "omitted", text: `${trailingOmittedCount} unchanged ${trailingOmittedCount === 1 ? "line" : "lines"}`, count: trailingOmittedCount });
+  return compacted;
 }
 
 function tagAuditSummary(oldTags: string[], newTags: string[]) {

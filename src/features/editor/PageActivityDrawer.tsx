@@ -1,5 +1,5 @@
 import { Loader2, RefreshCw, X } from "lucide-react";
-import { auditActorName, auditInitials } from "@/features/activity/AuditEventDisplay";
+import { ActivityTextDiff, auditActorName, auditInitials } from "@/features/activity/AuditEventDisplay";
 import { formatDateTime } from "@/lib/dateTime";
 import type { AuditEvent } from "@/lib/types";
 
@@ -53,6 +53,7 @@ export function PageActivityDrawer({
                   <span className="font-semibold text-slate-950">{auditActorName(event)}</span>{" "}
                   {event.summary}
                 </p>
+                <ActivityTextDiff event={event} />
                 <p className="mt-1 text-xs font-medium text-slate-500">{formatDateTime(event.updatedAt)}</p>
               </div>
             </div>

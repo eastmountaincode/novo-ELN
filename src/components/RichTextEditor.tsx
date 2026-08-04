@@ -92,6 +92,7 @@ type RichTextEditorProps = {
   onPrint?: (selection?: { content: JSONContent[] }) => void;
   onExportPdf?: () => void;
   onExportArchive?: () => void;
+  onExportRecordPackage?: () => void;
   exporting?: boolean;
   onCreateComment?: (input: { selectedText: string; body: string }) => Promise<PageCommentThread | null>;
   onDiscardComment?: (threadId: string) => Promise<void>;
@@ -213,7 +214,7 @@ export function attachmentToInlineAttrs(attachment: Attachment): InlineAttachmen
   };
 }
 
-export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, onPrint, onExportPdf, onExportArchive, exporting = false, onCreateComment, onDiscardComment, runEditorMutation, editorBusy = false, onSelectCommentThread, commentThreadToRemove = "", onCommentThreadRemoved, readOnly = false }: RichTextEditorProps) {
+export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFile, onInlineAttachmentInserted, openSpreadsheet, openPresentation, onPrint, onExportPdf, onExportArchive, onExportRecordPackage, exporting = false, onCreateComment, onDiscardComment, runEditorMutation, editorBusy = false, onSelectCommentThread, commentThreadToRemove = "", onCommentThreadRemoved, readOnly = false }: RichTextEditorProps) {
   const lastPageId = useRef(pageId);
   const dirty = useRef(false);
   const initialCanonicalBody = useRef<string | null>(null);
@@ -580,7 +581,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     <div
       className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border border-slate-300 bg-white"
     >
-      {!readOnly || onPrint || onExportPdf || onExportArchive ? <div role="group" aria-label="Text editor controls" className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
+      {!readOnly || onPrint || onExportPdf || onExportArchive || onExportRecordPackage ? <div role="group" aria-label="Text editor controls" className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
         {!editorInteractionBlocked ? (
           <>
             <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
@@ -666,11 +667,11 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
             <ToolbarButton disabled={!canRedo} onClick={() => editor.chain().focus().redo().run()} label="Redo"><Redo2 size={15} /></ToolbarButton>
           </>
         ) : null}
-        {onPrint || onExportPdf || onExportArchive ? (
+        {onPrint || onExportPdf || onExportArchive || onExportRecordPackage ? (
           <>
             {!readOnly ? <ToolbarDivider /> : null}
             {onPrint ? <ToolbarButton onClick={() => onPrint(getPrintSelection(editor))} label="Print page"><Printer size={15} /></ToolbarButton> : null}
-            {onExportPdf || onExportArchive ? <ExportMenu onExportPdf={onExportPdf} onExportArchive={onExportArchive} exporting={exporting} /> : null}
+            {onExportPdf || onExportArchive || onExportRecordPackage ? <ExportMenu onExportPdf={onExportPdf} onExportArchive={onExportArchive} onExportRecordPackage={onExportRecordPackage} exporting={exporting} /> : null}
           </>
         ) : null}
       </div> : null}
@@ -1766,10 +1767,11 @@ function ToolbarMenu({
   );
 }
 
-function ExportMenu({ onExportPdf, onExportArchive, exporting }: { onExportPdf?: () => void; onExportArchive?: () => void; exporting?: boolean }) {
+function ExportMenu({ onExportPdf, onExportArchive, onExportRecordPackage, exporting }: { onExportPdf?: () => void; onExportArchive?: () => void; onExportRecordPackage?: () => void; exporting?: boolean }) {
   const items: ToolbarMenuItem[] = [];
   if (onExportPdf) items.push({ label: "PDF", icon: <FileText size={14} />, onSelect: onExportPdf, disabled: exporting });
   if (onExportArchive) items.push({ label: "ZIP archive", icon: <FileArchive size={14} />, onSelect: onExportArchive, disabled: exporting });
+  if (onExportRecordPackage) items.push({ label: "Record package", icon: <FileArchive size={14} />, onSelect: onExportRecordPackage, disabled: exporting, separatorBefore: items.length > 0 });
   return (
     <ToolbarMenu
       label={exporting ? "Exporting" : "Export"}

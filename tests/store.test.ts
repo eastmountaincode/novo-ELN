@@ -275,6 +275,16 @@ describe("store", () => {
     let bodyEvents = events.filter((event) => event.action === "page.body.updated");
     expect(bodyEvents).toHaveLength(1);
     expect(bodyEvents[0].eventCount).toBe(2);
+    const textDiff = bodyEvents[0].metadata.textDiff as { oldText: string; newText: string; lines: Array<{ type: string; text: string }> };
+    expect(bodyEvents[0].metadata.oldTextLength).toBe(textDiff.oldText.length);
+    expect(bodyEvents[0].metadata.newTextLength).toBe(textDiff.newText.length);
+    expect(bodyEvents[0].metadata.textDiff).toMatchObject({
+      format: "novo-plain-text-diff-v1",
+      newText: "second body edit\n",
+      truncated: false,
+    });
+    expect(textDiff.oldText).not.toBe("first body edit\n");
+    expect(textDiff.lines).toContainEqual({ type: "added", text: "second body edit" });
 
     execSql(`UPDATE audit_events SET updated_at = datetime('now', '-6 minutes') WHERE id = '${bodyEvents[0].id}';`);
     updatePage(user.id, pageId, { body: "third body edit after the audit window" });
@@ -289,6 +299,34 @@ describe("store", () => {
     expect(firstPage.hasMore).toBe(true);
     expect(secondPage.events.length).toBeGreaterThan(0);
     expect(new Set([...firstPage.events, ...secondPage.events].map((event) => event.id)).size).toBe(firstPage.events.length + secondPage.events.length);
+  });
+
+  it("stores readable text diffs for long page body edits", async () => {
+    const { execSql, sql } = await import("../src/lib/sqlite");
+    const { createPage, getPageActivityEvents, getWorkspace, updatePage } = await import("../src/lib/store");
+    const user = await createTestAdmin();
+    const notebookId = getWorkspace(user.id).notebooks[0].id;
+    const pageId = createPage(user.id, notebookId);
+    const baselineLines = Array.from({ length: 900 }, (_, index) => (
+      `Baseline line ${String(index + 1).padStart(3, "0")}: this intentionally long audit body should keep readable diff data.`
+    ));
+    const changedLines = baselineLines.map((line, index) => (
+      index >= 450 && index < 520
+        ? `Updated line ${String(index + 1).padStart(3, "0")}: this long audit edit should remain readable in activity.`
+        : line
+    ));
+
+    updatePage(user.id, pageId, { body: baselineLines.join("\n") });
+    execSql(`UPDATE audit_events SET updated_at = datetime('now', '-6 minutes') WHERE page_id = ${sql(pageId)} AND action = 'page.body.updated';`);
+    updatePage(user.id, pageId, { body: changedLines.join("\n") });
+
+    const bodyEvent = getPageActivityEvents(user.id, pageId).events.find((event) => event.action === "page.body.updated");
+    const textDiff = bodyEvent?.metadata.textDiff as { oldText: string; newText: string; truncated: boolean; lines: Array<{ type: string; text: string }> } | undefined;
+    expect(textDiff?.truncated).toBe(false);
+    expect(textDiff?.oldText.length).toBeGreaterThan(20_000);
+    expect(textDiff?.oldText.split("\n").length).toBeGreaterThan(400);
+    expect(textDiff?.lines).toContainEqual({ type: "removed", text: baselineLines[450] });
+    expect(textDiff?.lines).toContainEqual({ type: "added", text: changedLines[450] });
   });
 
   it("registers a member with a private starter workspace", async () => {

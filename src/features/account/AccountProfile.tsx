@@ -111,14 +111,6 @@ export function AccountProfile({ user, onChanged }: { user: AppUser; onChanged: 
               <dt className="text-slate-500">Last name</dt>
               <dd className="text-slate-950">{user.lastName || "Not set"}</dd>
             </div>
-            <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
-              <dt className="text-slate-500">Role</dt>
-              <dd className="capitalize text-slate-950">{user.role}</dd>
-            </div>
-            <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 border-t border-slate-100 pt-3">
-              <dt className="text-slate-500">User ID</dt>
-              <dd className="truncate font-mono text-xs text-slate-600">{user.id}</dd>
-            </div>
           </dl>
         )}
       </div>

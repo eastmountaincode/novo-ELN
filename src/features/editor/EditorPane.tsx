@@ -577,6 +577,12 @@ function PageSignatureModal({
           <div className="space-y-3 border border-cyan-500/30 bg-cyan-500/10 p-3 text-sm text-cyan-50">
             <div className="flex items-center gap-2 font-medium"><FileSignature size={15} />Signed</div>
             <dl className="space-y-2 text-xs text-cyan-100/90">
+              {signature.proofHash ? (
+                <div>
+                  <dt className="text-cyan-200/70">Proof hash</dt>
+                  <dd className="mt-1 break-all font-mono">{signature.proofHash}</dd>
+                </div>
+              ) : null}
               <div>
                 <dt className="text-cyan-200/70">Record hash</dt>
                 <dd className="mt-1 break-all font-mono">{signature.recordHash}</dd>

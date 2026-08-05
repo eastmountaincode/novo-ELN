@@ -140,6 +140,9 @@ export function ensureDatabase() {
       signature_payload TEXT NOT NULL,
       signature TEXT NOT NULL,
       record_manifest_json TEXT NOT NULL,
+      proof_hash_algorithm TEXT NOT NULL DEFAULT '',
+      proof_hash TEXT NOT NULL DEFAULT '',
+      proof_package_json TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -252,6 +255,7 @@ export function ensureDatabase() {
   ensureNotebookColumns();
   ensurePageLockColumns();
   ensurePagePreviewColumn();
+  ensurePageSignatureProofColumns();
   migrateAttachmentPreviewTextColumn();
   ensureAttachmentEvernoteHashColumn();
   ensureSearchPagesFtsSchema();
@@ -542,6 +546,15 @@ function ensurePagePreviewColumn() {
   const rows = querySql("SELECT id, body FROM pages WHERE preview_text = '' AND body <> ''");
   if (!rows.length) return;
   execSql(rows.map((row) => `UPDATE pages SET preview_text = ${sql(bodyToEditorText(row.body).slice(0, 500))} WHERE id = ${sql(row.id)};`).join("\n"));
+}
+
+function ensurePageSignatureProofColumns() {
+  const columns = querySql("PRAGMA table_info(page_signatures);");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("proof_hash_algorithm")) execSql("ALTER TABLE page_signatures ADD COLUMN proof_hash_algorithm TEXT NOT NULL DEFAULT '';");
+  if (!names.has("proof_hash")) execSql("ALTER TABLE page_signatures ADD COLUMN proof_hash TEXT NOT NULL DEFAULT '';");
+  if (!names.has("proof_package_json")) execSql("ALTER TABLE page_signatures ADD COLUMN proof_package_json TEXT NOT NULL DEFAULT '';");
+  execSql("CREATE INDEX IF NOT EXISTS page_signatures_proof_hash_idx ON page_signatures(proof_hash);");
 }
 
 function migrateAttachmentPreviewTextColumn() {
@@ -1139,6 +1152,9 @@ export function listPageRecordSignatures(userId: string, pageId: string): PageSi
       signature_payload,
       signature,
       record_manifest_json,
+      proof_hash_algorithm,
+      proof_hash,
+      proof_package_json,
       created_at
     FROM page_signatures
     WHERE page_id = ${sql(pageId)}
@@ -1218,6 +1234,24 @@ export function createPageRecordSignature(
   if (!verified) throw new Error("Signature verification failed.");
 
   const signatureId = randomUUID();
+  const proofPackage = buildPageProofPackage({
+    createdAt,
+    page: {
+      id: page.id,
+      notebookId: page.notebook_id,
+      title: page.title,
+      updatedAt: page.updated_at,
+    },
+    signer,
+    signingKey,
+    recordManifest: input.recordManifest,
+    recordManifestJson,
+    recordHash: input.recordHash,
+    signatureId,
+    signaturePayload,
+    signature,
+  });
+
   execSql(`
     INSERT INTO page_signatures (
       id,
@@ -1237,6 +1271,9 @@ export function createPageRecordSignature(
       signature_payload,
       signature,
       record_manifest_json,
+      proof_hash_algorithm,
+      proof_hash,
+      proof_package_json,
       created_at
     ) VALUES (
       ${sql(signatureId)},
@@ -1256,6 +1293,9 @@ export function createPageRecordSignature(
       ${sql(signaturePayload)},
       ${sql(signature)},
       ${sql(recordManifestJson)},
+      ${sql(proofPackage.proofHashAlgorithm)},
+      ${sql(proofPackage.proofHash)},
+      ${sql(proofPackage.proofPackageJson)},
       ${sql(createdAt)}
     );
   `);
@@ -1263,6 +1303,8 @@ export function createPageRecordSignature(
     signatureId,
     recordHash: input.recordHash,
     recordHashAlgorithm: input.recordManifest.hashAlgorithm,
+    proofHash: proofPackage.proofHash,
+    proofHashAlgorithm: proofPackage.proofHashAlgorithm,
     signingKeyId: signingKey.id,
     signingKeyFingerprint: signingKey.publicKeyFingerprint,
     signatureAlgorithm: signingKey.algorithm,
@@ -2947,6 +2989,69 @@ function insertSigningKeySql(userId: string, material: SigningKeyMaterial) {
 }
 
 
+function buildPageProofPackage(input: {
+  createdAt: string;
+  page: { id: string; notebookId: string; title: string; updatedAt: string };
+  signer: AppUser;
+  signingKey: Pick<SigningKeySecret, "id" | "algorithm" | "publicKey" | "publicKeyFingerprint">;
+  recordManifest: PageRecordManifest;
+  recordManifestJson: string;
+  recordHash: string;
+  signatureId: string;
+  signaturePayload: string;
+  signature: string;
+}) {
+  const proofPackagePayload = {
+    schemaVersion: 1,
+    packageType: "novo.page.proof",
+    packageVersion: 1,
+    hashAlgorithm: "sha256",
+    proofHashMaterial: "canonical-json(proof package without proofHash)",
+    proofPurpose: "Input hash for an RFC3161 timestamp request for this signed Novo page record.",
+    createdAt: input.createdAt,
+    page: input.page,
+    signer: {
+      userId: input.signer.id,
+      email: input.signer.email,
+      firstName: input.signer.firstName,
+      lastName: input.signer.lastName,
+    },
+    signingKey: {
+      id: input.signingKey.id,
+      algorithm: input.signingKey.algorithm,
+      publicKeyFingerprint: input.signingKey.publicKeyFingerprint,
+      publicKey: input.signingKey.publicKey,
+    },
+    record: {
+      packageType: input.recordManifest.packageType,
+      packageVersion: input.recordManifest.packageVersion,
+      hashAlgorithm: input.recordManifest.hashAlgorithm,
+      hash: input.recordHash,
+      manifestMediaType: "application/json; charset=utf-8",
+      manifestHashAlgorithm: "sha256",
+      manifestHash: hashAuditValue(input.recordManifestJson),
+      manifest: input.recordManifest,
+    },
+    userSignature: {
+      id: input.signatureId,
+      algorithm: input.signingKey.algorithm,
+      signedAt: input.createdAt,
+      payloadMediaType: "application/json; charset=utf-8",
+      payloadHashAlgorithm: "sha256",
+      payloadHash: hashAuditValue(input.signaturePayload),
+      payload: input.signaturePayload,
+      signatureEncoding: "base64",
+      signature: input.signature,
+    },
+  };
+  const proofHash = hashAuditValue(canonicalSigningJson(proofPackagePayload));
+  return {
+    proofHashAlgorithm: "sha256",
+    proofHash,
+    proofPackageJson: canonicalSigningJson({ ...proofPackagePayload, proofHash }),
+  };
+}
+
 function canonicalSigningJson(value: unknown) {
   return `${stableJsonStringify(value)}\n`;
 }
@@ -2990,6 +3095,9 @@ function toPageSignature(row: Record<string, string>): PageSignature {
     signaturePayload: row.signature_payload,
     signature: row.signature,
     recordManifestJson: row.record_manifest_json,
+    proofHashAlgorithm: row.proof_hash_algorithm,
+    proofHash: row.proof_hash,
+    proofPackageJson: row.proof_package_json,
     createdAt: row.created_at,
   };
 }

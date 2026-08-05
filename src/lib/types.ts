@@ -48,6 +48,9 @@ export type PageSignature = {
   signaturePayload: string;
   signature: string;
   recordManifestJson: string;
+  proofHashAlgorithm: string;
+  proofHash: string;
+  proofPackageJson: string;
   createdAt: string;
 };
 

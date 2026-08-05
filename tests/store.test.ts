@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { verify } from "node:crypto";
+import { createHash, verify } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const testAdminEmail = "test@example.local";
@@ -541,7 +541,7 @@ describe("store", () => {
 
 
   it("creates verifiable page record signatures", async () => {
-    const { buildPageRecordPackage } = await import("../src/lib/pageRecordPackage");
+    const { buildPageRecordPackage, stableJsonStringify } = await import("../src/lib/pageRecordPackage");
     const {
       createPageRecordSignature,
       ensureUserSigningKey,
@@ -574,8 +574,22 @@ describe("store", () => {
     expect(signature.signingPublicKeyFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(JSON.parse(signature.signaturePayload).record.hash).toBe(recordPackage.recordHash);
     expect(verify(null, Buffer.from(signature.signaturePayload, "utf8"), signature.signingPublicKey, Buffer.from(signature.signature, "base64"))).toBe(true);
+    expect(signature.proofHashAlgorithm).toBe("sha256");
+    expect(signature.proofHash).toMatch(/^[a-f0-9]{64}$/);
+    const proofPackage = JSON.parse(signature.proofPackageJson);
+    expect(proofPackage.packageType).toBe("novo.page.proof");
+    expect(proofPackage.proofHash).toBe(signature.proofHash);
+    const proofHashMaterial = { ...proofPackage };
+    delete proofHashMaterial.proofHash;
+    expect(createHash("sha256").update(`${stableJsonStringify(proofHashMaterial)}\n`).digest("hex")).toBe(signature.proofHash);
+    expect(proofPackage.record.hash).toBe(recordPackage.recordHash);
+    expect(proofPackage.record.manifest.recordHash).toBe(recordPackage.recordHash);
+    expect(proofPackage.userSignature.id).toBe(signature.id);
+    expect(proofPackage.userSignature.payload).toBe(signature.signaturePayload);
+    expect(proofPackage.userSignature.signature).toBe(signature.signature);
     expect(listPageRecordSignatures(admin.id, pageId).map((candidate) => candidate.id)).toContain(signature.id);
-    expect(listPageRecordAuditEvents(admin.id, pageId).some((event) => event.action === "page.record.signed" && event.metadata.signatureId === signature.id)).toBe(true);
+    const signedEvent = listPageRecordAuditEvents(admin.id, pageId).find((event) => event.action === "page.record.signed" && event.metadata.signatureId === signature.id);
+    expect(signedEvent?.metadata.proofHash).toBe(signature.proofHash);
   });
 
   it("returns the live database schema for admins", async () => {
@@ -588,6 +602,7 @@ describe("store", () => {
     expect(schema.tables.some((table) => table.name === "user_signing_keys")).toBe(true);
     expect(schema.tables.some((table) => table.name === "page_signatures")).toBe(true);
     expect(schema.tables.find((table) => table.name === "user_signing_keys")?.columns.map((column) => column.name)).toContain("public_key_fingerprint");
+    expect(schema.tables.find((table) => table.name === "page_signatures")?.columns.map((column) => column.name)).toContain("proof_hash");
     expect(schema.relationships).toContainEqual(expect.objectContaining({
       fromTable: "user_signing_keys",
       fromColumn: "user_id",

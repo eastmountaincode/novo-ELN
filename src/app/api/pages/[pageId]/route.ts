@@ -46,7 +46,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ pageI
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not update page";
-    const status = message === "Forbidden" || message === "Only editors and owners can lock pages." ? 403 : message === "Page is locked." ? 423 : 400;
+    const status = message === "Forbidden" || message === "Only editors and owners can lock pages."
+      ? 403
+      : message === "Page is locked." || message === "Finalized pages cannot be unlocked."
+        ? 423
+        : 400;
     return NextResponse.json({ error: message }, { status });
   }
 }

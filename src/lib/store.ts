@@ -2,11 +2,12 @@ import { createCipheriv, createDecipheriv, createHash, generateKeyPairSync, rand
 import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcryptjs";
-import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminTag, AdminUser, AppUser, Attachment, AuditEvent, BlockType, DatabaseSchemaOverview, Notebook, PageComment, PageCommentThread, PageEntry, PageSignature, PageStatus, Project, ShareMember, UserRole, UserSigningKey, Workspace } from "./types";
+import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOverview, AdminTag, AdminUser, AppUser, Attachment, AuditEvent, BlockType, DatabaseSchemaOverview, Notebook, PageComment, PageCommentThread, PageEntry, PageSignature, PageSignatureTimestamp, PageStatus, Project, ShareMember, UserRole, UserSigningKey, Workspace } from "./types";
 import { readDatabaseSchema } from "./databaseSchema";
 import { bodyToEditorDocument, bodyToEditorText, commentThreadIdsFromBody, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody, removeCommentMarksFromBody, removeUnknownCommentMarksFromBody } from "./editor";
+import { buildPageFinalizationPackage } from "./pageFinalizationPackage";
 import { stableJsonStringify, type PageRecordManifest } from "./pageRecordPackage";
-import { uploadDir } from "./paths";
+import { proofDir, uploadDir } from "./paths";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
 import { execSql, queryOne, querySql, sql } from "./sqlite";
 
@@ -140,6 +141,12 @@ export function ensureDatabase() {
       signature_payload TEXT NOT NULL,
       signature TEXT NOT NULL,
       record_manifest_json TEXT NOT NULL,
+      record_package_storage_key TEXT NOT NULL DEFAULT '',
+      record_package_bytes INTEGER NOT NULL DEFAULT 0,
+      record_package_sha256 TEXT NOT NULL DEFAULT '',
+      finalization_package_storage_key TEXT NOT NULL DEFAULT '',
+      finalization_package_bytes INTEGER NOT NULL DEFAULT 0,
+      finalization_package_sha256 TEXT NOT NULL DEFAULT '',
       proof_hash_algorithm TEXT NOT NULL DEFAULT '',
       proof_hash TEXT NOT NULL DEFAULT '',
       proof_package_json TEXT NOT NULL DEFAULT '',
@@ -151,6 +158,30 @@ export function ensureDatabase() {
     CREATE INDEX IF NOT EXISTS page_signatures_signer_idx ON page_signatures(signer_user_id, created_at);
     CREATE INDEX IF NOT EXISTS page_signatures_key_idx ON page_signatures(signing_key_id, created_at);
     CREATE INDEX IF NOT EXISTS page_signatures_record_hash_idx ON page_signatures(record_hash);
+
+    CREATE TABLE IF NOT EXISTS page_signature_timestamps (
+      id TEXT PRIMARY KEY,
+      page_signature_id TEXT NOT NULL REFERENCES page_signatures(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      tsa_url TEXT NOT NULL,
+      hash_algorithm TEXT NOT NULL,
+      message_imprint TEXT NOT NULL,
+      request_der_base64 TEXT NOT NULL,
+      response_der_base64 TEXT NOT NULL,
+      status TEXT NOT NULL,
+      status_message TEXT NOT NULL DEFAULT '',
+      policy_oid TEXT NOT NULL DEFAULT '',
+      serial_number TEXT NOT NULL DEFAULT '',
+      tsa_time TEXT NOT NULL DEFAULT '',
+      tsa_subject TEXT NOT NULL DEFAULT '',
+      tsa_cert_fingerprint TEXT NOT NULL DEFAULT '',
+      verified_at TEXT,
+      error_message TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS page_signature_timestamps_signature_idx ON page_signature_timestamps(page_signature_id, created_at);
+    CREATE INDEX IF NOT EXISTS page_signature_timestamps_message_imprint_idx ON page_signature_timestamps(message_imprint);
 
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY DEFAULT (${tagIdSql()}),
@@ -256,6 +287,7 @@ export function ensureDatabase() {
   ensurePageLockColumns();
   ensurePagePreviewColumn();
   ensurePageSignatureProofColumns();
+  ensurePageSignatureTimestampTable();
   migrateAttachmentPreviewTextColumn();
   ensureAttachmentEvernoteHashColumn();
   ensureSearchPagesFtsSchema();
@@ -551,10 +583,44 @@ function ensurePagePreviewColumn() {
 function ensurePageSignatureProofColumns() {
   const columns = querySql("PRAGMA table_info(page_signatures);");
   const names = new Set(columns.map((column) => column.name));
+  if (!names.has("record_package_storage_key")) execSql("ALTER TABLE page_signatures ADD COLUMN record_package_storage_key TEXT NOT NULL DEFAULT '';");
+  if (!names.has("record_package_bytes")) execSql("ALTER TABLE page_signatures ADD COLUMN record_package_bytes INTEGER NOT NULL DEFAULT 0;");
+  if (!names.has("record_package_sha256")) execSql("ALTER TABLE page_signatures ADD COLUMN record_package_sha256 TEXT NOT NULL DEFAULT '';");
+  if (!names.has("finalization_package_storage_key")) execSql("ALTER TABLE page_signatures ADD COLUMN finalization_package_storage_key TEXT NOT NULL DEFAULT '';");
+  if (!names.has("finalization_package_bytes")) execSql("ALTER TABLE page_signatures ADD COLUMN finalization_package_bytes INTEGER NOT NULL DEFAULT 0;");
+  if (!names.has("finalization_package_sha256")) execSql("ALTER TABLE page_signatures ADD COLUMN finalization_package_sha256 TEXT NOT NULL DEFAULT '';");
   if (!names.has("proof_hash_algorithm")) execSql("ALTER TABLE page_signatures ADD COLUMN proof_hash_algorithm TEXT NOT NULL DEFAULT '';");
   if (!names.has("proof_hash")) execSql("ALTER TABLE page_signatures ADD COLUMN proof_hash TEXT NOT NULL DEFAULT '';");
   if (!names.has("proof_package_json")) execSql("ALTER TABLE page_signatures ADD COLUMN proof_package_json TEXT NOT NULL DEFAULT '';");
   execSql("CREATE INDEX IF NOT EXISTS page_signatures_proof_hash_idx ON page_signatures(proof_hash);");
+}
+
+function ensurePageSignatureTimestampTable() {
+  execSql(`
+    CREATE TABLE IF NOT EXISTS page_signature_timestamps (
+      id TEXT PRIMARY KEY,
+      page_signature_id TEXT NOT NULL REFERENCES page_signatures(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      tsa_url TEXT NOT NULL,
+      hash_algorithm TEXT NOT NULL,
+      message_imprint TEXT NOT NULL,
+      request_der_base64 TEXT NOT NULL,
+      response_der_base64 TEXT NOT NULL,
+      status TEXT NOT NULL,
+      status_message TEXT NOT NULL DEFAULT '',
+      policy_oid TEXT NOT NULL DEFAULT '',
+      serial_number TEXT NOT NULL DEFAULT '',
+      tsa_time TEXT NOT NULL DEFAULT '',
+      tsa_subject TEXT NOT NULL DEFAULT '',
+      tsa_cert_fingerprint TEXT NOT NULL DEFAULT '',
+      verified_at TEXT,
+      error_message TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS page_signature_timestamps_signature_idx ON page_signature_timestamps(page_signature_id, created_at);
+    CREATE INDEX IF NOT EXISTS page_signature_timestamps_message_imprint_idx ON page_signature_timestamps(message_imprint);
+  `);
 }
 
 function migrateAttachmentPreviewTextColumn() {
@@ -1133,7 +1199,7 @@ export function getActiveUserSigningPrivateKeyForSigning(userId: string, passphr
 export function listPageRecordSignatures(userId: string, pageId: string): PageSignature[] {
   ensureDatabase();
   assertPageReadAccess(userId, pageId);
-  return querySql(`
+  const signatures = querySql(`
     SELECT
       id,
       page_id,
@@ -1152,6 +1218,12 @@ export function listPageRecordSignatures(userId: string, pageId: string): PageSi
       signature_payload,
       signature,
       record_manifest_json,
+      record_package_storage_key,
+      record_package_bytes,
+      record_package_sha256,
+      finalization_package_storage_key,
+      finalization_package_bytes,
+      finalization_package_sha256,
       proof_hash_algorithm,
       proof_hash,
       proof_package_json,
@@ -1160,6 +1232,39 @@ export function listPageRecordSignatures(userId: string, pageId: string): PageSi
     WHERE page_id = ${sql(pageId)}
     ORDER BY datetime(created_at) DESC, id DESC
   `).map(toPageSignature);
+  if (!signatures.length) return signatures;
+  const timestamps = querySql(`
+    SELECT
+      id,
+      page_signature_id,
+      provider,
+      tsa_url,
+      hash_algorithm,
+      message_imprint,
+      request_der_base64,
+      response_der_base64,
+      status,
+      status_message,
+      policy_oid,
+      serial_number,
+      tsa_time,
+      COALESCE(tsa_subject, '') AS tsa_subject,
+      COALESCE(tsa_cert_fingerprint, '') AS tsa_cert_fingerprint,
+      COALESCE(verified_at, '') AS verified_at,
+      COALESCE(error_message, '') AS error_message,
+      created_at
+    FROM page_signature_timestamps
+    WHERE page_signature_id IN (${inList(signatures.map((candidate) => candidate.id))})
+    ORDER BY datetime(created_at) DESC, id DESC
+  `).map(toPageSignatureTimestamp);
+  const timestampsBySignature = new Map<string, PageSignatureTimestamp[]>();
+  for (const timestamp of timestamps) {
+    timestampsBySignature.set(timestamp.pageSignatureId, [...(timestampsBySignature.get(timestamp.pageSignatureId) ?? []), timestamp]);
+  }
+  return signatures.map((signature) => ({
+    ...signature,
+    timestamps: timestampsBySignature.get(signature.id) ?? [],
+  }));
 }
 
 export function createPageRecordSignature(
@@ -1168,11 +1273,13 @@ export function createPageRecordSignature(
     pageId: string;
     recordHash: string;
     recordManifest: PageRecordManifest;
+    recordArchive: Uint8Array;
     signingPassphrase: string;
   },
 ): PageSignature {
   ensureDatabase();
   assertPageManageAccess(userId, input.pageId);
+  if (pageHasRecordSignature(input.pageId)) throw new Error("Page is already finalized.");
 
   const signer = findUserById(userId);
   if (!signer) throw new Error("User not found.");
@@ -1234,84 +1341,281 @@ export function createPageRecordSignature(
   if (!verified) throw new Error("Signature verification failed.");
 
   const signatureId = randomUUID();
-  const proofPackage = buildPageProofPackage({
-    createdAt,
-    page: {
-      id: page.id,
-      notebookId: page.notebook_id,
-      title: page.title,
-      updatedAt: page.updated_at,
-    },
-    signer,
-    signingKey,
-    recordManifest: input.recordManifest,
-    recordManifestJson,
-    recordHash: input.recordHash,
-    signatureId,
-    signaturePayload,
-    signature,
-  });
+  let recordPackage: ReturnType<typeof storePageRecordArchive> | null = null;
+  try {
+    recordPackage = storePageRecordArchive(signatureId, input.recordArchive);
+    const proofPackage = buildPageProofPackage({
+      createdAt,
+      page: {
+        id: page.id,
+        notebookId: page.notebook_id,
+        title: page.title,
+        updatedAt: page.updated_at,
+      },
+      signer,
+      signingKey,
+      recordManifest: input.recordManifest,
+      recordManifestJson,
+      recordHash: input.recordHash,
+      signatureId,
+      signaturePayload,
+      signature,
+    });
+
+    execSql(`
+      INSERT INTO page_signatures (
+        id,
+        page_id,
+        notebook_id,
+        signer_user_id,
+        signer_email,
+        signer_first_name,
+        signer_last_name,
+        signing_key_id,
+        signing_key_algorithm,
+        signing_public_key,
+        signing_public_key_fingerprint,
+        record_hash_algorithm,
+        record_hash,
+        signature_algorithm,
+        signature_payload,
+        signature,
+        record_manifest_json,
+        record_package_storage_key,
+        record_package_bytes,
+        record_package_sha256,
+        proof_hash_algorithm,
+        proof_hash,
+        proof_package_json,
+        created_at
+      ) VALUES (
+        ${sql(signatureId)},
+        ${sql(input.pageId)},
+        ${sql(page.notebook_id)},
+        ${sql(userId)},
+        ${sql(signer.email)},
+        ${sql(signer.firstName)},
+        ${sql(signer.lastName)},
+        ${sql(signingKey.id)},
+        ${sql(signingKey.algorithm)},
+        ${sql(signingKey.publicKey)},
+        ${sql(signingKey.publicKeyFingerprint)},
+        ${sql(input.recordManifest.hashAlgorithm)},
+        ${sql(input.recordHash)},
+        ${sql(signingKey.algorithm)},
+        ${sql(signaturePayload)},
+        ${sql(signature)},
+        ${sql(recordManifestJson)},
+        ${sql(recordPackage.storageKey)},
+        ${sql(recordPackage.bytes)},
+        ${sql(recordPackage.sha256)},
+        ${sql(proofPackage.proofHashAlgorithm)},
+        ${sql(proofPackage.proofHash)},
+        ${sql(proofPackage.proofPackageJson)},
+        ${sql(createdAt)}
+      );
+    `);
+    recordPageAuditEvent(userId, input.pageId, "page.record.signed", "signed page record", {
+      signatureId,
+      recordHash: input.recordHash,
+      recordHashAlgorithm: input.recordManifest.hashAlgorithm,
+      proofHash: proofPackage.proofHash,
+      proofHashAlgorithm: proofPackage.proofHashAlgorithm,
+      signingKeyId: signingKey.id,
+      signingKeyFingerprint: signingKey.publicKeyFingerprint,
+      signatureAlgorithm: signingKey.algorithm,
+    });
+    const pageSignature = listPageRecordSignatures(userId, input.pageId).find((candidate) => candidate.id === signatureId);
+    if (!pageSignature) throw new Error("Page signature was not created.");
+    return pageSignature;
+  } catch (error) {
+    if (recordPackage) deleteStoredPageRecordArchive(recordPackage.storageKey);
+    throw error;
+  }
+}
+
+export function rollbackPageRecordFinalization(userId: string, pageSignatureId: string) {
+  ensureDatabase();
+  const signature = queryOne(`
+    SELECT id, page_id, record_package_storage_key, finalization_package_storage_key
+    FROM page_signatures
+    WHERE id = ${sql(pageSignatureId)}
+    LIMIT 1
+  `);
+  if (!signature) return;
+  assertPageManageAccess(userId, signature.page_id);
 
   execSql(`
-    INSERT INTO page_signatures (
+    DELETE FROM audit_events
+    WHERE page_id = ${sql(signature.page_id)}
+      AND action IN ('page.record.signed', 'page.record.timestamped')
+      AND instr(metadata_json, ${sql(pageSignatureId)}) > 0;
+
+    DELETE FROM page_signatures
+    WHERE id = ${sql(pageSignatureId)};
+  `);
+  deleteStoredPageRecordArchive(signature.record_package_storage_key);
+  deleteStoredPageRecordArchive(signature.finalization_package_storage_key);
+}
+
+export function createPageSignatureTimestamp(
+  userId: string,
+  pageSignatureId: string,
+  input: Omit<PageSignatureTimestamp, "id" | "pageSignatureId" | "createdAt">,
+): PageSignatureTimestamp {
+  ensureDatabase();
+  const signature = queryOne(`
+    SELECT id, page_id
+    FROM page_signatures
+    WHERE id = ${sql(pageSignatureId)}
+    LIMIT 1
+  `);
+  if (!signature) throw new Error("Page signature not found.");
+  assertPageManageAccess(userId, signature.page_id);
+
+  const timestampId = randomUUID();
+  execSql(`
+    INSERT INTO page_signature_timestamps (
       id,
-      page_id,
-      notebook_id,
-      signer_user_id,
-      signer_email,
-      signer_first_name,
-      signer_last_name,
-      signing_key_id,
-      signing_key_algorithm,
-      signing_public_key,
-      signing_public_key_fingerprint,
-      record_hash_algorithm,
-      record_hash,
-      signature_algorithm,
-      signature_payload,
-      signature,
-      record_manifest_json,
-      proof_hash_algorithm,
-      proof_hash,
-      proof_package_json,
-      created_at
+      page_signature_id,
+      provider,
+      tsa_url,
+      hash_algorithm,
+      message_imprint,
+      request_der_base64,
+      response_der_base64,
+      status,
+      status_message,
+      policy_oid,
+      serial_number,
+      tsa_time,
+      tsa_subject,
+      tsa_cert_fingerprint,
+      verified_at,
+      error_message
     ) VALUES (
-      ${sql(signatureId)},
-      ${sql(input.pageId)},
-      ${sql(page.notebook_id)},
-      ${sql(userId)},
-      ${sql(signer.email)},
-      ${sql(signer.firstName)},
-      ${sql(signer.lastName)},
-      ${sql(signingKey.id)},
-      ${sql(signingKey.algorithm)},
-      ${sql(signingKey.publicKey)},
-      ${sql(signingKey.publicKeyFingerprint)},
-      ${sql(input.recordManifest.hashAlgorithm)},
-      ${sql(input.recordHash)},
-      ${sql(signingKey.algorithm)},
-      ${sql(signaturePayload)},
-      ${sql(signature)},
-      ${sql(recordManifestJson)},
-      ${sql(proofPackage.proofHashAlgorithm)},
-      ${sql(proofPackage.proofHash)},
-      ${sql(proofPackage.proofPackageJson)},
-      ${sql(createdAt)}
+      ${sql(timestampId)},
+      ${sql(pageSignatureId)},
+      ${sql(input.provider)},
+      ${sql(input.tsaUrl)},
+      ${sql(input.hashAlgorithm)},
+      ${sql(input.messageImprint)},
+      ${sql(input.requestDerBase64)},
+      ${sql(input.responseDerBase64)},
+      ${sql(input.status)},
+      ${sql(input.statusMessage)},
+      ${sql(input.policyOid)},
+      ${sql(input.serialNumber)},
+      ${sql(input.tsaTime)},
+      ${sql(input.tsaSubject)},
+      ${sql(input.tsaCertFingerprint)},
+      ${input.verifiedAt ? sql(input.verifiedAt) : "NULL"},
+      ${sql(input.errorMessage)}
     );
   `);
-  recordPageAuditEvent(userId, input.pageId, "page.record.signed", "signed page record", {
-    signatureId,
-    recordHash: input.recordHash,
-    recordHashAlgorithm: input.recordManifest.hashAlgorithm,
-    proofHash: proofPackage.proofHash,
-    proofHashAlgorithm: proofPackage.proofHashAlgorithm,
-    signingKeyId: signingKey.id,
-    signingKeyFingerprint: signingKey.publicKeyFingerprint,
-    signatureAlgorithm: signingKey.algorithm,
+
+  recordPageAuditEvent(userId, signature.page_id, "page.record.timestamped", "timestamped page record proof", {
+    signatureId: pageSignatureId,
+    timestampId,
+    provider: input.provider,
+    tsaUrl: input.tsaUrl,
+    proofHash: input.messageImprint,
+    proofHashAlgorithm: input.hashAlgorithm,
+    timestampStatus: input.status,
+    tsaTime: input.tsaTime,
+    serialNumber: input.serialNumber,
+    policyOid: input.policyOid,
   });
-  const pageSignature = listPageRecordSignatures(userId, input.pageId).find((candidate) => candidate.id === signatureId);
-  if (!pageSignature) throw new Error("Page signature was not created.");
-  return pageSignature;
+
+  const timestamp = queryOne(`
+    SELECT
+      id,
+      page_signature_id,
+      provider,
+      tsa_url,
+      hash_algorithm,
+      message_imprint,
+      request_der_base64,
+      response_der_base64,
+      status,
+      status_message,
+      policy_oid,
+      serial_number,
+      tsa_time,
+      COALESCE(tsa_subject, '') AS tsa_subject,
+      COALESCE(tsa_cert_fingerprint, '') AS tsa_cert_fingerprint,
+      COALESCE(verified_at, '') AS verified_at,
+      COALESCE(error_message, '') AS error_message,
+      created_at
+    FROM page_signature_timestamps
+    WHERE id = ${sql(timestampId)}
+    LIMIT 1
+  `);
+  if (!timestamp) throw new Error("Page timestamp was not created.");
+  return toPageSignatureTimestamp(timestamp);
+}
+
+export function storePageFinalizationPackage(userId: string, pageSignatureId: string): PageSignature {
+  ensureDatabase();
+  const row = queryOne(`
+    SELECT id, page_id
+    FROM page_signatures
+    WHERE id = ${sql(pageSignatureId)}
+    LIMIT 1
+  `);
+  if (!row) throw new Error("Page signature not found.");
+  assertPageManageAccess(userId, row.page_id);
+  return storePageFinalizationPackageForSignature(userId, row.page_id, pageSignatureId);
+}
+
+function storePageFinalizationPackageForSignature(userId: string, pageId: string, pageSignatureId: string): PageSignature {
+  const signature = listPageRecordSignatures(userId, pageId).find((candidate) => candidate.id === pageSignatureId);
+  if (!signature) throw new Error("Page signature not found.");
+  if (!signature.timestamps.length) throw new Error("Page finalization timestamp is missing.");
+  const recordArchive = readStoredProofArchive(signature.recordPackageStorageKey);
+  const finalizationPackage = buildPageFinalizationPackage({ signature, recordArchive });
+  const storedPackage = storePageFinalizationArchive(signature.id, finalizationPackage.archive);
+  execSql(`
+    UPDATE page_signatures
+    SET finalization_package_storage_key = ${sql(storedPackage.storageKey)},
+        finalization_package_bytes = ${sql(storedPackage.bytes)},
+        finalization_package_sha256 = ${sql(storedPackage.sha256)}
+    WHERE id = ${sql(signature.id)};
+  `);
+  const updated = listPageRecordSignatures(userId, pageId).find((candidate) => candidate.id === pageSignatureId);
+  if (!updated) throw new Error("Page finalization package was not stored.");
+  return updated;
+}
+
+export function getPageFinalizationPackageDownload(userId: string, pageId: string, pageSignatureId: string) {
+  ensureDatabase();
+  assertPageReadAccess(userId, pageId);
+  const row = queryOne(`
+    SELECT
+      ps.id,
+      ps.finalization_package_storage_key,
+      ps.finalization_package_bytes,
+      ps.finalization_package_sha256,
+      p.title
+    FROM page_signatures ps
+    JOIN pages p ON p.id = ps.page_id
+    WHERE ps.id = ${sql(pageSignatureId)}
+      AND ps.page_id = ${sql(pageId)}
+    LIMIT 1
+  `);
+  if (!row) throw new Error("Page finalization not found.");
+  const signature = row.finalization_package_storage_key
+    ? null
+    : storePageFinalizationPackageForSignature(userId, pageId, pageSignatureId);
+  const storageKey = row.finalization_package_storage_key || signature?.finalizationPackageStorageKey || "";
+  if (!storageKey) throw new Error("Page finalization package is not available.");
+  const bytes = readStoredProofArchive(storageKey);
+  return {
+    bytes,
+    filename: `${safeProofDownloadName(row.title || "page")}.finalization.zip`,
+    size: Number(row.finalization_package_bytes || signature?.finalizationPackageBytes || bytes.byteLength),
+    sha256: row.finalization_package_sha256 || signature?.finalizationPackageSha256 || "",
+  };
 }
 
 export function getWorkspace(userId: string): Workspace {
@@ -1358,11 +1662,17 @@ export function getWorkspace(userId: string): Workspace {
           COALESCE(p.locked_by, '') AS locked_by,
           COALESCE(locker.first_name, '') AS locked_by_first_name,
           COALESCE(locker.last_name, '') AS locked_by_last_name,
+          COALESCE(ps.finalized_at, '') AS finalized_at,
           p.created_at,
           p.updated_at
         FROM pages p
         JOIN users u ON u.id = p.owner_id
         LEFT JOIN users locker ON locker.id = p.locked_by
+        LEFT JOIN (
+          SELECT page_id, MAX(created_at) AS finalized_at
+          FROM page_signatures
+          GROUP BY page_id
+        ) ps ON ps.page_id = p.id
         WHERE p.notebook_id IN (${inList(notebookIds)})
         ORDER BY datetime(p.created_at) DESC, lower(p.title) ASC
       `)
@@ -1425,6 +1735,7 @@ export function getWorkspace(userId: string): Workspace {
       lockedBy: page.locked_by,
       lockedByFirstName: page.locked_by_first_name,
       lockedByLastName: page.locked_by_last_name,
+      finalizedAt: page.finalized_at,
       createdAt: page.created_at,
       updatedAt: page.updated_at,
       tags: tagLabelRowsToList(tagsByPage[page.id] ?? []),
@@ -1476,6 +1787,7 @@ export function getPage(userId: string, pageId: string): PageEntry {
       COALESCE(p.locked_by, '') AS locked_by,
       COALESCE(locker.first_name, '') AS locked_by_first_name,
       COALESCE(locker.last_name, '') AS locked_by_last_name,
+      COALESCE((SELECT MAX(ps.created_at) FROM page_signatures ps WHERE ps.page_id = p.id), '') AS finalized_at,
       p.created_at,
       p.updated_at
     FROM pages p
@@ -1527,6 +1839,7 @@ export function getPage(userId: string, pageId: string): PageEntry {
     lockedBy: page.locked_by,
     lockedByFirstName: page.locked_by_first_name,
     lockedByLastName: page.locked_by_last_name,
+    finalizedAt: page.finalized_at,
     createdAt: page.created_at,
     updatedAt: page.updated_at,
     tags: tagLabelRowsToList(tagRows),
@@ -2125,6 +2438,7 @@ export function setPageLocked(userId: string, pageId: string, locked: boolean) {
   if (!page) throw new Error("Page not found");
   const currentlyLocked = Boolean(page.locked_at);
   if (currentlyLocked === locked) return;
+  if (!locked && pageHasRecordSignature(pageId)) throw new Error("Finalized pages cannot be unlocked.");
 
   execSql(`
     UPDATE pages
@@ -2258,11 +2572,12 @@ export function deletePage(userId: string, pageId: string) {
 
 export function duplicatePage(userId: string, pageId: string) {
   ensureDatabase();
-  assertPageEditAccess(userId, pageId);
+  assertPageReadAccess(userId, pageId);
   const page = queryOne(`SELECT notebook_id, title, body, status FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
   if (!page) throw new Error("Page not found");
 
   const notebookId = String(page.notebook_id ?? "");
+  assertNotebookEditAccess(userId, notebookId);
   const title = duplicatePageTitle(notebookId, String(page.title || "Untitled"));
   const tags = tagLabelRowsToList(querySql(`
     SELECT t.label AS tag
@@ -2770,6 +3085,10 @@ export function assertPageManageAccess(userId: string, pageId: string) {
   if (roleRank(normalizeAccessRole(row?.role)) < roleRank("editor")) throw new Error("Only editors and owners can lock pages.");
 }
 
+function pageHasRecordSignature(pageId: string) {
+  return Boolean(queryOne(`SELECT 1 AS exists_flag FROM page_signatures WHERE page_id = ${sql(pageId)} LIMIT 1`));
+}
+
 function countNotebookOwners(notebookId: string) {
   return Number(queryOne(`SELECT COUNT(*) AS count FROM notebook_members WHERE notebook_id = ${sql(notebookId)} AND role = 'owner'`)?.count ?? 0);
 }
@@ -3052,6 +3371,59 @@ function buildPageProofPackage(input: {
   };
 }
 
+function storePageRecordArchive(signatureId: string, archive: Uint8Array) {
+  const storageKey = `page-signatures/${signatureId}/record.zip`;
+  return storeProofArchive(storageKey, archive);
+}
+
+function storePageFinalizationArchive(signatureId: string, archive: Uint8Array) {
+  const storageKey = `page-signatures/${signatureId}/finalization.zip`;
+  return storeProofArchive(storageKey, archive);
+}
+
+function storeProofArchive(storageKey: string, archive: Uint8Array) {
+  const archivePath = proofArchivePath(storageKey);
+  const bytes = Buffer.from(archive);
+  fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+  fs.writeFileSync(archivePath, bytes);
+  return {
+    storageKey,
+    bytes: bytes.byteLength,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
+function readStoredProofArchive(storageKey: string) {
+  return fs.readFileSync(proofArchivePath(storageKey));
+}
+
+function deleteStoredPageRecordArchive(storageKey: string) {
+  if (!storageKey) return;
+  const archivePath = proofArchivePath(storageKey);
+  fs.rmSync(archivePath, { force: true });
+  removeEmptyDirectory(path.dirname(archivePath));
+  removeEmptyDirectory(path.dirname(path.dirname(archivePath)));
+}
+
+function proofArchivePath(storageKey: string) {
+  const root = path.resolve(proofDir);
+  const archivePath = path.resolve(root, storageKey);
+  if (archivePath.startsWith(`${root}${path.sep}`)) return archivePath;
+  throw new Error("Invalid proof storage key.");
+}
+
+function removeEmptyDirectory(directoryPath: string) {
+  try {
+    fs.rmdirSync(directoryPath);
+  } catch {
+    // Keep non-empty or already-removed proof directories.
+  }
+}
+
+function safeProofDownloadName(value: string) {
+  return value.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 90) || "page";
+}
+
 function canonicalSigningJson(value: unknown) {
   return `${stableJsonStringify(value)}\n`;
 }
@@ -3095,9 +3467,39 @@ function toPageSignature(row: Record<string, string>): PageSignature {
     signaturePayload: row.signature_payload,
     signature: row.signature,
     recordManifestJson: row.record_manifest_json,
+    recordPackageStorageKey: row.record_package_storage_key,
+    recordPackageBytes: Number(row.record_package_bytes || 0),
+    recordPackageSha256: row.record_package_sha256,
+    finalizationPackageStorageKey: row.finalization_package_storage_key,
+    finalizationPackageBytes: Number(row.finalization_package_bytes || 0),
+    finalizationPackageSha256: row.finalization_package_sha256,
     proofHashAlgorithm: row.proof_hash_algorithm,
     proofHash: row.proof_hash,
     proofPackageJson: row.proof_package_json,
+    timestamps: [],
+    createdAt: row.created_at,
+  };
+}
+
+function toPageSignatureTimestamp(row: Record<string, string>): PageSignatureTimestamp {
+  return {
+    id: row.id,
+    pageSignatureId: row.page_signature_id,
+    provider: row.provider,
+    tsaUrl: row.tsa_url,
+    hashAlgorithm: row.hash_algorithm,
+    messageImprint: row.message_imprint,
+    requestDerBase64: row.request_der_base64,
+    responseDerBase64: row.response_der_base64,
+    status: row.status,
+    statusMessage: row.status_message,
+    policyOid: row.policy_oid,
+    serialNumber: row.serial_number,
+    tsaTime: row.tsa_time,
+    tsaSubject: row.tsa_subject,
+    tsaCertFingerprint: row.tsa_cert_fingerprint,
+    verifiedAt: row.verified_at,
+    errorMessage: row.error_message,
     createdAt: row.created_at,
   };
 }

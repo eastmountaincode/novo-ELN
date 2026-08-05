@@ -1,9 +1,9 @@
 import {
-  Beaker,
   Check,
   ChevronDown,
   ChevronRight,
   Download,
+  Dna,
   FileArchive,
   FileImage,
   FileSpreadsheet,
@@ -39,7 +39,7 @@ const blockIcons: Record<BlockType, typeof ImageIcon> = {
   sheet: FileSpreadsheet,
   pdf: FileText,
   slides: FileArchive,
-  sequence: Beaker,
+  sequence: Dna,
   file: FileImage,
 };
 

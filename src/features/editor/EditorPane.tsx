@@ -1,15 +1,19 @@
 import type { JSONContent } from "@tiptap/react";
 import {
+  ChevronDown,
+  ChevronRight,
+  Download,
   FileSignature,
   Flag,
   History,
   Lock,
   Loader2,
+  MoreHorizontal,
   Tag,
   Unlock,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ModalFrame } from "@/components/ModalFrame";
 import { PrintPageDocument } from "@/components/PrintPageDocument";
@@ -25,6 +29,7 @@ import { usePageEditorController } from "@/features/editor/page/usePageEditorCon
 import { PAGE_STATUS_OPTIONS, StatusDot } from "@/features/pages/PageStatus";
 import type { PageUpdater } from "@/features/pages/workspacePageState";
 import { attachmentIdsFromBody } from "@/lib/editor";
+import { formatBytes } from "@/lib/formatBytes";
 import { normalizeTagList } from "@/lib/tags";
 import type {
   AuditEvent,
@@ -75,6 +80,10 @@ function safeDownloadName(value: string) {
   return value.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 90) || "page";
 }
 
+function textByteLength(value: string) {
+  return new TextEncoder().encode(value).byteLength;
+}
+
 export function EditorPane({
   page,
   sessionScope,
@@ -103,9 +112,17 @@ export function EditorPane({
   const [printContent, setPrintContent] = useState<JSONContent[] | undefined>(undefined);
   const [exportingPage, setExportingPage] = useState<PageExportFormat | null>(null);
   const [signingOpen, setSigningOpen] = useState(false);
+  const [pageActionsOpen, setPageActionsOpen] = useState(false);
+  const [pageSignatures, setPageSignatures] = useState<PageSignature[]>([]);
+  const [signaturesLoading, setSignaturesLoading] = useState(false);
+  const [signaturesError, setSignaturesError] = useState("");
+  const [downloadingFinalizationId, setDownloadingFinalizationId] = useState("");
   const color = projectColor(selectedNotebook ?? selectedProject);
   const locked = Boolean(page.lockedAt);
+  const finalizedSignature = pageSignatures.find((signature) => signature.pageId === page.id) ?? null;
+  const finalized = Boolean(finalizedSignature || page.finalizedAt);
   const titleFieldRef = useRef<HTMLTextAreaElement>(null);
+  const pageActionsRef = useRef<HTMLDivElement>(null);
   const closeComments = useCallback(() => setCommentsOpen(false), []);
   const pageController = usePageEditorController({
     page,
@@ -172,6 +189,62 @@ export function EditorPane({
       cancelled = true;
     };
   }, [page.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      setSignaturesLoading(true);
+      setSignaturesError("");
+      const response = await fetch(`/api/pages/${page.id}/proof/sign`);
+      const body = (await response.json().catch(() => null)) as { signatures?: PageSignature[]; error?: string } | null;
+      if (cancelled) return;
+      setSignaturesLoading(false);
+      if (!response.ok) {
+        setSignaturesError(body?.error ?? "Could not load finalization.");
+        setPageSignatures([]);
+        return;
+      }
+      setPageSignatures(body?.signatures ?? []);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [page.id]);
+
+  useEffect(() => {
+    if (!pageActionsOpen) return;
+
+    function isInsidePageActions(target: EventTarget | null) {
+      return target instanceof Element && Boolean(pageActionsRef.current?.contains(target));
+    }
+
+    function closePageActions() {
+      setPageActionsOpen(false);
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      if (!isInsidePageActions(event.target)) closePageActions();
+    }
+
+    function onFocusIn(event: FocusEvent) {
+      if (!isInsidePageActions(event.target)) closePageActions();
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closePageActions();
+    }
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [pageActionsOpen]);
 
   useEffect(() => {
     if (!printPage) return;
@@ -336,20 +409,48 @@ export function EditorPane({
 
 
   async function signPageRecord(signingPassphrase: string, reportProgress: (message: string) => void): Promise<PageSignature> {
+    if (finalized) throw new Error("This page is already finalized.");
     reportProgress("Saving page");
     const flushResults = await pageController.flush();
-    if (!flushResults.every(Boolean)) throw new Error("Could not save the current page before signing.");
+    if (!flushResults.every(Boolean)) throw new Error("Could not save the current page before finalizing.");
 
-    reportProgress("Signing record");
+    reportProgress("Creating record package");
     const response = await fetch(`/api/pages/${page.id}/proof/sign`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ signingPassphrase }),
     });
-    const body = (await response.json().catch(() => null)) as { signature?: PageSignature; error?: string } | null;
-    if (!response.ok || !body?.signature) throw new Error(body?.error ?? `Signing failed with ${response.status}`);
+    const body = (await response.json().catch(() => null)) as { signature?: PageSignature; page?: PageEntry; error?: string } | null;
+    if (!response.ok || !body?.signature) throw new Error(body?.error ?? `Finalization failed with ${response.status}`);
+    if (body.page) pageController.patchSelectedPage(body.page);
+    setPageSignatures([body.signature]);
     if (activityOpen) await loadActivity(0);
     return body.signature;
+  }
+
+  async function downloadFinalizationPackage(signature: PageSignature) {
+    if (downloadingFinalizationId) return;
+    setDownloadingFinalizationId(signature.id);
+    try {
+      const response = await fetch(`/api/pages/${page.id}/proof/finalization/${signature.id}`);
+      if (!response.ok) throw new Error(`Finalization package download failed with ${response.status}`);
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition");
+      const filename = filenameFromContentDisposition(disposition) || `${safeDownloadName(page.title || "page")}.finalization.zip`;
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error(error);
+      window.alert("Finalization package download failed. Please try again.");
+    } finally {
+      setDownloadingFinalizationId("");
+    }
   }
 
   function openPagePrintDialog(selection?: { content: JSONContent[] }) {
@@ -372,6 +473,7 @@ export function EditorPane({
           <div className="flex min-w-0 items-start gap-3">
             <div className="flex min-w-0 flex-1 items-start gap-1.5">
               {locked ? <Lock size={16} strokeWidth={2.2} className="mt-1.5 shrink-0 text-slate-500" aria-label="Locked page" /> : null}
+              {finalized ? <FileSignature size={16} strokeWidth={2.1} className="mt-1.5 shrink-0 text-slate-500" aria-label="Finalized page" /> : null}
               <textarea
                 ref={titleFieldRef}
                 rows={1}
@@ -393,6 +495,18 @@ export function EditorPane({
               />
             </div>
             {pageController.saving ? <span className="shrink-0 px-2 py-0.5 text-xs" style={{ backgroundColor: colorWithAlpha(color, 0.1), color }}>{pageController.saving}</span> : null}
+            <PageActionsMenu
+              menuRef={pageActionsRef}
+              open={pageActionsOpen}
+              setOpen={setPageActionsOpen}
+              locked={locked}
+              finalized={finalized}
+              canManage={canManageLock}
+              blocked={pageController.lockBlocked}
+              finalizationLoading={signaturesLoading}
+              setLocked={pageController.setPageLocked}
+              onFinalize={() => setSigningOpen(true)}
+            />
             <button
               type="button"
               onClick={() => void openActivity()}
@@ -414,10 +528,6 @@ export function EditorPane({
                 void pageController.savePage({ status });
               }}
             />
-            <div className="flex shrink-0 items-center gap-2">
-              <PageSignControl canSign={canManageLock} blocked={pageController.lockBlocked} onOpen={() => setSigningOpen(true)} />
-              <PageLockControl locked={locked} canManage={canManageLock} blocked={pageController.lockBlocked} setLocked={pageController.setPageLocked} />
-            </div>
           </div>
         </header>
         <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-white px-6 pb-6 pt-4">
@@ -463,6 +573,14 @@ export function EditorPane({
             uploadAttachments={attachments.uploadAttachments}
             deleteAttachment={attachments.deleteAttachment}
           />
+          {finalizedSignature ? (
+            <PageFinalizationPanel
+              signature={finalizedSignature}
+              signaturesError={signaturesError}
+              downloading={downloadingFinalizationId === finalizedSignature.id}
+              onDownload={() => void downloadFinalizationPackage(finalizedSignature)}
+            />
+          ) : null}
         </div>
       </section>
       {activityOpen ? (
@@ -510,20 +628,98 @@ function compareCommentThreads(a: PageCommentThread, b: PageCommentThread) {
 }
 
 
-function PageSignControl({ canSign, blocked, onOpen }: { canSign: boolean; blocked: boolean; onOpen: () => void }) {
-  if (!canSign) return null;
+function PageActionsMenu({
+  menuRef,
+  open,
+  setOpen,
+  locked,
+  finalized,
+  canManage,
+  blocked,
+  finalizationLoading,
+  setLocked,
+  onFinalize,
+}: {
+  menuRef: RefObject<HTMLDivElement | null>;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  locked: boolean;
+  finalized: boolean;
+  canManage: boolean;
+  blocked: boolean;
+  finalizationLoading: boolean;
+  setLocked: (locked: boolean) => Promise<void>;
+  onFinalize: () => void;
+}) {
+  const [pendingLock, setPendingLock] = useState(false);
+  const [failed, setFailed] = useState(false);
+  if (!canManage) return null;
+
+  async function toggleLocked() {
+    if (pendingLock || blocked || finalized) return;
+    setPendingLock(true);
+    setFailed(false);
+    try {
+      await setLocked(!locked);
+      setOpen(false);
+    } catch {
+      setFailed(true);
+    } finally {
+      setPendingLock(false);
+    }
+  }
+
+  function finalizePage() {
+    if (blocked || finalized || finalizationLoading) return;
+    setOpen(false);
+    onFinalize();
+  }
+
+  const lockDisabled = pendingLock || blocked || finalized;
+  const finalizeDisabled = blocked || finalized || finalizationLoading;
+
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      disabled={blocked}
-      className="inline-flex h-7 shrink-0 items-center gap-1.5 border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait"
-      title={blocked ? "Finish the current editor action before signing" : "Sign record"}
-      aria-label={blocked ? "Finish current editor action" : "Sign record"}
-    >
-      {blocked ? <Loader2 size={12} className="animate-spin" /> : <FileSignature size={12} />}
-      <span>{blocked ? "Finishing edit" : "Sign record"}</span>
-    </button>
+    <div ref={menuRef} data-transient-menu="true" className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="grid size-8 place-items-center border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+        title="Page actions"
+        aria-label="Page actions"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open ? (
+        <section
+          role="dialog"
+          aria-label="Page actions"
+          className="absolute right-0 top-10 z-30 w-52 border border-slate-800 bg-slate-950 py-1 text-slate-100 shadow-xl"
+        >
+          <button
+            type="button"
+            onClick={finalizePage}
+            disabled={finalizeDisabled}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+            title={finalized ? "This page is already finalized" : blocked ? "Finish the current editor action before finalizing" : "Finalize page"}
+          >
+            {finalizationLoading ? <Loader2 size={14} className="animate-spin" /> : <FileSignature size={14} />}
+            {finalized ? "Finalized" : "Finalize page"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void toggleLocked()}
+            disabled={lockDisabled}
+            className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 ${failed ? "text-rose-300" : "text-slate-100"}`}
+            title={finalized ? "Finalized pages cannot be unlocked" : blocked ? "Finish the current editor action before locking" : locked ? "Unlock page" : "Lock page"}
+          >
+            {pendingLock ? <Loader2 size={14} className="animate-spin" /> : locked ? <Lock size={14} /> : <Unlock size={14} />}
+            {pendingLock ? (locked ? "Unlocking..." : "Locking...") : failed ? "Lock failed" : finalized ? "Locked" : locked ? "Unlock page" : "Lock page"}
+          </button>
+        </section>
+      ) : null}
+    </div>
   );
 }
 
@@ -551,10 +747,10 @@ function PageSignatureModal({
       const createdSignature = await onSign(signingPassphrase, setProgress);
       setSignature(createdSignature);
       setSigningPassphrase("");
-      setProgress("Signed");
+      setProgress("Finalized");
     } catch (caught) {
       setProgress("");
-      setError(caught instanceof Error ? caught.message : "Could not sign page record.");
+      setError(caught instanceof Error ? caught.message : "Could not finalize page.");
     } finally {
       setSubmitting(false);
     }
@@ -562,10 +758,10 @@ function PageSignatureModal({
 
   return (
     <ModalFrame>
-      <form onSubmit={(event) => void submit(event)} className="space-y-4" role="dialog" aria-modal="true" aria-label="Sign page record">
+      <form onSubmit={(event) => void submit(event)} className="space-y-4" role="dialog" aria-modal="true" aria-label="Finalize page">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-white">Sign page record</h2>
+            <h2 className="text-lg font-semibold text-white">Finalize page</h2>
             <p className="mt-1 truncate text-sm text-slate-400">{pageTitle || "Untitled page"}</p>
           </div>
           <button type="button" onClick={onClose} className="grid size-8 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Close signing dialog">
@@ -574,21 +770,39 @@ function PageSignatureModal({
         </div>
 
         {signature ? (
-          <div className="space-y-3 border border-cyan-500/30 bg-cyan-500/10 p-3 text-sm text-cyan-50">
-            <div className="flex items-center gap-2 font-medium"><FileSignature size={15} />Signed</div>
-            <dl className="space-y-2 text-xs text-cyan-100/90">
+          <div className="space-y-3 border border-white/10 bg-white/5 p-3 text-sm text-slate-100">
+            <div className="flex items-center gap-2 font-medium"><FileSignature size={15} />Finalized</div>
+            <dl className="space-y-2 text-xs text-slate-200">
+              {signature.timestamps[0] ? (
+                <div>
+                  <dt className="text-slate-400">Timestamp</dt>
+                  <dd className="mt-1">{signature.timestamps[0].provider}: {signature.timestamps[0].tsaTime || "timestamp token stored"}</dd>
+                </div>
+              ) : null}
               {signature.proofHash ? (
                 <div>
-                  <dt className="text-cyan-200/70">Proof hash</dt>
+                  <dt className="text-slate-400">Proof hash</dt>
                   <dd className="mt-1 break-all font-mono">{signature.proofHash}</dd>
                 </div>
               ) : null}
               <div>
-                <dt className="text-cyan-200/70">Record hash</dt>
+                <dt className="text-slate-400">Record hash</dt>
                 <dd className="mt-1 break-all font-mono">{signature.recordHash}</dd>
               </div>
+              {signature.recordPackageStorageKey ? (
+                <div>
+                  <dt className="text-slate-400">Record package</dt>
+                  <dd className="mt-1">Stored: {signature.recordPackageBytes.toLocaleString()} bytes</dd>
+                </div>
+              ) : null}
+              {signature.finalizationPackageStorageKey ? (
+                <div>
+                  <dt className="text-slate-400">Finalization package</dt>
+                  <dd className="mt-1">Stored: {signature.finalizationPackageBytes.toLocaleString()} bytes</dd>
+                </div>
+              ) : null}
               <div>
-                <dt className="text-cyan-200/70">Signature ID</dt>
+                <dt className="text-slate-400">Signature ID</dt>
                 <dd className="mt-1 break-all font-mono">{signature.id}</dd>
               </div>
             </dl>
@@ -601,7 +815,7 @@ function PageSignatureModal({
                 type="password"
                 value={signingPassphrase}
                 onChange={(event) => setSigningPassphrase(event.target.value)}
-                className="mt-2 h-10 w-full border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-cyan-400"
+                className="mt-2 h-10 w-full border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-white/30"
                 autoFocus
               />
             </label>
@@ -622,7 +836,7 @@ function PageSignatureModal({
           {!signature ? (
             <button type="submit" disabled={submitting || signingPassphrase.length === 0} className="inline-flex h-9 items-center gap-2 bg-white px-3 text-sm font-medium text-slate-950 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60">
               {submitting ? <Loader2 size={15} className="animate-spin" /> : <FileSignature size={15} />}
-              <span>{submitting ? "Signing" : "Sign record"}</span>
+              <span>{submitting ? "Finalizing" : "Finalize page"}</span>
             </button>
           ) : null}
         </div>
@@ -632,35 +846,86 @@ function PageSignatureModal({
 }
 
 
-function PageLockControl({ locked, canManage, blocked, setLocked }: { locked: boolean; canManage: boolean; blocked: boolean; setLocked: (locked: boolean) => Promise<void> }) {
-  const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const Icon = locked ? Lock : Unlock;
-  if (!canManage) return null;
-  async function toggleLocked() {
-    if (pending || blocked) return;
-    setPending(true);
-    setFailed(false);
-    try {
-      await setLocked(!locked);
-    } catch {
-      setFailed(true);
-    } finally {
-      setPending(false);
-    }
-  }
+function PageFinalizationPanel({
+  signature,
+  signaturesError,
+  downloading,
+  onDownload,
+}: {
+  signature: PageSignature;
+  signaturesError: string;
+  downloading: boolean;
+  onDownload: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const timestamp = signature.timestamps[0];
+  const signerName = [signature.signerFirstName, signature.signerLastName].filter(Boolean).join(" ") || signature.signerEmail;
+  const proofPackageBytes = textByteLength(signature.proofPackageJson);
   return (
-    <button
-      type="button"
-      onClick={() => void toggleLocked()}
-      disabled={pending || blocked}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 border bg-white px-2 text-xs font-medium hover:bg-slate-100 disabled:cursor-wait ${failed ? "border-rose-300 text-rose-700" : "border-slate-300 text-slate-700"}`}
-      title={blocked ? "Finish the current editor action before locking" : locked ? "Unlock page" : "Lock page"}
-      aria-label={blocked ? "Finish current editor action" : locked ? "Unlock page" : "Lock page"}
-    >
-      {pending ? <Loader2 size={12} className="animate-spin" /> : <Icon size={12} />}
-      <span>{pending ? (locked ? "Unlocking" : "Locking") : blocked ? "Finishing edit" : failed ? "Lock failed" : locked ? "Unlock page" : "Lock page"}</span>
-    </button>
+    <section className="mt-4 border border-slate-200 bg-slate-50 p-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-800 hover:text-slate-950"
+          aria-expanded={open}
+        >
+          {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          <FileSignature size={16} className="text-slate-600" />
+          <span>Finalization</span>
+        </button>
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={downloading || !signature.timestamps.length}
+          className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+          title={signature.timestamps.length ? "Download finalization package" : "Finalization package is not available"}
+        >
+          {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+          <span>{downloading ? "Downloading" : "Download package"}</span>
+        </button>
+      </div>
+      {open ? (
+        <div className="mt-3 px-2 pb-2">
+          <div className="grid gap-x-8 gap-y-2 text-sm text-slate-700 sm:grid-cols-2">
+            <div><span className="font-medium text-slate-900">Signed by:</span> {signerName}</div>
+            <div><span className="font-medium text-slate-900">Timestamp:</span> {timestamp ? `${timestamp.provider}, ${timestamp.tsaTime || timestamp.createdAt}` : "Stored"}</div>
+            <div><span className="font-medium text-slate-900">Record package:</span> {formatBytes(signature.recordPackageBytes)}</div>
+            <div><span className="font-medium text-slate-900">Proof package:</span> {formatBytes(proofPackageBytes)}</div>
+            {signature.finalizationPackageBytes ? (
+              <div><span className="font-medium text-slate-900">Finalization package:</span> {formatBytes(signature.finalizationPackageBytes)}</div>
+            ) : null}
+          </div>
+          {signaturesError ? <p className="mt-2 text-xs text-rose-700">{signaturesError}</p> : null}
+          <button
+            type="button"
+            onClick={() => setDetailsOpen((current) => !current)}
+            className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-slate-700 hover:text-slate-950"
+            aria-expanded={detailsOpen}
+          >
+            {detailsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            Details
+          </button>
+          {detailsOpen ? (
+            <dl className="mt-2 grid gap-2 text-xs text-slate-700">
+              <div>
+                <dt className="font-medium text-slate-900">Proof hash</dt>
+                <dd className="mt-1 break-all font-mono">{signature.proofHash}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-slate-900">Record hash</dt>
+                <dd className="mt-1 break-all font-mono">{signature.recordHash}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-slate-900">Signature ID</dt>
+                <dd className="mt-1 break-all font-mono">{signature.id}</dd>
+              </div>
+            </dl>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

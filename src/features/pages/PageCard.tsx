@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClock, CalendarPlus, Copy, Loader2, Lock, MoreHorizontal, MoveRight, Paperclip, Trash2 } from "lucide-react";
+import { CalendarClock, CalendarPlus, Copy, FileSignature, Loader2, Lock, MoreHorizontal, MoveRight, Paperclip, Trash2 } from "lucide-react";
 import { useMemo } from "react";
 import { getPageStatusLabel, StatusDot } from "@/features/pages/PageStatus";
 import { formatDateTime } from "@/lib/dateTime";
@@ -23,7 +23,9 @@ type PageCardProps = {
   onDuplicate?: () => void;
   duplicating?: boolean;
   onMove?: () => void;
+  moveDisabled?: boolean;
   onDelete?: () => void;
+  deleteDisabled?: boolean;
 };
 
 export function PageCard({
@@ -38,12 +40,15 @@ export function PageCard({
   onDuplicate,
   duplicating = false,
   onMove,
+  moveDisabled = false,
   onDelete,
+  deleteDisabled = false,
 }: PageCardProps) {
   const fileCount = page.attachmentCount ?? page.attachments.length;
   const fileLabel = fileCount ? `${fileCount} files` : "No files";
   const color = normalizeColor(accentColor);
-  const cardStyle = active ? pageCardActiveStyle(color) : tinted ? pageCardTintStyle(color) : undefined;
+  const finalized = Boolean(page.finalizedAt);
+  const cardStyle = pageCardStyle(color, { active, tinted });
   const visibleTags = page.tags.slice(0, 3);
   const previewText = useMemo(() => (page.bodyLoaded ? bodyToEditorText(page.body) : page.bodyPreview) || "Empty page", [page.body, page.bodyLoaded, page.bodyPreview]);
   return (
@@ -55,6 +60,7 @@ export function PageCard({
       >
         <h3 className="min-w-0 max-w-full break-words text-sm font-semibold leading-5 text-slate-900 [overflow-wrap:anywhere]">
           {page.lockedAt ? <Lock size={13} strokeWidth={2.2} className="mr-1 inline-block align-[-1px] text-slate-500" aria-label="Locked page" /> : null}
+          {finalized ? <FileSignature size={13} strokeWidth={2.1} className="mr-1 inline-block align-[-1px] text-slate-500" aria-label="Finalized page" /> : null}
           {page.title || "Untitled"}
         </h3>
         <p className="mt-2 max-h-10 min-w-0 max-w-full overflow-hidden break-words text-sm leading-5 text-slate-500 [overflow-wrap:anywhere]">{previewText}</p>
@@ -101,6 +107,7 @@ export function PageCard({
                 <button
                   onClick={(event) => {
                     event.stopPropagation();
+                    setMenuOpen(false);
                     onDuplicate();
                   }}
                   disabled={duplicating}
@@ -114,10 +121,12 @@ export function PageCard({
                 <button
                   onClick={(event) => {
                     event.stopPropagation();
+                    if (moveDisabled) return;
                     setMenuOpen(false);
                     onMove();
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-100 hover:bg-white/10"
+                  disabled={moveDisabled}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
                 >
                   <MoveRight size={14} />
                   Move page
@@ -127,10 +136,12 @@ export function PageCard({
                 <button
                   onClick={(event) => {
                     event.stopPropagation();
+                    if (deleteDisabled) return;
                     setMenuOpen(false);
                     onDelete();
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10"
+                  disabled={deleteDisabled}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-300 hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
                 >
                   <Trash2 size={14} />
                   Delete page
@@ -144,18 +155,13 @@ export function PageCard({
   );
 }
 
-function pageCardTintStyle(value: string | undefined) {
+function pageCardStyle(value: string | undefined, state: { active: boolean; tinted: boolean }) {
   const color = normalizeColor(value);
-  return {
-    backgroundColor: colorWithAlpha(color, PAGE_CARD_TINT_ALPHA),
-    borderColor: colorWithAlpha(color, 0.65),
-  };
-}
+  const backgroundAlpha = state.active ? PAGE_CARD_ACTIVE_ALPHA : state.tinted ? PAGE_CARD_TINT_ALPHA : null;
+  if (backgroundAlpha === null) return undefined;
 
-function pageCardActiveStyle(value: string | undefined) {
-  const color = normalizeColor(value);
   return {
-    backgroundColor: colorWithAlpha(color, PAGE_CARD_ACTIVE_ALPHA),
+    backgroundColor: colorWithAlpha(color, backgroundAlpha),
     borderColor: colorWithAlpha(color, 0.65),
   };
 }

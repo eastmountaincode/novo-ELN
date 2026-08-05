@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, verify } from "node:crypto";
+import { strFromU8, unzipSync } from "fflate";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const testAdminEmail = "test@example.local";
@@ -541,16 +542,22 @@ describe("store", () => {
 
 
   it("creates verifiable page record signatures", async () => {
+    const { queryOne } = await import("../src/lib/sqlite");
     const { buildPageRecordPackage, stableJsonStringify } = await import("../src/lib/pageRecordPackage");
     const {
       createPageRecordSignature,
+      createPageSignatureTimestamp,
       ensureUserSigningKey,
+      getPageFinalizationPackageDownload,
       getPage,
       getPageCommentThreads,
       getPageNotebook,
       getWorkspace,
       listPageRecordAuditEvents,
       listPageRecordSignatures,
+      rollbackPageRecordFinalization,
+      setPageLocked,
+      storePageFinalizationPackage,
     } = await import("../src/lib/store");
     const admin = await createTestAdmin();
     const signingPassphrase = "Signing passphrase 2026";
@@ -566,12 +573,17 @@ describe("store", () => {
       pageId,
       recordHash: recordPackage.recordHash,
       recordManifest: recordPackage.manifest,
+      recordArchive: recordPackage.archive,
       signingPassphrase,
     });
 
     expect(signature.recordHash).toBe(recordPackage.recordHash);
     expect(signature.signingPublicKey).toContain("BEGIN PUBLIC KEY");
     expect(signature.signingPublicKeyFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(signature.recordPackageStorageKey).toBe(`page-signatures/${signature.id}/record.zip`);
+    expect(signature.recordPackageBytes).toBe(recordPackage.archive.byteLength);
+    expect(signature.recordPackageSha256).toBe(createHash("sha256").update(recordPackage.archive).digest("hex"));
+    expect(fs.existsSync(path.join(process.env.ELN_DATA_DIR!, "proofs", signature.recordPackageStorageKey))).toBe(true);
     expect(JSON.parse(signature.signaturePayload).record.hash).toBe(recordPackage.recordHash);
     expect(verify(null, Buffer.from(signature.signaturePayload, "utf8"), signature.signingPublicKey, Buffer.from(signature.signature, "base64"))).toBe(true);
     expect(signature.proofHashAlgorithm).toBe("sha256");
@@ -587,9 +599,66 @@ describe("store", () => {
     expect(proofPackage.userSignature.id).toBe(signature.id);
     expect(proofPackage.userSignature.payload).toBe(signature.signaturePayload);
     expect(proofPackage.userSignature.signature).toBe(signature.signature);
+    expect(signature.timestamps).toEqual([]);
     expect(listPageRecordSignatures(admin.id, pageId).map((candidate) => candidate.id)).toContain(signature.id);
+    const timestamp = createPageSignatureTimestamp(admin.id, signature.id, {
+      provider: "digicert",
+      tsaUrl: "http://timestamp.digicert.com",
+      hashAlgorithm: "sha256",
+      messageImprint: signature.proofHash,
+      requestDerBase64: "request",
+      responseDerBase64: "response",
+      status: "granted",
+      statusMessage: "unspecified",
+      policyOid: "2.16.840.1.114412.7.1",
+      serialNumber: "0x01",
+      tsaTime: "Aug  5 17:25:33 2026 GMT",
+      tsaSubject: "",
+      tsaCertFingerprint: "",
+      verifiedAt: "",
+      errorMessage: "",
+    });
+    expect(timestamp.messageImprint).toBe(signature.proofHash);
+    expect(listPageRecordSignatures(admin.id, pageId).find((candidate) => candidate.id === signature.id)?.timestamps[0]?.id).toBe(timestamp.id);
+    const finalizedSignature = storePageFinalizationPackage(admin.id, signature.id);
+    expect(finalizedSignature.finalizationPackageStorageKey).toBe(`page-signatures/${signature.id}/finalization.zip`);
+    expect(finalizedSignature.finalizationPackageBytes).toBeGreaterThan(recordPackage.archive.byteLength);
+    expect(finalizedSignature.finalizationPackageSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(fs.existsSync(path.join(process.env.ELN_DATA_DIR!, "proofs", finalizedSignature.finalizationPackageStorageKey))).toBe(true);
+    const finalizationDownload = getPageFinalizationPackageDownload(admin.id, pageId, signature.id);
+    expect(finalizationDownload.filename).toContain(".finalization.zip");
+    expect(finalizationDownload.sha256).toBe(finalizedSignature.finalizationPackageSha256);
+    const finalizationEntries = unzipSync(finalizationDownload.bytes);
+    expect(finalizationEntries["record.zip"]).toBeTruthy();
+    expect(finalizationEntries["manifest.json"]).toBeTruthy();
+    expect(finalizationEntries["proof/proof-package.json"]).toBeTruthy();
+    expect(finalizationEntries[`timestamps/${timestamp.id}/request.tsq`]).toBeTruthy();
+    expect(finalizationEntries[`timestamps/${timestamp.id}/response.tsr`]).toBeTruthy();
+    const finalizationManifest = JSON.parse(strFromU8(finalizationEntries["manifest.json"]));
+    expect(finalizationManifest.packageType).toBe("novo.page.finalization");
+    expect(finalizationManifest.signature.proofHash).toBe(signature.proofHash);
+    expect(finalizationManifest.files).toContainEqual(expect.objectContaining({ path: "record.zip", sha256: signature.recordPackageSha256 }));
+    expect(() => createPageRecordSignature(admin.id, {
+      pageId,
+      recordHash: recordPackage.recordHash,
+      recordManifest: recordPackage.manifest,
+      recordArchive: recordPackage.archive,
+      signingPassphrase,
+    })).toThrow("Page is already finalized.");
+    setPageLocked(admin.id, pageId, true);
+    expect(() => setPageLocked(admin.id, pageId, false)).toThrow("Finalized pages cannot be unlocked.");
     const signedEvent = listPageRecordAuditEvents(admin.id, pageId).find((event) => event.action === "page.record.signed" && event.metadata.signatureId === signature.id);
     expect(signedEvent?.metadata.proofHash).toBe(signature.proofHash);
+
+    rollbackPageRecordFinalization(admin.id, signature.id);
+
+    expect(listPageRecordSignatures(admin.id, pageId).some((candidate) => candidate.id === signature.id)).toBe(false);
+    expect(queryOne(`SELECT COUNT(*) AS count FROM page_signature_timestamps WHERE page_signature_id = '${signature.id}'`)?.count).toBe("0");
+    expect(fs.existsSync(path.join(process.env.ELN_DATA_DIR!, "proofs", signature.recordPackageStorageKey))).toBe(false);
+    expect(fs.existsSync(path.join(process.env.ELN_DATA_DIR!, "proofs", finalizedSignature.finalizationPackageStorageKey))).toBe(false);
+    expect(listPageRecordAuditEvents(admin.id, pageId).some((event) =>
+      (event.action === "page.record.signed" || event.action === "page.record.timestamped") && event.metadata.signatureId === signature.id,
+    )).toBe(false);
   });
 
   it("returns the live database schema for admins", async () => {
@@ -601,8 +670,11 @@ describe("store", () => {
 
     expect(schema.tables.some((table) => table.name === "user_signing_keys")).toBe(true);
     expect(schema.tables.some((table) => table.name === "page_signatures")).toBe(true);
+    expect(schema.tables.some((table) => table.name === "page_signature_timestamps")).toBe(true);
     expect(schema.tables.find((table) => table.name === "user_signing_keys")?.columns.map((column) => column.name)).toContain("public_key_fingerprint");
     expect(schema.tables.find((table) => table.name === "page_signatures")?.columns.map((column) => column.name)).toContain("proof_hash");
+    expect(schema.tables.find((table) => table.name === "page_signatures")?.columns.map((column) => column.name)).toContain("finalization_package_storage_key");
+    expect(schema.tables.find((table) => table.name === "page_signature_timestamps")?.columns.map((column) => column.name)).toContain("response_der_base64");
     expect(schema.relationships).toContainEqual(expect.objectContaining({
       fromTable: "user_signing_keys",
       fromColumn: "user_id",
@@ -613,6 +685,12 @@ describe("store", () => {
       fromTable: "page_signatures",
       fromColumn: "page_id",
       toTable: "pages",
+      toColumn: "id",
+    }));
+    expect(schema.relationships).toContainEqual(expect.objectContaining({
+      fromTable: "page_signature_timestamps",
+      fromColumn: "page_signature_id",
+      toTable: "page_signatures",
       toColumn: "id",
     }));
     expect(schema.tableCount).toBeGreaterThan(0);
@@ -690,6 +768,7 @@ describe("store", () => {
       deleteAttachment,
       deleteNotebook,
       deletePage,
+      duplicatePage,
       getAttachmentForUser,
       getWorkspace,
       renameNotebook,
@@ -777,8 +856,14 @@ describe("store", () => {
     })).toThrow("Page is locked.");
     expect(() => deleteAttachment(owner.id, attachmentId)).toThrow("Page is locked.");
     expect(() => deletePage(owner.id, pageId)).toThrow("Page is locked.");
+    const lockedCopySourceId = createPage(owner.id, notebookId);
+    setPageLocked(owner.id, lockedCopySourceId, true);
+    const duplicate = duplicatePage(owner.id, lockedCopySourceId);
+    expect(duplicate.pageId).not.toBe(lockedCopySourceId);
+    expect(getWorkspace(owner.id).notebooks.find((notebook) => notebook.id === notebookId)?.pages.some((page) => page.id === duplicate.pageId)).toBe(true);
 
     setPageLocked(owner.id, pageId, false);
+    setPageLocked(owner.id, lockedCopySourceId, false);
     updatePage(editor.id, pageId, { title: "Editor edit after unlock" });
   });
 

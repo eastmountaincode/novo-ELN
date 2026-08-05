@@ -125,7 +125,7 @@ export default function Home() {
   const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null);
   const [spreadsheetModal, setSpreadsheetModal] = useState<InlineAttachmentAttrs | null>(null);
   const [presentationModal, setPresentationModal] = useState<InlineAttachmentAttrs | null>(null);
-  const [previewKeys, setPreviewKeys] = useState<Set<string>>(new Set());
+  const [previewKeys] = useState<Set<string>>(() => readPreviewKeysFromUrl());
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
   const spreadsheetSavedRef = useRef<((attachment: InlineAttachmentAttrs) => void) | null>(null);
@@ -215,7 +215,6 @@ export default function Home() {
   }, [applyNotebookSelection, applyNotebookSettingsSelection, applyPageSelection, applyProjectSelection]);
 
   useEffect(() => {
-    setPreviewKeys(readPreviewKeysFromUrl());
     cleanupUpdateCacheBusterFromUrl();
   }, []);
 
@@ -466,7 +465,7 @@ export default function Home() {
         const body = (await response.json()) as { results: SearchResult[] };
         setSearchResults(body.results);
         lastSearchKeyRef.current = searchKey;
-      } catch (error) {
+      } catch {
         if (!fastController.signal.aborted) setSearchResults([]);
         return;
       } finally {
@@ -673,8 +672,8 @@ export default function Home() {
     if (!selectedPage?.id || selectedPage.bodyLoaded) return;
     let active = true;
     const pageId = selectedPage.id;
-    setLoadingPageId(pageId);
     async function loadPage() {
+      setLoadingPageId(pageId);
       const response = await fetch(`/api/pages/${pageId}`);
       if (!active) return;
       if (!response.ok) {
@@ -882,7 +881,7 @@ export default function Home() {
   }
 
   async function duplicateExistingPage(page: PageEntry) {
-    if (!selectedNotebook || !selectedNotebookCanEdit || page.lockedAt || duplicatingPageId) return;
+    if (!selectedNotebook || !selectedNotebookCanEdit || duplicatingPageId) return;
     setProjectMenuId(null);
     setNotebookMenuId(null);
     setPageMenuId(null);

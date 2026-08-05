@@ -538,10 +538,12 @@ export function PagesSidebar({ selectedProject, selectedNotebook, selectedPage, 
               menuOpen={pageMenuId === page.id}
               setMenuOpen={(open) => setPageMenuId(open ? page.id : null)}
               onClick={() => selectedProject && selectedNotebook && selectPage(selectedProject, selectedNotebook, page)}
-              onDuplicate={canEdit && !page.lockedAt ? () => duplicatePage(page) : undefined}
+              onDuplicate={canEdit ? () => duplicatePage(page) : undefined}
               duplicating={duplicatingPageId === page.id}
-              onMove={canEdit && !page.lockedAt ? () => movePage(page) : undefined}
-              onDelete={canEdit && !page.lockedAt ? () => deletePage(page) : undefined}
+              onMove={canEdit ? () => movePage(page) : undefined}
+              moveDisabled={Boolean(page.lockedAt || page.finalizedAt)}
+              onDelete={canEdit ? () => deletePage(page) : undefined}
+              deleteDisabled={Boolean(page.lockedAt || page.finalizedAt)}
             />
           ))}
           {sortedPages.length === 0 ? <p className="p-3 text-sm text-slate-500">{filterActive ? "No pages match these filters." : "No pages yet."}</p> : null}

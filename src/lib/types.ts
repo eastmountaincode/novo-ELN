@@ -30,6 +30,27 @@ export type UserSigningKey = {
   active: boolean;
 };
 
+export type PageSignatureTimestamp = {
+  id: string;
+  pageSignatureId: string;
+  provider: string;
+  tsaUrl: string;
+  hashAlgorithm: string;
+  messageImprint: string;
+  requestDerBase64: string;
+  responseDerBase64: string;
+  status: string;
+  statusMessage: string;
+  policyOid: string;
+  serialNumber: string;
+  tsaTime: string;
+  tsaSubject: string;
+  tsaCertFingerprint: string;
+  verifiedAt: string;
+  errorMessage: string;
+  createdAt: string;
+};
+
 export type PageSignature = {
   id: string;
   pageId: string;
@@ -48,9 +69,16 @@ export type PageSignature = {
   signaturePayload: string;
   signature: string;
   recordManifestJson: string;
+  recordPackageStorageKey: string;
+  recordPackageBytes: number;
+  recordPackageSha256: string;
+  finalizationPackageStorageKey: string;
+  finalizationPackageBytes: number;
+  finalizationPackageSha256: string;
   proofHashAlgorithm: string;
   proofHash: string;
   proofPackageJson: string;
+  timestamps: PageSignatureTimestamp[];
   createdAt: string;
 };
 
@@ -261,6 +289,7 @@ export type PageEntry = {
   lockedBy: string;
   lockedByFirstName: string;
   lockedByLastName: string;
+  finalizedAt?: string;
   createdAt: string;
   updatedAt: string;
   tags: string[];

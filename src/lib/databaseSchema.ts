@@ -10,6 +10,7 @@ const preferredTables = [
   "notebook_members",
   "pages",
   "page_signatures",
+  "page_signature_timestamps",
   "tags",
   "page_tags",
   "page_comment_threads",

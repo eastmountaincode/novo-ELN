@@ -1,5 +1,6 @@
 import { ExternalLink, Loader2, Workflow } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
 import type { ErflowAdminStatus, ErflowSyncResult } from "@/lib/types";
 
 type SchemaResponse = {
@@ -88,62 +89,56 @@ export function SchemaAdminPanel() {
 
   return (
     <section className="max-w-3xl border border-slate-200 bg-white">
-      <div className="border-b border-slate-200 p-5">
-        <div className="flex items-start gap-3">
-          <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
-            <Workflow size={21} />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-slate-950">Schema</h2>
-          </div>
-        </div>
-      </div>
+      <AdminPanelHeader icon={Workflow} title="Schema" />
 
-      <div className="space-y-4 p-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void syncErflow()}
-            disabled={loading || !configured || syncing}
-            className={`${erflowActionClass} bg-slate-950 text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300`}
-          >
-            {syncing ? <Loader2 size={15} className="animate-spin" /> : <Workflow size={15} />}
-            Sync ER Flow
-          </button>
-          {erflow?.viewUrl ? (
-            <a
-              href={erflow.viewUrl}
-              target="_blank"
-              rel="noreferrer"
-              className={`${erflowActionClass} border border-slate-300 text-slate-700 hover:bg-slate-50`}
-            >
-              <ExternalLink size={15} />
-              Open ER Flow
-            </a>
-          ) : (
+      {loading ? (
+        <AdminLoadingState>Loading schema...</AdminLoadingState>
+      ) : (
+        <div className="space-y-4 p-5">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              disabled
-              className={`${erflowActionClass} cursor-not-allowed border border-slate-200 text-slate-400`}
+              onClick={() => void syncErflow()}
+              disabled={loading || !configured || syncing}
+              className={`${erflowActionClass} bg-slate-950 text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300`}
             >
-              <ExternalLink size={15} />
-              Open ER Flow
+              {syncing ? <Loader2 size={15} className="animate-spin" /> : <Workflow size={15} />}
+              Sync ER Flow
             </button>
-          )}
-        </div>
+            {erflow?.viewUrl ? (
+              <a
+                href={erflow.viewUrl}
+                target="_blank"
+                rel="noreferrer"
+                className={`${erflowActionClass} border border-slate-300 text-slate-700 hover:bg-slate-50`}
+              >
+                <ExternalLink size={15} />
+                Open ER Flow
+              </a>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className={`${erflowActionClass} cursor-not-allowed border border-slate-200 text-slate-400`}
+              >
+                <ExternalLink size={15} />
+                Open ER Flow
+              </button>
+            )}
+          </div>
 
-        {loading ? <p className="text-sm text-slate-500">Checking ER Flow...</p> : null}
-        {!loading && !configured ? (
-          <p className="border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">ER Flow is not configured for this environment.</p>
-        ) : null}
-        {error ? <p className="border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
-        {syncResult ? (
-          <p className="border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-800">
-            Synced {syncResult.tableCount.toLocaleString()} tables and {syncResult.relationshipCount.toLocaleString()} relationships to ER Flow
-            {syncedAt ? ` at ${syncedAt}` : ""}.
-          </p>
-        ) : null}
-      </div>
+          {!configured ? (
+            <p className="border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">ER Flow is not configured for this environment.</p>
+          ) : null}
+          {error ? <p className="border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+          {syncResult ? (
+            <p className="border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-800">
+              Synced {syncResult.tableCount.toLocaleString()} tables and {syncResult.relationshipCount.toLocaleString()} relationships to ER Flow
+              {syncedAt ? ` at ${syncedAt}` : ""}.
+            </p>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }

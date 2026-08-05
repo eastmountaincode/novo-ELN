@@ -1,6 +1,7 @@
 import { History, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ActivityTextDiff, AdminActivityContext, adminActivitySummary, auditActorName, auditInitials } from "@/features/activity/AuditEventDisplay";
+import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
 import { formatDateTime } from "@/lib/dateTime";
 import type { AdminActivityOverview } from "@/lib/types";
 
@@ -44,27 +45,23 @@ export function AdminActivityPanel() {
 
   return (
     <section className="max-w-5xl border border-slate-200 bg-white">
-      <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
-        <div className="flex items-start gap-3">
-          <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
-            <History size={21} />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-slate-950">Activity</h2>
-          </div>
-        </div>
-        <button
-          onClick={() => void loadActivity(0)}
-          disabled={loading}
-          className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:text-slate-400"
-        >
-          {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-          Refresh
-        </button>
-      </div>
+      <AdminPanelHeader
+        icon={History}
+        title="Activity"
+        action={(
+          <button
+            onClick={() => void loadActivity(0)}
+            disabled={loading}
+            className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:text-slate-400"
+          >
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+            Refresh
+          </button>
+        )}
+      />
       {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
       {loading && !events.length ? (
-        <p className="flex items-center gap-2 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Loading activity...</p>
+        <AdminLoadingState>Loading activity...</AdminLoadingState>
       ) : null}
       {!loading && !events.length && !error ? <p className="p-5 text-sm text-slate-500">No activity recorded yet.</p> : null}
       {events.length ? (

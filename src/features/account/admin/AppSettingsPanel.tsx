@@ -1,5 +1,6 @@
 import { CalendarPlus, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
 import type { AdminAppSettings } from "@/lib/types";
 
 export function AppSettingsPanel({ onChanged }: { onChanged: () => Promise<void> }) {
@@ -56,18 +57,10 @@ export function AppSettingsPanel({ onChanged }: { onChanged: () => Promise<void>
 
   return (
     <section className="max-w-2xl border border-slate-200 bg-white">
-      <div className="flex items-start gap-3 border-b border-slate-200 p-5">
-        <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
-          <CalendarPlus size={21} />
-        </div>
-        <div>
-          <h2 className="text-lg font-semibold text-slate-950">App Settings</h2>
-          <p className="mt-1 text-sm text-slate-500">Defaults for this Novo instance.</p>
-        </div>
-      </div>
+      <AdminPanelHeader icon={CalendarPlus} title="App Settings" description="Defaults for this Novo instance." />
       {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
       {loading ? (
-        <p className="flex items-center gap-2 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Loading settings...</p>
+        <AdminLoadingState>Loading app settings...</AdminLoadingState>
       ) : (
         <div className="divide-y divide-slate-100">
           <label className="flex cursor-pointer items-start gap-3 p-5">

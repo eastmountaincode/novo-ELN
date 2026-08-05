@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronUp, Loader2, RefreshCw, Tag, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ModalFrame } from "@/components/ModalFrame";
+import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
 import { formatDateTime } from "@/lib/dateTime";
 import type { AdminTag } from "@/lib/types";
 
@@ -175,29 +176,25 @@ export function TagsAdminPanel({ onChanged }: { onChanged: () => Promise<void> }
   return (
     <>
       <section className="max-w-5xl border border-slate-200 bg-white">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
-          <div className="flex items-start gap-3">
-            <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
-              <Tag size={21} />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-slate-950">Tags</h2>
-            </div>
-          </div>
-          <button
-            onClick={() => void loadTags(true)}
-            disabled={loading || refreshing}
-            className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:text-slate-400"
-          >
-            {refreshing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-            Refresh
-          </button>
-        </div>
+        <AdminPanelHeader
+          icon={Tag}
+          title="Tags"
+          action={(
+            <button
+              onClick={() => void loadTags(true)}
+              disabled={loading || refreshing}
+              className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:text-slate-400"
+            >
+              {refreshing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+              Refresh
+            </button>
+          )}
+        />
 
         {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
 
         {loading ? (
-          <p className="flex items-center gap-2 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Loading tags...</p>
+          <AdminLoadingState>Loading tags...</AdminLoadingState>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full table-fixed border-collapse text-left text-sm">

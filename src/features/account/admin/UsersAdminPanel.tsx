@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronUp, Shield } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ModalFrame } from "@/components/ModalFrame";
+import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
 import { formatDateTime } from "@/lib/dateTime";
 import { passwordRequirementText } from "@/lib/passwordRequirements";
 import type { AdminUser } from "@/lib/types";
@@ -113,20 +114,14 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
 
   return (
     <section className="max-w-5xl border border-slate-200 bg-white">
-      <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
-        <div className="flex items-start gap-3">
-          <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
-            <Shield size={21} />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-slate-950">Users</h2>
-          </div>
-        </div>
-        <button onClick={() => void loadUsers()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
-      </div>
+      <AdminPanelHeader
+        icon={Shield}
+        title="Users"
+        action={<button onClick={() => void loadUsers()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>}
+      />
       {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
       {loading ? (
-        <p className="p-5 text-sm text-slate-500">Loading users...</p>
+        <AdminLoadingState>Loading users...</AdminLoadingState>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full table-fixed border-collapse text-left text-sm">

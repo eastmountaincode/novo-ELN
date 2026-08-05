@@ -1,6 +1,6 @@
 import { ChevronDown, Database, Fingerprint, History, KeyRound, Notebook as NotebookIcon, Settings, Shield, Tag, UserCircle, Users, Workflow } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { AppUser, Notebook } from "@/lib/types";
 import { AccountNotebooks } from "@/features/account/AccountNotebooks";
 import { AccountProfile } from "@/features/account/AccountProfile";
@@ -14,6 +14,41 @@ import { TagsAdminPanel } from "@/features/account/admin/TagsAdminPanel";
 import { UsersAdminPanel } from "@/features/account/admin/UsersAdminPanel";
 
 type AccountTab = "profile" | "notebooks" | "security" | "app" | "users" | "activity" | "data" | "schema" | "tags";
+
+function SecurityDetailsCard({
+  children,
+  icon: Icon,
+  onToggle,
+  open,
+  title,
+}: {
+  children: ReactNode;
+  icon: LucideIcon;
+  onToggle: (open: boolean) => void;
+  open: boolean;
+  title: string;
+}) {
+  return (
+    <details
+      open={open}
+      onToggle={(event) => onToggle(event.currentTarget.open)}
+      className="group max-w-2xl border border-slate-200 bg-white"
+    >
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-3 p-5 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+        <span className="flex min-w-0 items-start gap-3">
+          <span className="grid size-10 shrink-0 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
+            <Icon size={21} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
+          </span>
+        </span>
+        <ChevronDown size={16} className="mt-3 shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
+      </summary>
+      {open ? <div className="border-t border-slate-100 p-5">{children}</div> : null}
+    </details>
+  );
+}
 
 export function AccountView({ user, notebooks, onChanged }: { user: AppUser; notebooks: Notebook[]; onChanged: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<AccountTab>("profile");
@@ -68,50 +103,12 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
         {activeTab === "notebooks" ? <AccountNotebooks notebooks={notebooks} /> : null}
         {activeTab === "security" ? (
           <div className="space-y-4">
-            <details
-              open={passwordOpen}
-              onToggle={(event) => setPasswordOpen(event.currentTarget.open)}
-              className="group max-w-2xl border border-slate-200 bg-white"
-            >
-              <summary className="flex cursor-pointer list-none items-start justify-between gap-3 p-5 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
-                <span className="flex items-start gap-3">
-                  <span className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
-                    <KeyRound size={21} />
-                  </span>
-                  <span className="pt-1">
-                    <h2 className="text-lg font-semibold text-slate-950">Change password</h2>
-                  </span>
-                </span>
-                <ChevronDown size={16} className="mt-3 shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
-              </summary>
-              {passwordOpen ? (
-                <div className="border-t border-slate-100 p-5">
-                  <PasswordPanel embedded />
-                </div>
-              ) : null}
-            </details>
-            <details
-              open={signingKeysOpen}
-              onToggle={(event) => setSigningKeysOpen(event.currentTarget.open)}
-              className="group max-w-2xl border border-slate-200 bg-white"
-            >
-              <summary className="flex cursor-pointer list-none items-start justify-between gap-3 p-5 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
-                <span className="flex items-start gap-3">
-                  <span className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
-                    <Fingerprint size={21} />
-                  </span>
-                  <span className="pt-1">
-                    <h2 className="text-lg font-semibold text-slate-950">Signing keys</h2>
-                  </span>
-                </span>
-                <ChevronDown size={16} className="mt-3 shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
-              </summary>
-              {signingKeysOpen ? (
-                <div className="border-t border-slate-100 p-5">
-                  <SigningKeysPanel embedded />
-                </div>
-              ) : null}
-            </details>
+            <SecurityDetailsCard open={passwordOpen} onToggle={setPasswordOpen} icon={KeyRound} title="Change password">
+              <PasswordPanel embedded />
+            </SecurityDetailsCard>
+            <SecurityDetailsCard open={signingKeysOpen} onToggle={setSigningKeysOpen} icon={Fingerprint} title="Signing keys">
+              <SigningKeysPanel embedded />
+            </SecurityDetailsCard>
           </div>
         ) : null}
         {activeTab === "app" && user.role === "admin" ? <AppSettingsPanel onChanged={onChanged} /> : null}

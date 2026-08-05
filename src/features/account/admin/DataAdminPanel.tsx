@@ -1,5 +1,6 @@
 import { Database } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
 import { formatBytes } from "@/lib/formatBytes";
 import { formatDateTime } from "@/lib/dateTime";
 import type { AdminDataOverview } from "@/lib/types";
@@ -84,20 +85,14 @@ export function DataAdminPanel() {
 
   return (
     <section className="max-w-6xl border border-slate-200 bg-white">
-      <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
-        <div className="flex items-start gap-3">
-          <div className="grid size-10 place-items-center border border-slate-200 bg-slate-50 text-slate-600">
-            <Database size={21} />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-slate-950">Data</h2>
-          </div>
-        </div>
-        <button onClick={() => void loadData()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
-      </div>
+      <AdminPanelHeader
+        icon={Database}
+        title="Data"
+        action={<button onClick={() => void loadData()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>}
+      />
 
       {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
-      {loading ? <p className="p-5 text-sm text-slate-500">Loading data...</p> : null}
+      {loading ? <AdminLoadingState>Loading data...</AdminLoadingState> : null}
 
       {!loading && overview ? (
         <>

@@ -1734,7 +1734,7 @@ function ToolbarMenu({
   const resolvedItems = typeof items === "function" ? items() : items;
 
   return (
-    <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+    <DropdownMenu.Root modal={false} open={open} onOpenChange={setOpen}>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"

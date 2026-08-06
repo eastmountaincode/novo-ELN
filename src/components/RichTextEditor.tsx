@@ -111,7 +111,7 @@ type RichTextEditorProps = {
 const spreadsheetAccept = ".csv,.tsv,.xls,.xlsx,.xlsb,.ods";
 const presentationAccept = ".ppt,.pptx,.pps,.ppsx,.odp";
 const imageAccept = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/tiff";
-const IMAGE_MIN_WIDTH = 180;
+const IMAGE_MIN_WIDTH = 260;
 const PDF_DEFAULT_WIDTH = 360;
 const PDF_MIN_WIDTH = 260;
 const PDF_PAGE_ASPECT = 11 / 8.5;
@@ -931,7 +931,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
         <div
           ref={imageWrapperRef}
           className={`group/inline-image relative inline-block max-w-full overflow-hidden border border-slate-300 bg-slate-50 align-top text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
-          style={displayWidth ? { width: `${displayWidth}px` } : undefined}
+          style={{ minWidth: `${IMAGE_MIN_WIDTH}px`, ...(displayWidth ? { width: `${displayWidth}px` } : {}) }}
         >
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
             {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move image" aria-label="Move image">
@@ -940,7 +940,27 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
             <FileImage size={17} className="shrink-0 text-cyan-700" />
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
-            {!readOnly ? <button type="button" tabIndex={-1} onClick={() => setAnnotationOpen(true)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Pencil size={13} />Annotate</button> : null}
+            {!readOnly ? (
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setAnnotationOpen(true)}
+                className="grid size-7 shrink-0 place-items-center border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                title="Annotate image"
+                aria-label="Annotate image"
+              >
+                <Pencil size={14} />
+              </button>
+            ) : null}
+            <a
+              href={downloadUrl}
+              tabIndex={-1}
+              className="grid size-7 shrink-0 place-items-center border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+              title="Download image"
+              aria-label="Download image"
+            >
+              <Download size={14} />
+            </a>
           </div>
           <div className="relative block min-h-28 w-full max-w-full bg-white">
             {!imageLoaded && !imageLoadError ? (

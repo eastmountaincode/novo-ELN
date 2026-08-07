@@ -13,7 +13,7 @@ function formatBuildStamp(date) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
+    hourCycle: "h23",
     timeZoneName: "short",
   }).formatToParts(date);
   const get = (type) => parts.find((part) => part.type === type)?.value || "";

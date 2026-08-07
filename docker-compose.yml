@@ -22,5 +22,7 @@ services:
       ELN_UPLOAD_DIR: /app-data/uploads
       ELN_PREVIEW_DIR: /app-data/previews
       ELN_DATABASE_PATH: /app-data/data/eln.sqlite3
+      ELN_DATABASE_CLIENT: ${ELN_DATABASE_CLIENT:-sqlite}
+      DATABASE_URL: ${DATABASE_URL:-}
     volumes:
       - ${NOVO_RUNTIME_DIR:-./runtime}:/app-data

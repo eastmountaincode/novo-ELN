@@ -51,7 +51,7 @@ export type PageRecordPackage = {
   recordHash: string;
 };
 
-const fixedZipMtime = new Date("1980-01-01T00:00:00.000Z");
+const fixedZipMtime = new Date("1980-01-02T00:00:00.000Z");
 
 export async function buildPageRecordPackage(
   page: PageEntry,

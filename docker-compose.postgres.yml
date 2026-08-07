@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: ${NOVO_POSTGRES_CONTAINER_NAME:-novo-postgres}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${NOVO_POSTGRES_DB:-novo}
+      POSTGRES_USER: ${NOVO_POSTGRES_USER:-novo}
+      POSTGRES_PASSWORD: ${NOVO_POSTGRES_PASSWORD:-novo-dev-password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NOVO_POSTGRES_USER:-novo} -d ${NOVO_POSTGRES_DB:-novo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:${NOVO_POSTGRES_HOST_PORT:-55432}:5432"
+    volumes:
+      - ${NOVO_POSTGRES_DATA_DIR:-./runtime/postgres}:/var/lib/postgresql/data
+
+  novo:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ELN_DATABASE_CLIENT: postgres
+      DATABASE_URL: postgresql://${NOVO_POSTGRES_USER:-novo}:${NOVO_POSTGRES_PASSWORD:-novo-dev-password}@postgres:5432/${NOVO_POSTGRES_DB:-novo}

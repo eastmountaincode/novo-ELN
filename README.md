@@ -19,7 +19,7 @@ Novo is an electronic lab notebook for organizing notebooks, pages, attachments,
 - Next.js App Router
 - Tailwind CSS
 - Cookie-based credential authentication
-- SQLite relational database
+- SQLite relational database by default, with opt-in Postgres support for larger deployments
 - Local filesystem attachment storage under `runtime/uploads`
 - Docker Compose for repeatable setup
 
@@ -91,6 +91,8 @@ runtime/previews/
 ```
 
 Inside Docker these are mounted at `/app-data`. Override with `ELN_DATABASE_PATH`, `ELN_DATA_DIR`, and `ELN_UPLOAD_DIR` only if you are deliberately running outside the provided compose file.
+
+For Postgres staging or larger deployments, set `ELN_DATABASE_CLIENT=postgres` and `DATABASE_URL`, then follow `ops/postgres-migration.md`.
 
 ## Optional Novo Chat integration
 

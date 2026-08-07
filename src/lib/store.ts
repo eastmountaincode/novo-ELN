@@ -8,8 +8,9 @@ import { bodyToEditorDocument, bodyToEditorText, commentThreadIdsFromBody, edito
 import { buildPageFinalizationPackage } from "./pageFinalizationPackage";
 import { stableJsonStringify, type PageRecordManifest } from "./pageRecordPackage";
 import { proofDir, uploadDir } from "./paths";
+import { ensurePostgresDatabase } from "./postgresSchema";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
-import { execSql, queryOne, querySql, sql } from "./sqlite";
+import { execSql, isPostgresDatabase, queryOne, querySql, sql } from "./sqlite";
 
 let initialized = false;
 
@@ -50,6 +51,14 @@ function databaseBoolean(value: unknown) {
 
 export function ensureDatabase() {
   if (initialized) return;
+  if (isPostgresDatabase()) {
+    ensurePostgresDatabase();
+    const searchIndexCount = Number(queryOne("SELECT COUNT(*) AS count FROM search_pages_fts")?.count ?? 0);
+    if (searchIndexCount === 0 && countRows("pages") > 0) rebuildSearchIndex();
+    initialized = true;
+    scheduleSearchIndexDrain();
+    return;
+  }
   execSql(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -670,6 +679,7 @@ function migratePageStatusValues() {
 }
 
 function tagIdSql() {
+  if (isPostgresDatabase()) return "lower(md5(random()::text || clock_timestamp()::text))";
   return "lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))), 2) || '-' || substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))";
 }
 
@@ -947,7 +957,7 @@ export function renameTagForAdmin(adminUserId: string, tagId: string, label: str
   const duplicate = queryOne(`
     SELECT id
     FROM tags
-    WHERE label = ${sql(normalizedLabel)} COLLATE NOCASE
+    WHERE lower(label) = lower(${sql(normalizedLabel)})
       AND id <> ${sql(tagId)}
     LIMIT 1
   `);
@@ -973,12 +983,23 @@ export function mergeTagForAdmin(adminUserId: string, sourceTagId: string, targe
   if (!source || !target) throw new Error("Tag not found.");
 
   const pageRows = tagPageRows(sourceTagId);
+  const mergePageTagsSql = isPostgresDatabase()
+    ? `
+      INSERT INTO page_tags (page_id, tag_id)
+      SELECT page_id, ${sql(targetTagId)}
+      FROM page_tags
+      WHERE tag_id = ${sql(sourceTagId)}
+      ON CONFLICT (page_id, tag_id) DO NOTHING;
+    `
+    : `
+      INSERT OR IGNORE INTO page_tags (page_id, tag_id)
+      SELECT page_id, ${sql(targetTagId)}
+      FROM page_tags
+      WHERE tag_id = ${sql(sourceTagId)};
+    `;
   execSql(`
     BEGIN;
-    INSERT OR IGNORE INTO page_tags (page_id, tag_id)
-    SELECT page_id, ${sql(targetTagId)}
-    FROM page_tags
-    WHERE tag_id = ${sql(sourceTagId)};
+    ${mergePageTagsSql}
     DELETE FROM page_tags WHERE tag_id = ${sql(sourceTagId)};
     DELETE FROM tags WHERE id = ${sql(sourceTagId)};
     COMMIT;
@@ -1635,7 +1656,7 @@ export function getWorkspace(userId: string): Workspace {
       n.created_at,
       n.updated_at,
       CASE
-        ${userIsAdmin ? "WHEN 1 THEN 'owner'" : ""}
+        ${userIsAdmin ? "WHEN 1 = 1 THEN 'owner'" : ""}
         WHEN nm.role = 'owner' THEN 'owner'
         WHEN nm.role = 'editor' THEN 'editor'
         ELSE 'viewer'
@@ -1643,7 +1664,7 @@ export function getWorkspace(userId: string): Workspace {
     FROM notebooks n
     LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
     ${userIsAdmin ? "" : "WHERE nm.user_id IS NOT NULL"}
-    GROUP BY n.id
+    GROUP BY n.id, nm.role
     ORDER BY datetime(n.updated_at) DESC, lower(n.name) ASC
   `);
   const notebookIds = notebookRows.map((notebook) => notebook.id);
@@ -1684,7 +1705,7 @@ export function getWorkspace(userId: string): Workspace {
         FROM page_tags pt
         JOIN tags t ON t.id = pt.tag_id
         WHERE pt.page_id IN (${inList(pageIds)})
-        ORDER BY pt.rowid ASC
+        ORDER BY ${pageTagOrderSql()}
       `)
     : [];
   const attachmentStatRows = pageIds.length
@@ -1802,7 +1823,7 @@ export function getPage(userId: string, pageId: string): PageEntry {
     FROM page_tags pt
     JOIN tags t ON t.id = pt.tag_id
     WHERE pt.page_id = ${sql(pageId)}
-    ORDER BY pt.rowid ASC
+    ORDER BY ${pageTagOrderSql()}
   `);
   const attachmentRows = querySql(`
     SELECT
@@ -1889,7 +1910,7 @@ export function getPageActivityEvents(userId: string, pageId: string, options: {
     FROM audit_events ae
     LEFT JOIN users u ON u.id = ae.actor_user_id
     WHERE ae.page_id = ${sql(pageId)}
-    ORDER BY ae.updated_at DESC, ae.created_at DESC, ae.rowid DESC
+    ORDER BY ae.updated_at DESC, ae.created_at DESC, ae.id DESC
     LIMIT ${limit} OFFSET ${offset}
   `).map(toAuditEvent);
   return {
@@ -1924,7 +1945,7 @@ export function listPageRecordAuditEvents(userId: string, pageId: string): Audit
     FROM audit_events ae
     LEFT JOIN users u ON u.id = ae.actor_user_id
     WHERE ae.page_id = ${sql(pageId)}
-    ORDER BY ae.created_at ASC, ae.updated_at ASC, ae.rowid ASC
+    ORDER BY ae.created_at ASC, ae.updated_at ASC, ae.id ASC
   `).map(toAuditEvent);
 }
 
@@ -1946,7 +1967,7 @@ export function getPageCommentThreads(userId: string, pageId: string): PageComme
     FROM page_comment_threads pct
     LEFT JOIN users u ON u.id = pct.created_by
     WHERE pct.page_id = ${sql(pageId)}
-    ORDER BY COALESCE(pct.resolved_at, '') ASC, pct.updated_at DESC, pct.created_at DESC, pct.rowid DESC
+    ORDER BY COALESCE(pct.resolved_at, '') ASC, pct.updated_at DESC, pct.created_at DESC, pct.id DESC
   `);
   if (!threadRows.length) return [];
   const threadIds = threadRows.map((row) => row.id);
@@ -1964,7 +1985,7 @@ export function getPageCommentThreads(userId: string, pageId: string): PageComme
     FROM page_comments pc
     LEFT JOIN users u ON u.id = pc.user_id
     WHERE pc.thread_id IN (${inList(threadIds)})
-    ORDER BY pc.created_at ASC, pc.rowid ASC
+    ORDER BY pc.created_at ASC, pc.id ASC
   `);
   const commentsByThread = new Map<string, PageComment[]>();
   for (const comment of commentRows.map(toPageComment)) {
@@ -2199,7 +2220,7 @@ export function getAdminActivityEvents(adminUserId: string, options: { limit?: n
     LEFT JOIN pages p ON p.id = ae.page_id
     LEFT JOIN notebooks n_from_page ON n_from_page.id = p.notebook_id
     LEFT JOIN notebooks n_direct ON n_direct.id = ae.notebook_id
-    ORDER BY ae.updated_at DESC, ae.created_at DESC, ae.rowid DESC
+    ORDER BY ae.updated_at DESC, ae.created_at DESC, ae.id DESC
     LIMIT ${limit} OFFSET ${offset}
   `).map(toAuditEvent);
   return {
@@ -2517,7 +2538,7 @@ export function setPageTags(userId: string, pageId: string, tags: string[]) {
     FROM page_tags pt
     JOIN tags t ON t.id = pt.tag_id
     WHERE pt.page_id = ${sql(pageId)}
-    ORDER BY pt.rowid ASC
+    ORDER BY ${pageTagOrderSql()}
   `));
   if (tagListsEqual(normalizedTags, currentTags)) return false;
   const page = queryOne(`SELECT notebook_id FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
@@ -2584,13 +2605,13 @@ export function duplicatePage(userId: string, pageId: string) {
     FROM page_tags pt
     JOIN tags t ON t.id = pt.tag_id
     WHERE pt.page_id = ${sql(pageId)}
-    ORDER BY pt.rowid ASC
+    ORDER BY ${pageTagOrderSql()}
   `));
   const attachments = querySql(`
     SELECT id, original_name, mime_type, size, storage_key, block_type, COALESCE(evernote_hash, '') AS evernote_hash
     FROM attachments
     WHERE page_id = ${sql(pageId)}
-    ORDER BY created_at ASC, rowid ASC
+    ORDER BY created_at ASC, id ASC
   `);
 
   const newPageId = randomUUID();
@@ -3633,7 +3654,7 @@ function recordAuditEvent(input: AuditEventInput) {
         AND actor_user_id = ${sql(input.actorUserId)}
         AND action = ${sql(input.action)}
         AND datetime(updated_at) >= datetime('now', '-${auditEventCoalesceSeconds} seconds')
-      ORDER BY updated_at DESC, rowid DESC
+      ORDER BY updated_at DESC, id DESC
       LIMIT 1
     `);
     if (existing?.id) {
@@ -4064,7 +4085,25 @@ function tagLabelRowsToList(rows: Record<string, string>[]) {
   return normalizePageTags(rows.map((row) => row.tag));
 }
 
+function pageTagOrderSql() {
+  return isPostgresDatabase() ? "lower(t.label) ASC, t.label ASC" : "pt.rowid ASC";
+}
+
 function pageTagInsertSql(pageId: string, tags: string[]) {
+  if (isPostgresDatabase()) {
+    return tags.map((tag) => `
+      INSERT INTO tags (id, label)
+      VALUES (${sql(randomUUID())}, ${sql(tag)})
+      ON CONFLICT ((lower(label))) DO NOTHING;
+
+      INSERT INTO page_tags (page_id, tag_id)
+      SELECT ${sql(pageId)}, id
+      FROM tags
+      WHERE lower(label) = lower(${sql(tag)})
+      LIMIT 1
+      ON CONFLICT (page_id, tag_id) DO NOTHING;
+    `).join("\n");
+  }
   return tags.map((tag) => `
     INSERT OR IGNORE INTO tags (id, label)
     VALUES (${sql(randomUUID())}, ${sql(tag)});

@@ -33,6 +33,13 @@ describe("store", () => {
     expect(workspace.notebooks[0].pages.length).toBeGreaterThan(0);
   });
 
+  it("preserves a single-column empty string row from query output", async () => {
+    const { querySql } = await import("../src/lib/sqlite");
+
+    expect(querySql("SELECT '' AS value")).toEqual([{ value: "" }]);
+    expect(querySql("SELECT '' AS value WHERE 0")).toEqual([]);
+  });
+
   it("migrates legacy user names without deleting notebook data", async () => {
     const { execSql, queryOne } = await import("../src/lib/sqlite");
     execSql(`

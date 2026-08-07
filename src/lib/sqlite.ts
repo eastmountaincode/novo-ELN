@@ -131,7 +131,7 @@ function postgresCompatibleSql(statement: string) {
 }
 
 function parseCsv(input: string): SqlRow[] {
-  const clean = input.trimEnd();
+  const clean = input.endsWith("\n") ? input.slice(0, -1) : input;
   if (!clean) return [];
   const rows = parseCsvRows(clean);
   const [headers, ...dataRows] = rows;

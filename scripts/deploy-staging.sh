@@ -85,5 +85,12 @@ if ! grep -Fq '<title>Novo-dev</title>' <<<"$page" ||
   exit 1
 fi
 
+if ! curl --fail --silent --show-error --max-time 300 \
+  "http://127.0.0.1:${NOVO_HOST_PORT}/api/health/database" | grep -Fq '"ok":true'; then
+  echo "Staging database readiness check failed." >&2
+  docker logs --tail=100 "$NOVO_CONTAINER_NAME" >&2 || true
+  exit 1
+fi
+
 novo_verify_database "$NOVO_CONTAINER_NAME" "$ROOT_DIR/$NOVO_ENV_FILE"
 echo "Staging is healthy on 127.0.0.1:${NOVO_HOST_PORT} at commit $commit"

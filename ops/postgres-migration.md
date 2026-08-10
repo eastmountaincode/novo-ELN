@@ -17,7 +17,7 @@ Start a Postgres-backed development stack:
 docker compose -f docker-compose.dev.yml -f docker-compose.postgres.yml up -d --build
 ```
 
-Wait for Novo to become ready. Server startup initializes the Postgres schema before accepting requests. The compose override exposes Postgres on localhost port `55432` by default, so the matching local migration URL is:
+Wait for Novo to become ready, then request `/api/health/database`. The server-only readiness route initializes the Postgres schema and reports success only when the database can be used. The deployment scripts require this check before declaring an environment healthy. The compose override exposes Postgres on localhost port `55432` by default, so the matching local migration URL is:
 
 ```bash
 export DATABASE_URL="postgresql://novo:novo-dev-password@127.0.0.1:${NOVO_POSTGRES_HOST_PORT:-55432}/novo"
@@ -44,10 +44,10 @@ then include `docker-compose.postgres.yml` automatically.
 1. Stop write traffic or put the current instance in maintenance.
 2. Run `scripts/backup-sqlite.sh` and keep the manifest plus snapshot.
 3. Create the Postgres database and set the production `DATABASE_URL`.
-4. Start Novo with `ELN_DATABASE_CLIENT=postgres` and wait for readiness so schema creation runs.
+4. Start Novo with `ELN_DATABASE_CLIENT=postgres` and wait for `/api/health/database` to report readiness so schema creation runs.
 5. Run `npm run db:migrate:postgres -- --sqlite <snapshot> --database-url "$DATABASE_URL" --truncate-target`.
-6. Start the production container with `ELN_DATABASE_CLIENT=postgres`.
-7. Run one authenticated warm-up request while traffic is still closed, then confirm `SELECT COUNT(*) FROM search_pages_fts` matches `SELECT COUNT(*) FROM pages`.
+6. Start the production container with `ELN_DATABASE_CLIENT=postgres`; the deployment readiness check rebuilds an empty search index before it succeeds.
+7. Keep traffic closed until the readiness check completes, then confirm `SELECT COUNT(*) FROM search_pages_fts` matches `SELECT COUNT(*) FROM pages`.
 8. Verify login, workspace load, page read/write on an unfinalized page, attachment download, search, admin schema, ER Flow sync, and finalization package download.
 
 After cutover, run the Borg job with the Postgres environment so it creates a

@@ -36,6 +36,11 @@ Then restart Novo with Postgres enabled. The migration clears derived search tab
 
 ## Production Cutover Shape
 
+Create an ignored `.env.postgres` from `.env.postgres.example`, use a unique
+URL-safe password, and set `ELN_DATABASE_CLIENT=postgres` in the service
+environment only when the target database is ready. The deployment scripts
+then include `docker-compose.postgres.yml` automatically.
+
 1. Stop write traffic or put the current instance in maintenance.
 2. Run `scripts/backup-sqlite.sh` and keep the manifest plus snapshot.
 3. Create the Postgres database and set the production `DATABASE_URL`.
@@ -44,6 +49,16 @@ Then restart Novo with Postgres enabled. The migration clears derived search tab
 6. Start the production container with `ELN_DATABASE_CLIENT=postgres`.
 7. Run one authenticated warm-up request while traffic is still closed, then confirm `SELECT COUNT(*) FROM search_pages_fts` matches `SELECT COUNT(*) FROM pages`.
 8. Verify login, workspace load, page read/write on an unfinalized page, attachment download, search, admin schema, ER Flow sync, and finalization package download.
+
+After cutover, run the Borg job with the Postgres environment so it creates a
+validated custom-format dump and archives it with uploads, previews, and proofs:
+
+```bash
+docker compose --env-file .env.postgres -f docker-compose.backup.yml run --rm novo-borg-backup
+```
+
+Restore that dump into a disposable database and compare table counts before
+considering the cutover complete.
 
 Rollback is switching the service environment back to `ELN_DATABASE_CLIENT=sqlite` and the preserved SQLite runtime data. Do not delete the SQLite snapshot until Postgres has survived a full backup cycle and a restore test.
 

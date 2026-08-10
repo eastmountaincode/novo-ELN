@@ -15,10 +15,19 @@ services:
       NOVO_RUNTIME_DIR: /app-runtime
       NOVO_BACKUP_STAGING_DIR: /backup-staging
       NOVO_BORG_ARCHIVE_PREFIX: ${NOVO_BORG_ARCHIVE_PREFIX:-novo}
+      NOVO_DATABASE_CLIENT: ${NOVO_DATABASE_CLIENT:-sqlite}
+      DATABASE_URL: ${DATABASE_URL:-}
     volumes:
       - ./runtime:/app-runtime:rw
       - novo-borg-staging:/backup-staging
       - ${NOVO_BORG_REPOSITORY:?NOVO_BORG_REPOSITORY is required for backups}:/borg-repo
+    networks:
+      - novo-app
 
 volumes:
   novo-borg-staging:
+
+networks:
+  novo-app:
+    external: true
+    name: ${NOVO_APP_NETWORK:-novo-eln_default}

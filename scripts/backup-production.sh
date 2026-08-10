@@ -15,20 +15,45 @@ timestamp="$1"
 backup_dir="/app-data/backups/$timestamp"
 mkdir -p "$backup_dir"
 
-if [ ! -f /app-data/data/eln.sqlite3 ]; then
-  echo "Novo database not found: /app-data/data/eln.sqlite3" >&2
-  exit 1
-fi
+database_client="${ELN_DATABASE_CLIENT:-sqlite}"
+case "$database_client" in
+  postgres | postgresql)
+    pg_dump --format=custom --no-owner --no-privileges --file="$backup_dir/postgres.dump" "$DATABASE_URL"
+    pg_restore --list "$backup_dir/postgres.dump" >/dev/null
+    database_backup="$backup_dir/postgres.dump"
+    database_client=postgres
+    ;;
+  sqlite | "")
+    if [ ! -f /app-data/data/eln.sqlite3 ]; then
+      echo "Novo database not found: /app-data/data/eln.sqlite3" >&2
+      exit 1
+    fi
+    sqlite3 /app-data/data/eln.sqlite3 ".timeout 30000" ".backup $backup_dir/eln.sqlite3"
+    integrity_check="$(sqlite3 "$backup_dir/eln.sqlite3" "PRAGMA integrity_check;")"
+    if [ "$integrity_check" != "ok" ]; then
+      echo "SQLite backup failed integrity check: $integrity_check" >&2
+      exit 1
+    fi
+    database_backup="$backup_dir/eln.sqlite3"
+    database_client=sqlite
+    ;;
+  *)
+    echo "Unsupported ELN_DATABASE_CLIENT: $database_client" >&2
+    exit 1
+    ;;
+esac
 
-sqlite3 /app-data/data/eln.sqlite3 ".timeout 30000" ".backup $backup_dir/eln.sqlite3"
-integrity_check="$(sqlite3 "$backup_dir/eln.sqlite3" "PRAGMA integrity_check;")"
-if [ "$integrity_check" != "ok" ]; then
-  echo "SQLite backup failed integrity check: $integrity_check" >&2
-  exit 1
+file_paths=""
+for path in uploads previews proofs; do
+  if [ -d "/app-data/$path" ]; then
+    file_paths="$file_paths $path"
+  fi
+done
+if [ -n "$file_paths" ]; then
+  # shellcheck disable=SC2086
+  tar -C /app-data -czf "$backup_dir/files.tar.gz" $file_paths
 fi
-
-tar -C /app-data -czf "$backup_dir/uploads.tar.gz" uploads previews 2>/dev/null || tar -C /app-data -czf "$backup_dir/uploads.tar.gz" uploads
-printf "created_at=%s\ndatabase=%s\nsqlite_backup=%s\nfiles_backup=%s\n" "$(date -Iseconds)" "/app-data/data/eln.sqlite3" "$backup_dir/eln.sqlite3" "$backup_dir/uploads.tar.gz" > "$backup_dir/manifest.txt"
+printf "created_at=%s\ndatabase_client=%s\ndatabase_backup=%s\nfiles_backup=%s\n" "$(date -Iseconds)" "$database_client" "$database_backup" "$backup_dir/files.tar.gz" > "$backup_dir/manifest.txt"
 ' sh "$timestamp"
 
 echo "Created Novo backup: $backup_dir"

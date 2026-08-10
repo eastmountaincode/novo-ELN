@@ -4,8 +4,9 @@ Novo backups run outside the Next.js app as a separate process. The app can keep
 
 The backup must include:
 
-- a consistent SQLite database snapshot
+- a consistent SQLite snapshot or validated Postgres custom-format dump
 - uploaded attachment files in `runtime/uploads`
+- finalized proof files in `runtime/proofs`
 
 Derived preview files in `runtime/previews` are included when present so a restored app is ready to inspect immediately.
 
@@ -20,7 +21,7 @@ NOVO_BORG_PASSPHRASE='use-a-long-random-passphrase' \
 docker compose -f docker-compose.backup.yml run --rm novo-borg-backup
 ```
 
-This starts a short-lived container, creates a SQLite `.backup` snapshot, stores uploads/previews plus a manifest in a Borg archive, applies retention, compacts the repository, and exits.
+This starts a short-lived container, creates the configured database snapshot, stores uploads/previews/proofs plus a manifest in a Borg archive, applies retention, compacts the repository, and exits. With Postgres, include `--env-file .env.postgres`; the job creates and validates a custom-format `pg_dump`.
 
 Retention is:
 
@@ -97,11 +98,15 @@ docker run --rm \
 The restored archive contains:
 
 - `backup-staging/eln.sqlite3`
+- `backup-staging/postgres.dump` instead of `eln.sqlite3` for a Postgres archive
 - `backup-staging/manifest.txt`
 - `uploads/`
 - `previews/` when previews existed
+- `proofs/` when finalized proof files existed
 
-Point a test Novo instance at the restored SQLite file and uploads directory before trusting the backup strategy.
+Point a test Novo instance at the restored SQLite file, or restore `postgres.dump`
+into a disposable Postgres database, before trusting the backup strategy. Mount
+the restored uploads, previews, and proofs with the restored database.
 
 ## Later Admin-Managed Option
 

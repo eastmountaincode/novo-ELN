@@ -56,6 +56,8 @@ Example nightly entry:
 30 2 * * * cd /export/home/aboylan/novo-eln-prod && NOVO_BORG_REPOSITORY=/path/to/novo-borg-repo NOVO_BORG_PASSPHRASE='replace-with-a-long-random-passphrase' docker compose -f docker-compose.backup.yml run --rm novo-borg-backup >> runtime/backups/borg.log 2>&1
 ```
 
+For a Postgres deployment, add `--env-file .env.postgres` before `-f`.
+
 This does not require root if the user can run Docker and cron.
 
 If cron is not allowed, run the command manually before imports and ask Marc/IT for either user cron support or a root-managed systemd timer.
@@ -88,12 +90,16 @@ A backup is not proven until restore has been tested. Restore into a separate di
 mkdir -p /tmp/novo-restore-test
 docker run --rm \
   --entrypoint borg \
+  --workdir /restore \
   -e BORG_PASSPHRASE="$NOVO_BORG_PASSPHRASE" \
-  -v "$NOVO_BORG_REPOSITORY:/borg-repo:ro" \
+  -v "$NOVO_BORG_REPOSITORY:/borg-repo" \
   -v /tmp/novo-restore-test:/restore \
   novo-eln-borg-backup:latest \
-  extract --target /restore /borg-repo::ARCHIVE_NAME
+  extract /borg-repo::ARCHIVE_NAME
 ```
+
+Borg needs the repository mounted writable so it can acquire its lock while
+listing, checking, or extracting an archive.
 
 The restored archive contains:
 

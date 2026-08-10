@@ -1,3 +1,5 @@
+FROM postgres:16-bookworm AS postgres-package-source
+
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -6,6 +8,8 @@ RUN npm ci
 FROM deps AS dev
 ENV NODE_ENV=development
 ENV NOVO_INSTANCE=dev
+COPY --from=postgres-package-source /usr/local/share/keyrings/postgres.gpg.asc /usr/local/share/keyrings/postgres.gpg.asc
+COPY --from=postgres-package-source /etc/apt/sources.list.d/pgdg.list /etc/apt/sources.list.d/pgdg.list
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -13,7 +17,7 @@ RUN apt-get update \
     fonts-dejavu-core \
     libreoffice \
     poppler-utils \
-    postgresql-client \
+    postgresql-client-16 \
     sqlite3 \
   && rm -rf /var/lib/apt/lists/*
 
@@ -44,6 +48,8 @@ ENV ELN_DATABASE_PATH=/app-data/data/eln.sqlite3
 
 LABEL org.opencontainers.image.revision=$NOVO_GIT_SHA
 
+COPY --from=postgres-package-source /usr/local/share/keyrings/postgres.gpg.asc /usr/local/share/keyrings/postgres.gpg.asc
+COPY --from=postgres-package-source /etc/apt/sources.list.d/pgdg.list /etc/apt/sources.list.d/pgdg.list
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -51,7 +57,7 @@ RUN apt-get update \
     fonts-dejavu-core \
     libreoffice \
     poppler-utils \
-    postgresql-client \
+    postgresql-client-16 \
     sqlite3 \
   && rm -rf /var/lib/apt/lists/*
 

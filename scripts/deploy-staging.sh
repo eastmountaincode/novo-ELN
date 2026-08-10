@@ -53,7 +53,9 @@ export NOVO_GIT_SHA="$commit"
 export NOVO_BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 source "$ROOT_DIR/scripts/lib/novo-chat-compose.sh"
+source "$ROOT_DIR/scripts/lib/novo-database-compose.sh"
 novo_configure_compose_args "$ROOT_DIR/$NOVO_ENV_FILE" "$ROOT_DIR"
+novo_configure_database_compose_args "$ROOT_DIR/$NOVO_ENV_FILE" "$ROOT_DIR"
 
 echo "Building staging image $NOVO_IMAGE from GitHub commit $commit"
 docker compose "${NOVO_COMPOSE_ARGS[@]}" build novo
@@ -83,5 +85,5 @@ if ! grep -Fq '<title>Novo-dev</title>' <<<"$page" ||
   exit 1
 fi
 
-docker exec "$NOVO_CONTAINER_NAME" sqlite3 /app-data/data/eln.sqlite3 'PRAGMA quick_check;' | grep -qx ok
+novo_verify_database "$NOVO_CONTAINER_NAME" "$ROOT_DIR/$NOVO_ENV_FILE"
 echo "Staging is healthy on 127.0.0.1:${NOVO_HOST_PORT} at commit $commit"

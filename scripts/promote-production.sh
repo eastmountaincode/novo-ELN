@@ -49,7 +49,6 @@ if [[ ! -f "$production_env" ]] || ! grep -Eq '^NOVO_INSTANCE=(prod|production)$
   echo "$production_env must explicitly set NOVO_INSTANCE=prod before production promotion." >&2
   exit 1
 fi
-sqlite3 "$production_runtime/data/eln.sqlite3" 'PRAGMA quick_check;' | grep -qx ok
 
 previous_image="$(docker inspect novo-eln --format '{{.Config.Image}}' 2>/dev/null || true)"
 
@@ -60,9 +59,21 @@ export NOVO_ENV_FILE="$production_env"
 export NOVO_RUNTIME_DIR="$production_runtime"
 export NOVO_IMAGE="$image"
 
-git checkout --detach "$commit"
 source "$ROOT_DIR/scripts/lib/novo-chat-compose.sh"
+source "$ROOT_DIR/scripts/lib/novo-database-compose.sh"
 novo_configure_compose_args "$production_env" "$ROOT_DIR"
+novo_configure_database_compose_args "$production_env" "$ROOT_DIR"
+
+database_client="$(novo_database_client "$production_env")"
+if [[ "$database_client" == "postgres" ]]; then
+  if [[ "$(docker inspect novo-eln --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^ELN_DATABASE_CLIENT=//p')" == "postgres" ]]; then
+    novo_verify_database novo-eln "$production_env"
+  fi
+else
+  sqlite3 "$production_runtime/data/eln.sqlite3" 'PRAGMA quick_check;' | grep -qx ok
+fi
+
+git checkout --detach "$commit"
 docker compose "${NOVO_COMPOSE_ARGS[@]}" up -d --no-build novo
 
 page=""
@@ -83,5 +94,5 @@ if ! grep -Fq '<title>Novo</title>' <<<"$page"; then
   exit 1
 fi
 
-docker exec "$NOVO_CONTAINER_NAME" sqlite3 /app-data/data/eln.sqlite3 'PRAGMA quick_check;' | grep -qx ok
+novo_verify_database "$NOVO_CONTAINER_NAME" "$production_env"
 echo "Production now runs the staging-tested image $image"

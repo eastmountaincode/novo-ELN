@@ -7,6 +7,7 @@ RUN apt-get update \
     ca-certificates \
     coreutils \
     findutils \
+    postgresql-client \
     sqlite3 \
   && rm -rf /var/lib/apt/lists/*
 

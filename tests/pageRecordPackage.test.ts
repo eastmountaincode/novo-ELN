@@ -100,7 +100,7 @@ describe("page record package", () => {
   });
 
   it("builds a deterministic package that includes canonical page data and attachment bytes", async () => {
-    const { buildPageRecordPackage, stableJsonStringify, sha256Hex } = await import("../src/lib/pageRecordPackage");
+    const { buildPageRecordPackage, sha256Hex } = await import("../src/lib/pageRecordPackage");
     const setup = await createTestPage();
 
     const first = await buildPageRecordPackage(setup.page, setup.notebook, {
@@ -117,10 +117,11 @@ describe("page record package", () => {
 
     const entries = unzipSync(first.archive);
     const manifest = JSON.parse(strFromU8(entries["manifest.json"]));
-    expect(manifest.recordHash).toBe(first.recordHash);
-    const manifestPayload = { ...manifest };
-    delete manifestPayload.recordHash;
-    expect(sha256Hex(Buffer.from(`${stableJsonStringify(manifestPayload)}\n`, "utf8"))).toBe(first.recordHash);
+    expect(manifest.packageVersion).toBe(2);
+    expect(manifest.recordHash).toBeUndefined();
+    expect(manifest.recordHashMaterial).toBeUndefined();
+    expect(sha256Hex(entries["manifest.json"])).toBe(first.recordHash);
+    expect(strFromU8(entries["manifest.sha256"])).toBe(`${first.recordHash}  manifest.json\n`);
 
     const pageRecord = JSON.parse(strFromU8(entries["record/page.json"]));
     expect(pageRecord.page.title).toBe("Deterministic record");
@@ -133,6 +134,29 @@ describe("page record package", () => {
     expect(attachmentEntry).toBeTruthy();
     expect(Buffer.from(entries[attachmentEntry.path]).equals(setup.attachmentBytes)).toBe(true);
     expect(attachmentEntry.sha256).toBe(sha256Hex(setup.attachmentBytes));
+  });
+
+  it("retains the version 1 manifest hash rule for historical verification", async () => {
+    const { calculatePageRecordHash, stableJsonStringify, sha256Hex } = await import("../src/lib/pageRecordPackage");
+    const manifestPayload = {
+      schemaVersion: 1 as const,
+      packageType: "novo.page.record" as const,
+      packageVersion: 1 as const,
+      hashAlgorithm: "sha256" as const,
+      recordHashMaterial: "canonical-json(manifest without recordHash)" as const,
+      page: {
+        id: "page-1",
+        notebookId: "notebook-1",
+        title: "Historical record",
+        updatedAt: "2026-08-05 20:46:58",
+        attachmentCount: 0,
+        attachmentBytes: 0,
+      },
+      files: [],
+    };
+    const recordHash = sha256Hex(Buffer.from(`${stableJsonStringify(manifestPayload)}\n`, "utf8"));
+
+    expect(calculatePageRecordHash({ ...manifestPayload, recordHash })).toBe(recordHash);
   });
 
   it("changes the record hash when attachment bytes change", async () => {

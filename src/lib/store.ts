@@ -6,7 +6,7 @@ import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOver
 import { readDatabaseSchema } from "./databaseSchema";
 import { bodyToEditorDocument, bodyToEditorText, commentThreadIdsFromBody, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody, removeCommentMarksFromBody, removeUnknownCommentMarksFromBody } from "./editor";
 import { buildPageFinalizationPackage } from "./pageFinalizationPackage";
-import { stableJsonStringify, type PageRecordManifest } from "./pageRecordPackage";
+import { calculatePageRecordHash, stableJsonStringify, type PageRecordManifest } from "./pageRecordPackage";
 import { proofDir, uploadDir } from "./paths";
 import { ensurePostgresDatabase } from "./postgresSchema";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
@@ -1316,7 +1316,7 @@ export function createPageRecordSignature(
   `);
   if (!page) throw new Error("Page not found");
 
-  if (input.recordManifest.recordHash !== input.recordHash) throw new Error("Record manifest hash mismatch.");
+  if (calculatePageRecordHash(input.recordManifest) !== input.recordHash) throw new Error("Record manifest hash mismatch.");
   if (input.recordManifest.page.id !== input.pageId || input.recordManifest.page.notebookId !== page.notebook_id) {
     throw new Error("Record manifest does not match the page.");
   }
@@ -1324,7 +1324,7 @@ export function createPageRecordSignature(
   const createdAt = new Date().toISOString();
   const recordManifestJson = canonicalSigningJson(input.recordManifest);
   const signaturePayload = canonicalSigningJson({
-    schemaVersion: 1,
+    schemaVersion: 2,
     payloadType: "novo.page.record.signature",
     signatureMeaning: "The signer attests to this Novo page record package hash.",
     signedAt: createdAt,
@@ -1351,8 +1351,8 @@ export function createPageRecordSignature(
       packageVersion: input.recordManifest.packageVersion,
       hashAlgorithm: input.recordManifest.hashAlgorithm,
       hash: input.recordHash,
-      manifestHashAlgorithm: "sha256",
-      manifestHash: hashAuditValue(recordManifestJson),
+      hashTarget: "manifest.json",
+      hashFile: "manifest.sha256",
     },
   });
 
@@ -3342,9 +3342,9 @@ function buildPageProofPackage(input: {
   signature: string;
 }) {
   const proofPackagePayload = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     packageType: "novo.page.proof",
-    packageVersion: 1,
+    packageVersion: 2,
     hashAlgorithm: "sha256",
     proofHashMaterial: "canonical-json(proof package without proofHash)",
     proofPurpose: "Input hash for an RFC3161 timestamp request for this signed Novo page record.",
@@ -3367,9 +3367,9 @@ function buildPageProofPackage(input: {
       packageVersion: input.recordManifest.packageVersion,
       hashAlgorithm: input.recordManifest.hashAlgorithm,
       hash: input.recordHash,
+      hashTarget: "manifest.json",
+      hashFile: "manifest.sha256",
       manifestMediaType: "application/json; charset=utf-8",
-      manifestHashAlgorithm: "sha256",
-      manifestHash: hashAuditValue(input.recordManifestJson),
       manifest: input.recordManifest,
     },
     userSignature: {

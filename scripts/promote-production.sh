@@ -94,5 +94,15 @@ if ! grep -Fq '<title>Novo</title>' <<<"$page"; then
   exit 1
 fi
 
+if ! curl --fail --silent --show-error --max-time 300 \
+  "http://127.0.0.1:${NOVO_HOST_PORT}/api/health/database" | grep -Fq '"ok":true'; then
+  echo "Production database readiness check failed; attempting rollback." >&2
+  if [[ -n "$previous_image" ]]; then
+    export NOVO_IMAGE="$previous_image"
+    docker compose "${NOVO_COMPOSE_ARGS[@]}" up -d --no-build novo || true
+  fi
+  exit 1
+fi
+
 novo_verify_database "$NOVO_CONTAINER_NAME" "$production_env"
 echo "Production now runs the staging-tested image $image"

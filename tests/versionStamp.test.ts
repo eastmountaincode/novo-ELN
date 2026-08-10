@@ -43,6 +43,12 @@ describe("version timestamp generation", () => {
     );
   });
 
+  it("formats midnight-hour builds with a zero-based hour", () => {
+    expect(generatedVersion("2026-08-07T04:59:16Z")).toContain(
+      'appVersion: string = "2026-08-07 00:59 EDT"',
+    );
+  });
+
   it("keeps an explicit application version unchanged", () => {
     expect(generatedVersion("2026-07-28T19:23:16Z", "release-candidate")).toContain(
       'appVersion: string = "release-candidate"',

@@ -13,6 +13,7 @@ RUN apt-get update \
     fonts-dejavu-core \
     libreoffice \
     poppler-utils \
+    postgresql-client \
     sqlite3 \
   && rm -rf /var/lib/apt/lists/*
 
@@ -50,6 +51,7 @@ RUN apt-get update \
     fonts-dejavu-core \
     libreoffice \
     poppler-utils \
+    postgresql-client \
     sqlite3 \
   && rm -rf /var/lib/apt/lists/*
 

@@ -4,7 +4,7 @@ import type { PageSignature, PageSignatureTimestamp } from "./types";
 
 type FinalizationPackageFile = {
   path: string;
-  role: "record-package" | "proof-package" | "signature-payload" | "record-manifest" | "timestamp-request" | "timestamp-response" | "readme";
+  role: "record-package" | "proof-package" | "signature-payload" | "record-manifest" | "record-manifest-checksum" | "timestamp-request" | "timestamp-response" | "readme";
   mediaType: string;
   bytes: number;
   sha256: string;
@@ -15,9 +15,9 @@ type FinalizationPackageFileEntry = FinalizationPackageFile & {
 };
 
 type PageFinalizationPackageManifestPayload = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   packageType: "novo.page.finalization";
-  packageVersion: 1;
+  packageVersion: 2;
   hashAlgorithm: "sha256";
   finalizationHashMaterial: "canonical-json(manifest without finalizationHash)";
   createdAt: string;
@@ -64,7 +64,7 @@ export type PageFinalizationPackage = {
   finalizationHash: string;
 };
 
-const fixedZipMtime = new Date("1980-01-01T00:00:00.000Z");
+const fixedZipMtime = new Date("1980-01-02T00:00:00.000Z");
 
 export function buildPageFinalizationPackage(input: {
   signature: PageSignature;
@@ -79,6 +79,7 @@ export function buildPageFinalizationPackage(input: {
   addTextFile(files, "proof/proof-package.json", "proof-package", input.signature.proofPackageJson);
   addTextFile(files, "proof/signature-payload.json", "signature-payload", input.signature.signaturePayload);
   addTextFile(files, "proof/record-manifest.json", "record-manifest", input.signature.recordManifestJson);
+  addTextFile(files, "proof/record-manifest.sha256", "record-manifest-checksum", `${input.signature.recordHash}  record-manifest.json`);
   for (const timestamp of input.signature.timestamps) {
     addTimestampFiles(files, timestamp);
   }
@@ -93,9 +94,9 @@ export function buildPageFinalizationPackage(input: {
     sha256: file.sha256,
   }));
   const manifestPayload: PageFinalizationPackageManifestPayload = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     packageType: "novo.page.finalization",
-    packageVersion: 1,
+    packageVersion: 2,
     hashAlgorithm: "sha256",
     finalizationHashMaterial: "canonical-json(manifest without finalizationHash)",
     createdAt,
@@ -190,7 +191,9 @@ function finalizationReadme(signature: PageSignature) {
     timestamp ? `Timestamp: ${timestamp.provider}, ${timestamp.tsaTime || timestamp.createdAt}` : "",
     "",
     "record.zip is the page snapshot being proved.",
+    "record.zip/manifest.sha256 is the SHA256 checksum of record.zip/manifest.json.",
     "proof/proof-package.json contains the user signature and proof hash.",
+    "proof/record-manifest.sha256 is the SHA256 checksum of proof/record-manifest.json.",
     "timestamps/*/response.tsr contains the RFC3161 timestamp token from the timestamp authority.",
   ].filter(Boolean).join("\n");
 }

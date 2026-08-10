@@ -1,5 +1,5 @@
 import { bodyToEditorText } from "./editor";
-import { execSql, queryOne, querySql, sql } from "./sqlite";
+import { execSql, isPostgresDatabase, queryOne, querySql, sql } from "./sqlite";
 import type { SearchMatchType, SearchResult } from "./types";
 
 type SearchablePage = {
@@ -150,6 +150,7 @@ export function searchWorkspace(userId: string, rawQuery: string, limit = 30, mo
   const advancedScope = normalizeSearchScope(scope);
   const includeQuery = (advancedScope.includeTerms ?? []).filter((term) => !term.includes("*")).join(" ");
   const searchQuery = [query, includeQuery].filter(Boolean).join(" ").trim();
+  if (isPostgresDatabase()) return searchPostgres(userId, searchQuery, limit, advancedScope);
   if (!searchQuery) {
     if (!hasAdvancedSearchFilters(advancedScope)) return [];
     return searchFilteredPages(userId, limit, advancedScope);
@@ -159,6 +160,85 @@ export function searchWorkspace(userId: string, rawQuery: string, limit = 30, mo
   if (mode === "approx") return searchApproximate(userId, searchQuery, limit, advancedScope);
 
   return mergeSearchResults(searchFast(userId, searchQuery, limit, advancedScope), searchApproximate(userId, searchQuery, limit, advancedScope)).slice(0, limit);
+}
+
+function searchPostgres(userId: string, query: string, limit: number, scope: SearchScope): SearchResult[] {
+  if (!query) {
+    if (!hasAdvancedSearchFilters(scope)) return [];
+    return searchFilteredPages(userId, limit, scope);
+  }
+
+  const tokens = tokenize(query);
+  if (!tokens.length) return [];
+  const accessCondition = searchAccessCondition(userId, "n", "nm");
+  const notebookCondition = scope.notebookId ? `AND f.notebook_id = ${sql(scope.notebookId)}` : "";
+  const advancedCondition = advancedSearchSqlCondition(scope);
+  const textExpression = searchableSqlExpression(scope.fields);
+  const tokenConditions = tokens.map((token) => `${textExpression} LIKE ${sql(postgresTokenLikePattern(token))} ESCAPE '\\'`);
+  const rows = querySql(`
+    SELECT
+      f.page_id,
+      f.notebook_id,
+      f.title,
+      n.name AS notebook_name,
+      f.body,
+      f.tags,
+      f.attachments,
+      f.updated_at
+    FROM search_pages_fts f
+    JOIN notebooks n ON n.id = f.notebook_id
+    LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
+    WHERE ${accessCondition}
+      ${notebookCondition}
+      ${advancedCondition}
+      AND (${tokenConditions.join(" OR ")})
+    ORDER BY datetime(f.updated_at) DESC
+    LIMIT ${Math.max(limit * 10, 300)}
+  `);
+
+  const minimumMatchCount = relaxedMinimumMatchCount(tokens.length);
+  return rows
+    .filter((row) => rowMatchesAdvancedFilters(row, scope))
+    .map((row): SearchResult & { matchedTokenCount: number } => {
+      const searchableText = searchableTextForScope(row, scope.fields);
+      const matchedTokenCount = countMatchedTokens(tokens, searchableText);
+      const titleMatchedTokenCount = countMatchedTokens(tokens, row.title);
+      const attachmentMatchedTokenCount = countMatchedTokens(tokens, row.attachments);
+      return {
+        pageId: row.page_id,
+        projectId: "workspace",
+        notebookId: row.notebook_id,
+        title: row.title,
+        projectName: "Notebooks",
+        notebookName: row.notebook_name,
+        snippet: bestSubstringSnippet(row, scope.fields, query),
+        updatedAt: row.updated_at,
+        matchType: titleMatchedTokenCount >= minimumMatchCount ? "title" : attachmentMatchedTokenCount >= minimumMatchCount ? "attachment" : "content",
+        score: scoreFtsResult({
+          query,
+          tokens,
+          title: row.title,
+          searchableText,
+          bm25Score: 0,
+        }),
+        matchedTokenCount,
+      };
+    })
+    .filter((result) => result.matchedTokenCount >= minimumMatchCount)
+    .sort((a, b) => b.score - a.score || Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, limit)
+    .map((result) => ({
+      pageId: result.pageId,
+      projectId: result.projectId,
+      notebookId: result.notebookId,
+      title: result.title,
+      projectName: result.projectName,
+      notebookName: result.notebookName,
+      snippet: result.snippet,
+      updatedAt: result.updatedAt,
+      matchType: result.matchType,
+      score: result.score,
+    }));
 }
 
 function searchFast(userId: string, query: string, limit: number, scope: SearchScope) {
@@ -414,6 +494,8 @@ function getAllSearchablePages(): SearchablePage[] {
 }
 
 function getSearchablePages(whereClause = ""): SearchablePage[] {
+  const tagAggregate = isPostgresDatabase() ? "string_agg(DISTINCT t.label, ',')" : "group_concat(DISTINCT t.label)";
+  const attachmentAggregate = isPostgresDatabase() ? "string_agg(DISTINCT a.original_name, ',')" : "group_concat(DISTINCT a.original_name)";
   return mapSearchRows(querySql(`
     SELECT
       p.id AS page_id,
@@ -422,15 +504,15 @@ function getSearchablePages(whereClause = ""): SearchablePage[] {
       p.body,
       p.updated_at,
       n.name AS notebook_name,
-      COALESCE(group_concat(DISTINCT t.label), '') AS tags,
-      COALESCE(group_concat(DISTINCT a.original_name), '') AS attachments
+      COALESCE(${tagAggregate}, '') AS tags,
+      COALESCE(${attachmentAggregate}, '') AS attachments
     FROM pages p
     JOIN notebooks n ON n.id = p.notebook_id
     LEFT JOIN page_tags pt ON pt.page_id = p.id
     LEFT JOIN tags t ON t.id = pt.tag_id
     LEFT JOIN attachments a ON a.page_id = p.id
     ${whereClause}
-    GROUP BY p.id
+    GROUP BY p.id, p.notebook_id, p.title, p.body, p.updated_at, n.name
   `));
 }
 
@@ -503,6 +585,15 @@ function termCandidateLikePattern(term: string) {
     .replace(/%/g, "\\%")
     .replace(/_/g, "\\_")
     .replace(/\*/g, "%");
+  return `%${escaped}%`;
+}
+
+function postgresTokenLikePattern(term: string) {
+  const escaped = term
+    .toLowerCase()
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_");
   return `%${escaped}%`;
 }
 

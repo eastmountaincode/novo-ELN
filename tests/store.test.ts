@@ -33,6 +33,13 @@ describe("store", () => {
     expect(workspace.notebooks[0].pages.length).toBeGreaterThan(0);
   });
 
+  it("preserves a single-column empty string row from query output", async () => {
+    const { querySql } = await import("../src/lib/sqlite");
+
+    expect(querySql("SELECT '' AS value")).toEqual([{ value: "" }]);
+    expect(querySql("SELECT '' AS value WHERE 0")).toEqual([]);
+  });
+
   it("migrates legacy user names without deleting notebook data", async () => {
     const { execSql, queryOne } = await import("../src/lib/sqlite");
     execSql(`
@@ -585,17 +592,24 @@ describe("store", () => {
     expect(signature.recordPackageSha256).toBe(createHash("sha256").update(recordPackage.archive).digest("hex"));
     expect(fs.existsSync(path.join(process.env.ELN_DATA_DIR!, "proofs", signature.recordPackageStorageKey))).toBe(true);
     expect(JSON.parse(signature.signaturePayload).record.hash).toBe(recordPackage.recordHash);
+    expect(JSON.parse(signature.signaturePayload).schemaVersion).toBe(2);
     expect(verify(null, Buffer.from(signature.signaturePayload, "utf8"), signature.signingPublicKey, Buffer.from(signature.signature, "base64"))).toBe(true);
     expect(signature.proofHashAlgorithm).toBe("sha256");
     expect(signature.proofHash).toMatch(/^[a-f0-9]{64}$/);
     const proofPackage = JSON.parse(signature.proofPackageJson);
     expect(proofPackage.packageType).toBe("novo.page.proof");
+    expect(proofPackage.packageVersion).toBe(2);
     expect(proofPackage.proofHash).toBe(signature.proofHash);
     const proofHashMaterial = { ...proofPackage };
     delete proofHashMaterial.proofHash;
     expect(createHash("sha256").update(`${stableJsonStringify(proofHashMaterial)}\n`).digest("hex")).toBe(signature.proofHash);
     expect(proofPackage.record.hash).toBe(recordPackage.recordHash);
-    expect(proofPackage.record.manifest.recordHash).toBe(recordPackage.recordHash);
+    expect(proofPackage.record.hashTarget).toBe("manifest.json");
+    expect(proofPackage.record.hashFile).toBe("manifest.sha256");
+    expect(proofPackage.record.manifest.packageVersion).toBe(2);
+    expect(proofPackage.record.manifest.recordHash).toBeUndefined();
+    expect(proofPackage.record.manifestHash).toBeUndefined();
+    expect(JSON.parse(signature.signaturePayload).record.manifestHash).toBeUndefined();
     expect(proofPackage.userSignature.id).toBe(signature.id);
     expect(proofPackage.userSignature.payload).toBe(signature.signaturePayload);
     expect(proofPackage.userSignature.signature).toBe(signature.signature);
@@ -632,6 +646,7 @@ describe("store", () => {
     expect(finalizationEntries["record.zip"]).toBeTruthy();
     expect(finalizationEntries["manifest.json"]).toBeTruthy();
     expect(finalizationEntries["proof/proof-package.json"]).toBeTruthy();
+    expect(strFromU8(finalizationEntries["proof/record-manifest.sha256"])).toBe(`${signature.recordHash}  record-manifest.json\n`);
     expect(finalizationEntries[`timestamps/${timestamp.id}/request.tsq`]).toBeTruthy();
     expect(finalizationEntries[`timestamps/${timestamp.id}/response.tsr`]).toBeTruthy();
     const finalizationManifest = JSON.parse(strFromU8(finalizationEntries["manifest.json"]));

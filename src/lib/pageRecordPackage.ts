@@ -24,12 +24,9 @@ type RecordPackageFile = ManifestFile & {
   bytesValue: Uint8Array;
 };
 
-type PageRecordManifestPayload = {
-  schemaVersion: 1;
+type PageRecordManifestBase = {
   packageType: "novo.page.record";
-  packageVersion: 1;
   hashAlgorithm: "sha256";
-  recordHashMaterial: "canonical-json(manifest without recordHash)";
   page: {
     id: string;
     notebookId: string;
@@ -41,17 +38,28 @@ type PageRecordManifestPayload = {
   files: ManifestFile[];
 };
 
-export type PageRecordManifest = PageRecordManifestPayload & {
+export type PageRecordManifestV1 = PageRecordManifestBase & {
+  schemaVersion: 1;
+  packageType: "novo.page.record";
+  packageVersion: 1;
+  recordHashMaterial: "canonical-json(manifest without recordHash)";
   recordHash: string;
 };
+
+export type PageRecordManifestV2 = PageRecordManifestBase & {
+  schemaVersion: 2;
+  packageVersion: 2;
+};
+
+export type PageRecordManifest = PageRecordManifestV1 | PageRecordManifestV2;
 
 export type PageRecordPackage = {
   archive: Uint8Array;
-  manifest: PageRecordManifest;
+  manifest: PageRecordManifestV2;
   recordHash: string;
 };
 
-const fixedZipMtime = new Date("1980-01-01T00:00:00.000Z");
+const fixedZipMtime = new Date("1980-01-02T00:00:00.000Z");
 
 export async function buildPageRecordPackage(
   page: PageEntry,
@@ -70,13 +78,18 @@ export async function buildPageRecordPackage(
   addAttachmentFiles(files, page.attachments);
 
   files.sort((left, right) => left.path.localeCompare(right.path));
-  const manifestFiles = files.map(({ bytesValue: _bytesValue, ...file }) => file);
-  const manifestPayload: PageRecordManifestPayload = {
-    schemaVersion: 1,
+  const manifestFiles = files.map((file) => ({
+    path: file.path,
+    role: file.role,
+    mediaType: file.mediaType,
+    bytes: file.bytes,
+    sha256: file.sha256,
+  }));
+  const manifest: PageRecordManifestV2 = {
+    schemaVersion: 2,
     packageType: "novo.page.record",
-    packageVersion: 1,
+    packageVersion: 2,
     hashAlgorithm: "sha256",
-    recordHashMaterial: "canonical-json(manifest without recordHash)",
     page: {
       id: page.id,
       notebookId: page.notebookId,
@@ -87,10 +100,11 @@ export async function buildPageRecordPackage(
     },
     files: manifestFiles,
   };
-  const recordHash = sha256Hex(canonicalJsonBytes(manifestPayload));
-  const manifest: PageRecordManifest = { ...manifestPayload, recordHash };
+  const manifestBytes = canonicalJsonBytes(manifest);
+  const recordHash = sha256Hex(manifestBytes);
   const zipEntries: Zippable = {};
-  zipEntries["manifest.json"] = [canonicalJsonBytes(manifest), { level: 6, mtime: fixedZipMtime }];
+  zipEntries["manifest.json"] = [manifestBytes, { level: 6, mtime: fixedZipMtime }];
+  zipEntries["manifest.sha256"] = [strToU8(`${recordHash}  manifest.json\n`), { level: 6, mtime: fixedZipMtime }];
   for (const file of files) {
     zipEntries[file.path] = [file.bytesValue, { level: 6, mtime: fixedZipMtime }];
   }
@@ -113,6 +127,14 @@ export function stableJsonStringify(value: unknown) {
 
 export function sha256Hex(bytes: Uint8Array | Buffer | string) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+export function calculatePageRecordHash(manifest: PageRecordManifest) {
+  if (manifest.packageVersion === 1) {
+    const hashMaterial = Object.fromEntries(Object.entries(manifest).filter(([key]) => key !== "recordHash"));
+    return sha256Hex(canonicalJsonBytes(hashMaterial));
+  }
+  return sha256Hex(canonicalJsonBytes(manifest));
 }
 
 function buildPageRecord(page: PageEntry, notebook: RecordNotebook) {

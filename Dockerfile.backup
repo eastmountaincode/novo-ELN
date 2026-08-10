@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim
+FROM postgres:16-bookworm
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -7,7 +7,6 @@ RUN apt-get update \
     ca-certificates \
     coreutils \
     findutils \
-    postgresql-client \
     sqlite3 \
   && rm -rf /var/lib/apt/lists/*
 

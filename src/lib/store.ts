@@ -1041,11 +1041,9 @@ export function recordUserLogin(userId: string) {
   execSql(`UPDATE users SET last_login_at = datetime('now') WHERE id = ${sql(userId)};`);
 }
 
-export function getAdminDataOverview(adminUserId: string, options: { fileLimit?: number; fileOffset?: number } = {}): AdminDataOverview {
+export function getAdminDataOverview(adminUserId: string): AdminDataOverview {
   ensureDatabase();
   assertAdmin(adminUserId);
-  const fileLimit = clampInteger(options.fileLimit, 1, 100, 25);
-  const fileOffset = clampInteger(options.fileOffset, 0, 1_000_000_000, 0);
 
   const counts = {
     users: countRows("users"),
@@ -1053,33 +1051,6 @@ export function getAdminDataOverview(adminUserId: string, options: { fileLimit?:
     pages: countRows("pages"),
     attachments: countRows("attachments"),
   };
-  const files = querySql(`
-    SELECT
-      a.id,
-      a.original_name,
-      a.mime_type,
-      a.size,
-      a.block_type,
-      a.storage_key,
-      a.created_at,
-      p.title AS page_title,
-      n.name AS notebook_name
-    FROM attachments a
-    JOIN pages p ON p.id = a.page_id
-    JOIN notebooks n ON n.id = p.notebook_id
-    ORDER BY a.created_at DESC, lower(a.original_name) ASC
-    LIMIT ${fileLimit} OFFSET ${fileOffset}
-  `).map((row) => ({
-    id: row.id,
-    originalName: row.original_name,
-    mimeType: row.mime_type,
-    size: Number(row.size),
-    blockType: row.block_type as BlockType,
-    storageKey: row.storage_key,
-    createdAt: row.created_at,
-    notebookName: row.notebook_name,
-    pageTitle: row.page_title,
-  }));
 
   const attachmentBytes = Number(queryOne(`SELECT COALESCE(SUM(size), 0) AS total FROM attachments`)?.total ?? 0);
   const attachmentRows = querySql("SELECT storage_key FROM attachments");
@@ -1100,12 +1071,6 @@ export function getAdminDataOverview(adminUserId: string, options: { fileLimit?:
       orphanUploadBytes,
       missingUploadCount,
     },
-    filePage: {
-      total: counts.attachments,
-      limit: fileLimit,
-      offset: fileOffset,
-    },
-    files,
   };
 }
 

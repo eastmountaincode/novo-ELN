@@ -90,18 +90,6 @@ export type AdminTag = {
   updatedAt: string;
 };
 
-export type AdminDataFile = {
-  id: string;
-  originalName: string;
-  mimeType: string;
-  size: number;
-  blockType: BlockType;
-  storageKey: string;
-  createdAt: string;
-  notebookName: string;
-  pageTitle: string;
-};
-
 export type AdminDataOverview = {
   counts: {
     users: number;
@@ -117,12 +105,6 @@ export type AdminDataOverview = {
     orphanUploadBytes: number;
     missingUploadCount: number;
   };
-  filePage: {
-    total: number;
-    limit: number;
-    offset: number;
-  };
-  files: AdminDataFile[];
 };
 
 export type DatabaseSchemaColumn = {

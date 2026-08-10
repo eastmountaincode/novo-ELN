@@ -2,20 +2,17 @@ import { Database } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
 import { formatBytes } from "@/lib/formatBytes";
-import { formatDateTime } from "@/lib/dateTime";
 import type { AdminDataOverview } from "@/lib/types";
-
-const DATA_ADMIN_FILE_PAGE_SIZE = 25;
 
 export function DataAdminPanel() {
   const [overview, setOverview] = useState<AdminDataOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  async function loadData(fileOffset = overview?.filePage.offset ?? 0) {
+  async function loadData() {
     setLoading(true);
     setError("");
-    const response = await fetch(`/api/admin/data?fileLimit=${DATA_ADMIN_FILE_PAGE_SIZE}&fileOffset=${fileOffset}`);
+    const response = await fetch("/api/admin/data");
     const body = (await response.json().catch(() => null)) as { data?: AdminDataOverview; error?: string } | null;
     setLoading(false);
     if (!response.ok) {
@@ -27,7 +24,7 @@ export function DataAdminPanel() {
 
   useEffect(() => {
     let active = true;
-    fetch(`/api/admin/data?fileLimit=${DATA_ADMIN_FILE_PAGE_SIZE}&fileOffset=0`)
+    fetch("/api/admin/data")
       .then(async (response) => {
         const body = (await response.json().catch(() => null)) as { data?: AdminDataOverview; error?: string } | null;
         if (!active) return;
@@ -77,11 +74,6 @@ export function DataAdminPanel() {
         },
       ]
     : [];
-  const filePage = overview?.filePage;
-  const fileStart = filePage && filePage.total > 0 ? filePage.offset + 1 : 0;
-  const fileEnd = filePage ? Math.min(filePage.offset + overview.files.length, filePage.total) : 0;
-  const canPageBackward = Boolean(filePage && filePage.offset > 0);
-  const canPageForward = Boolean(filePage && filePage.offset + filePage.limit < filePage.total);
 
   return (
     <section className="max-w-6xl border border-slate-200 bg-white">
@@ -95,75 +87,9 @@ export function DataAdminPanel() {
       {loading ? <AdminLoadingState>Loading data...</AdminLoadingState> : null}
 
       {!loading && overview ? (
-        <>
-          <div className="grid gap-5 border-b border-slate-200 p-5 lg:grid-cols-3">
-            {metricGroups.map((group) => <DataMetricGroup key={group.title} title={group.title} rows={group.rows} />)}
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-5">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-950">Files</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                Showing {fileStart.toLocaleString()}-{fileEnd.toLocaleString()} of {overview.filePage.total.toLocaleString()} attachment records.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => filePage && void loadData(Math.max(0, filePage.offset - filePage.limit))}
-                disabled={!canPageBackward}
-                className="h-8 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={() => filePage && void loadData(filePage.offset + filePage.limit)}
-                disabled={!canPageForward}
-                className="h-8 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] border-collapse text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">File</th>
-                  <th className="px-4 py-3 font-semibold">Page</th>
-                  <th className="px-4 py-3 font-semibold">Notebook</th>
-                  <th className="px-4 py-3 font-semibold">Type</th>
-                  <th className="px-4 py-3 text-right font-semibold">Size</th>
-                  <th className="px-4 py-3 font-semibold">Created</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {overview.files.map((file) => (
-                  <tr key={file.id}>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-slate-950">{file.originalName}</div>
-                      <div className="mt-1 truncate font-mono text-xs text-slate-500">{file.storageKey}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-slate-800">{file.pageTitle}</div>
-                      </td>
-                    <td className="px-4 py-3">
-                      <div className="text-slate-700">{file.notebookName}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="capitalize text-slate-700">{file.blockType}</div>
-                      <div className="mt-1 text-xs text-slate-500">{file.mimeType}</div>
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-700">{formatBytes(file.size)}</td>
-                    <td className="px-4 py-3 text-slate-500">{formatDateTime(file.createdAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {overview.files.length === 0 ? <p className="p-5 text-sm text-slate-500">No attachments found.</p> : null}
-          </div>
-        </>
+        <div className="grid max-w-xl gap-5 p-5">
+          {metricGroups.map((group) => <DataMetricGroup key={group.title} title={group.title} rows={group.rows} />)}
+        </div>
       ) : null}
     </section>
   );

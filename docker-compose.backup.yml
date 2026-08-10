@@ -18,7 +18,7 @@ services:
       NOVO_DATABASE_CLIENT: ${NOVO_DATABASE_CLIENT:-sqlite}
       DATABASE_URL: ${DATABASE_URL:-}
     volumes:
-      - ./runtime:/app-runtime:rw
+      - ${NOVO_RUNTIME_HOST_DIR:-./runtime}:/app-runtime:rw
       - novo-borg-staging:/backup-staging
       - ${NOVO_BORG_REPOSITORY:?NOVO_BORG_REPOSITORY is required for backups}:/borg-repo
     networks:

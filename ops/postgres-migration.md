@@ -17,7 +17,7 @@ Start a Postgres-backed development stack:
 docker compose -f docker-compose.dev.yml -f docker-compose.postgres.yml up -d --build
 ```
 
-Open Novo once. Startup initializes the Postgres schema. The compose override exposes Postgres on localhost port `55432` by default, so the matching local migration URL is:
+Wait for Novo to become ready. Server startup initializes the Postgres schema before accepting requests. The compose override exposes Postgres on localhost port `55432` by default, so the matching local migration URL is:
 
 ```bash
 export DATABASE_URL="postgresql://novo:novo-dev-password@127.0.0.1:${NOVO_POSTGRES_HOST_PORT:-55432}/novo"
@@ -44,7 +44,7 @@ then include `docker-compose.postgres.yml` automatically.
 1. Stop write traffic or put the current instance in maintenance.
 2. Run `scripts/backup-sqlite.sh` and keep the manifest plus snapshot.
 3. Create the Postgres database and set the production `DATABASE_URL`.
-4. Start Novo once with `ELN_DATABASE_CLIENT=postgres` so schema creation runs.
+4. Start Novo with `ELN_DATABASE_CLIENT=postgres` and wait for readiness so schema creation runs.
 5. Run `npm run db:migrate:postgres -- --sqlite <snapshot> --database-url "$DATABASE_URL" --truncate-target`.
 6. Start the production container with `ELN_DATABASE_CLIENT=postgres`.
 7. Run one authenticated warm-up request while traffic is still closed, then confirm `SELECT COUNT(*) FROM search_pages_fts` matches `SELECT COUNT(*) FROM pages`.
@@ -56,6 +56,9 @@ validated custom-format dump and archives it with uploads, previews, and proofs:
 ```bash
 docker compose --env-file .env.postgres -f docker-compose.backup.yml run --rm novo-borg-backup
 ```
+
+For a staging backup rehearsal, set `NOVO_RUNTIME_HOST_DIR=./runtime-staging` so
+the job archives the staging file runtime instead of the production default.
 
 Restore that dump into a disposable database and compare table counts before
 considering the cutover complete.

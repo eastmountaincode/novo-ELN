@@ -96,6 +96,28 @@ input:disabled {
   overscroll-behavior: contain;
 }
 
+.sidebar-scrollbar {
+  scrollbar-color: #475569 transparent;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb {
+  background: #475569;
+  border: 2px solid #020617;
+  border-radius: 999px;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
 .novo-wordmark {
   font-family: "Wulkan Novo", Georgia, "Times New Roman", serif;
   font-style: italic;

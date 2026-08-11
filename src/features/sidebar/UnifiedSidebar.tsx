@@ -350,7 +350,7 @@ export function UnifiedSidebar({
         </div>
       </div>
 
-      <div className="overflow-y-auto scroll-contained py-3">
+      <div className="sidebar-scrollbar overflow-y-auto scroll-contained py-3">
         <div className={`mb-3 ${sidebarCollapsed ? "px-3" : "px-4"}`}>
           <button
             onClick={openHome}

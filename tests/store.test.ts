@@ -627,9 +627,9 @@ describe("store", () => {
       policyOid: "2.16.840.1.114412.7.1",
       serialNumber: "0x01",
       tsaTime: "Aug  5 17:25:33 2026 GMT",
-      tsaSubject: "",
-      tsaCertFingerprint: "",
-      verifiedAt: "",
+      tsaSubject: "C = US, O = DigiCert, Inc., CN = DigiCert Timestamp Responder",
+      tsaCertFingerprint: "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      verifiedAt: "2026-08-05T17:25:34.000Z",
       errorMessage: "",
     });
     expect(timestamp.messageImprint).toBe(signature.proofHash);
@@ -652,6 +652,8 @@ describe("store", () => {
     const finalizationManifest = JSON.parse(strFromU8(finalizationEntries["manifest.json"]));
     expect(finalizationManifest.packageType).toBe("novo.page.finalization");
     expect(finalizationManifest.signature.proofHash).toBe(signature.proofHash);
+    expect(finalizationManifest.timestamps[0].tsaCertFingerprint).toBe(timestamp.tsaCertFingerprint);
+    expect(finalizationManifest.timestamps[0].verifiedAt).toBe(timestamp.verifiedAt);
     expect(finalizationManifest.files).toContainEqual(expect.objectContaining({ path: "record.zip", sha256: signature.recordPackageSha256 }));
     expect(() => createPageRecordSignature(admin.id, {
       pageId,

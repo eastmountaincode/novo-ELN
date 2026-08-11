@@ -49,6 +49,9 @@ type PageFinalizationPackageManifestPayload = {
     policyOid: string;
     serialNumber: string;
     tsaTime: string;
+    tsaSubject: string;
+    tsaCertFingerprint: string;
+    verifiedAt: string;
     createdAt: string;
   }>;
   files: FinalizationPackageFile[];
@@ -128,6 +131,9 @@ export function buildPageFinalizationPackage(input: {
       policyOid: timestamp.policyOid,
       serialNumber: timestamp.serialNumber,
       tsaTime: timestamp.tsaTime,
+      tsaSubject: timestamp.tsaSubject,
+      tsaCertFingerprint: timestamp.tsaCertFingerprint,
+      verifiedAt: timestamp.verifiedAt,
       createdAt: timestamp.createdAt,
     })),
     files: manifestFiles,

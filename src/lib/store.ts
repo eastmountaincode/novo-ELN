@@ -1509,6 +1509,9 @@ export function createPageSignatureTimestamp(
     proofHashAlgorithm: input.hashAlgorithm,
     timestampStatus: input.status,
     tsaTime: input.tsaTime,
+    tsaSubject: input.tsaSubject,
+    tsaCertFingerprint: input.tsaCertFingerprint,
+    verifiedAt: input.verifiedAt,
     serialNumber: input.serialNumber,
     policyOid: input.policyOid,
   });

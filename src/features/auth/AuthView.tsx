@@ -35,7 +35,7 @@ export function AuthView({
     <main className="grid min-h-screen place-items-center bg-slate-50 px-6 text-slate-950">
       <form onSubmit={onSubmit} className="grid w-full max-w-sm gap-4 border border-slate-200 bg-white p-6 shadow-sm">
         <header className="grid gap-1">
-          <p className="novo-wordmark select-none text-3xl leading-none tracking-normal text-slate-950"><NovoWordmark /></p>
+          <p className="novo-wordmark select-none text-4xl leading-none tracking-normal text-slate-950"><NovoWordmark /></p>
           <NovoDeploymentLabel className="text-xs font-medium leading-none text-slate-500" />
         </header>
         <div className="grid gap-3">

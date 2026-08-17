@@ -34,13 +34,11 @@ export function AuthView({
   return (
     <main className="grid min-h-screen place-items-center bg-slate-50 px-6 text-slate-950">
       <form onSubmit={onSubmit} className="w-full max-w-sm border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-6">
-          <div className="mb-4">
-            <p className="novo-wordmark select-none text-3xl leading-none tracking-normal text-slate-950"><NovoWordmark /></p>
-            <NovoDeploymentLabel className="mt-1 text-xs font-medium leading-none text-slate-500" />
-            <h1 className="mt-2 text-base font-semibold text-slate-700">Sign in</h1>
-          </div>
+        <div className="mb-4">
+          <p className="novo-wordmark select-none text-3xl leading-none tracking-normal text-slate-950"><NovoWordmark /></p>
+          <NovoDeploymentLabel className="mt-1 text-xs font-medium leading-none text-slate-500" />
         </div>
+        <h1 className="mb-2 text-base font-semibold text-slate-700">Sign in</h1>
         <label className="mb-3 block text-sm font-medium text-slate-700">
           Email
           <input value={email} onChange={(event) => onEmailChange(event.target.value)} type="email" disabled={submitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="username" />

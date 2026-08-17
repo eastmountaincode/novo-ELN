@@ -9,7 +9,7 @@ import { AppLoadingView } from "@/features/app/AppLoadingView";
 import { ResizeHandle } from "@/features/app/ResizeHandle";
 import { useNovoDocumentTitle } from "@/features/app/useNovoDocumentTitle";
 import { UpdateAvailableBanner } from "@/features/app/UpdateAvailableBanner";
-import { AuthView, type AuthMode } from "@/features/auth/AuthView";
+import { AuthView } from "@/features/auth/AuthView";
 import { EditorPane } from "@/features/editor/EditorPane";
 import {
   cancelPageEditingSessionsRemoval,
@@ -83,13 +83,10 @@ export default function Home() {
   const [authError, setAuthError] = useState("");
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [authMode, setAuthMode] = useState<AuthMode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
   const [activeView, setActiveView] = useState<"home" | "projectHome" | "project" | "notebookSettings" | "account">("home");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedNotebookId, setSelectedNotebookId] = useState("");
@@ -560,16 +557,14 @@ export default function Home() {
     setAuthSubmitting(true);
     try {
       const returnTo = readLoginReturnPathFromUrl();
-      const response = await fetch(authMode === "register" ? "/api/auth/register" : "/api/auth/login", {
+      const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(authMode === "register"
-          ? { email, firstName, lastName, password, returnTo }
-          : { email, password, rememberDevice, returnTo }),
+        body: JSON.stringify({ email, password, rememberDevice, returnTo }),
       });
       const body = (await response.json().catch(() => null)) as { error?: string; returnTo?: string | null } | null;
       if (!response.ok) {
-        setAuthError(body?.error ?? (authMode === "register" ? "Registration failed." : "Login failed."));
+        setAuthError(body?.error ?? "Login failed.");
         return;
       }
       if (body?.returnTo) {
@@ -1081,26 +1076,17 @@ export default function Home() {
   if (!workspace) {
     return (
       <AuthView
-        mode={authMode}
         submitting={authSubmitting}
         error={authError}
         email={email}
         password={password}
         showPassword={showPassword}
         rememberDevice={rememberDevice}
-        firstName={firstName}
-        lastName={lastName}
         onSubmit={handleAuth}
-        onModeChange={(mode) => {
-          setAuthError("");
-          setAuthMode(mode);
-        }}
         onEmailChange={setEmail}
         onPasswordChange={setPassword}
         onShowPasswordChange={setShowPassword}
         onRememberDeviceChange={setRememberDevice}
-        onFirstNameChange={setFirstName}
-        onLastNameChange={setLastName}
       />
     );
   }

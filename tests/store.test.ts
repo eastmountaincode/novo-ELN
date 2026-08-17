@@ -491,6 +491,19 @@ describe("store", () => {
     expect(verifyCredentials("lab.member@example.local", "Temporary-password-2026!")?.id).toBe(member.id);
   });
 
+  it("only lets admins create new member accounts", async () => {
+    const { createUser, createUserForAdmin, getWorkspace } = await import("../src/lib/store");
+    const admin = await createTestAdmin();
+    const member = createUser({ email: "existing.member@example.local", firstName: "Existing", lastName: "Member", password: "Member-password-2026!" });
+    const input = { email: "admin.created@example.local", firstName: "Admin", lastName: "Created", password: "Temporary-password-2026!" };
+
+    expect(() => createUserForAdmin(member.id, input)).toThrow("Forbidden");
+
+    const created = createUserForAdmin(admin.id, input);
+    expect(created).toEqual(expect.objectContaining({ email: input.email, firstName: input.firstName, lastName: input.lastName, role: "member" }));
+    expect(getWorkspace(created.id).notebooks).toHaveLength(1);
+  });
+
   it("manages user signing keys with a separate signing passphrase", async () => {
     const { adminSetUserPassword, changeOwnPassword, createUser, ensureUserSigningKey, getActiveUserSigningPrivateKeyForSigning, listUserSigningKeys } = await import("../src/lib/store");
     const admin = await createTestAdmin();

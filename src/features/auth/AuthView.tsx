@@ -3,48 +3,33 @@
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import type { FormEventHandler } from "react";
 import { NovoDeploymentLabel, NovoWordmark } from "@/components/NovoInstanceProvider";
-import { passwordRequirementText } from "@/lib/passwordRequirements";
-
-export type AuthMode = "signin" | "register";
 
 type AuthViewProps = {
-  mode: AuthMode;
   submitting: boolean;
   error: string;
   email: string;
   password: string;
   showPassword: boolean;
   rememberDevice: boolean;
-  firstName: string;
-  lastName: string;
   onSubmit: FormEventHandler<HTMLFormElement>;
-  onModeChange: (mode: AuthMode) => void;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onShowPasswordChange: (show: boolean) => void;
   onRememberDeviceChange: (remember: boolean) => void;
-  onFirstNameChange: (value: string) => void;
-  onLastNameChange: (value: string) => void;
 };
 
 export function AuthView({
-  mode,
   submitting,
   error,
   email,
   password,
   showPassword,
   rememberDevice,
-  firstName,
-  lastName,
   onSubmit,
-  onModeChange,
   onEmailChange,
   onPasswordChange,
   onShowPasswordChange,
   onRememberDeviceChange,
-  onFirstNameChange,
-  onLastNameChange,
 }: AuthViewProps) {
   return (
     <main className="grid min-h-screen place-items-center bg-slate-50 px-6 text-slate-950">
@@ -53,42 +38,12 @@ export function AuthView({
           <div className="mb-4">
             <p className="novo-wordmark select-none text-3xl leading-none tracking-normal text-slate-950"><NovoWordmark /></p>
             <NovoDeploymentLabel className="mt-1 text-xs font-medium leading-none text-slate-500" />
-            {mode === "register" ? <h1 className="mt-2 text-base font-semibold text-slate-700">Create an account</h1> : null}
-          </div>
-          <div className="grid grid-cols-2 border border-slate-200 p-1 text-sm font-medium">
-            <button
-              type="button"
-              onClick={() => onModeChange("signin")}
-              disabled={submitting}
-              className={`h-8 disabled:cursor-not-allowed disabled:opacity-60 ${mode === "signin" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              onClick={() => onModeChange("register")}
-              disabled={submitting}
-              className={`h-8 disabled:cursor-not-allowed disabled:opacity-60 ${mode === "register" ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}
-            >
-              Register
-            </button>
+            <h1 className="mt-2 text-base font-semibold text-slate-700">Sign in</h1>
           </div>
         </div>
-        {mode === "register" ? (
-          <div className="mb-3 grid gap-3 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-slate-700">
-              First name
-              <input value={firstName} onChange={(event) => onFirstNameChange(event.target.value)} disabled={submitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="given-name" />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">
-              Last name
-              <input value={lastName} onChange={(event) => onLastNameChange(event.target.value)} disabled={submitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="family-name" />
-            </label>
-          </div>
-        ) : null}
         <label className="mb-3 block text-sm font-medium text-slate-700">
           Email
-          <input value={email} onChange={(event) => onEmailChange(event.target.value)} disabled={submitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" />
+          <input value={email} onChange={(event) => onEmailChange(event.target.value)} type="email" disabled={submitting} className="mt-1 h-10 w-full border border-slate-300 px-3 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50" autoComplete="username" />
         </label>
         <label className="mb-2 block text-sm font-medium text-slate-700">
           Password
@@ -99,7 +54,7 @@ export function AuthView({
               type={showPassword ? "text" : "password"}
               disabled={submitting}
               className="h-10 w-full border border-slate-300 px-3 pr-10 outline-none focus:border-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-50"
-              autoComplete={mode === "register" ? "new-password" : "current-password"}
+              autoComplete="current-password"
             />
             <button
               type="button"
@@ -112,17 +67,14 @@ export function AuthView({
             </button>
           </div>
         </label>
-        {mode === "register" ? <p className="mb-4 text-xs leading-5 text-slate-500">{passwordRequirementText}</p> : null}
-        {mode === "signin" ? (
-          <label className="mb-4 flex items-center gap-2 text-sm text-slate-600">
-            <input checked={rememberDevice} onChange={(event) => onRememberDeviceChange(event.target.checked)} disabled={submitting} type="checkbox" className="size-4 border border-slate-300 accent-slate-950 disabled:cursor-not-allowed" />
-            Remember this device for 14 days
-          </label>
-        ) : null}
+        <label className="mb-4 flex items-center gap-2 text-sm text-slate-600">
+          <input checked={rememberDevice} onChange={(event) => onRememberDeviceChange(event.target.checked)} disabled={submitting} type="checkbox" className="size-4 border border-slate-300 accent-slate-950 disabled:cursor-not-allowed" />
+          Remember this device for 14 days
+        </label>
         {error ? <p className="mb-3 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
         <button disabled={submitting} className="inline-flex h-10 w-full items-center justify-center gap-2 bg-slate-950 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-500">
           {submitting ? <Loader2 size={16} className="animate-spin" /> : null}
-          {submitting ? (mode === "register" ? "Creating account..." : "Signing in...") : (mode === "register" ? "Create account" : "Sign in")}
+          {submitting ? "Signing in..." : "Sign in"}
         </button>
       </form>
     </main>

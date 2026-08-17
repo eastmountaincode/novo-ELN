@@ -901,6 +901,12 @@ export function createUser(input: { email: string; firstName: string; lastName?:
   return { id: userId, email, firstName, lastName, role };
 }
 
+export function createUserForAdmin(adminUserId: string, input: { email: string; firstName: string; lastName?: string; password: string }): AppUser {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  return createUser({ ...input, role: "member" });
+}
+
 export function listUsersForAdmin(adminUserId: string): AdminUser[] {
   ensureDatabase();
   assertAdmin(adminUserId);

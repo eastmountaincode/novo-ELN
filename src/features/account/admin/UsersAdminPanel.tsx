@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Shield } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, Shield } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ModalFrame } from "@/components/ModalFrame";
 import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
@@ -14,6 +14,7 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [creatingUser, setCreatingUser] = useState(false);
   const [resetUser, setResetUser] = useState<AdminUser | null>(null);
   const [sortKey, setSortKey] = useState<AdminUserSortKey>("user");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -117,7 +118,15 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
       <AdminPanelHeader
         icon={Shield}
         title="Users"
-        action={<button onClick={() => void loadUsers()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>}
+        action={(
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setCreatingUser(true)} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800">
+              <Plus size={16} />
+              Create user
+            </button>
+            <button onClick={() => void loadUsers()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
+          </div>
+        )}
       />
       {error ? <p className="m-5 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
       {loading ? (
@@ -184,10 +193,98 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
           }}
         />
       ) : null}
+      {creatingUser ? (
+        <CreateUserModal
+          onCancel={() => setCreatingUser(false)}
+          onSaved={() => {
+            setCreatingUser(false);
+            void loadUsers();
+          }}
+        />
+      ) : null}
     </section>
   );
 }
 
+function CreateUserModal({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => void }) {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const disabled = submitting || !firstName.trim() || !email.trim() || !password || !confirmPassword;
+
+  async function submitUser(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firstName, lastName, email, password }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        setError(body?.error ?? "Unable to create user.");
+        return;
+      }
+      onSaved();
+    } catch {
+      setError("Unable to create user.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <ModalFrame>
+      <form onSubmit={(event) => void submitUser(event)}>
+        <h2 className="text-lg font-semibold text-white">Create user</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-400">Create a member account and give the temporary password directly to the user.</p>
+        <div className="mt-5 grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm font-medium text-slate-200">
+              First name
+              <input value={firstName} onChange={(event) => setFirstName(event.target.value)} className="mt-2 h-10 w-full border border-white/10 bg-white/10 px-3 text-sm text-white outline-none focus:border-cyan-400" autoComplete="off" />
+            </label>
+            <label className="block text-sm font-medium text-slate-200">
+              Last name
+              <input value={lastName} onChange={(event) => setLastName(event.target.value)} className="mt-2 h-10 w-full border border-white/10 bg-white/10 px-3 text-sm text-white outline-none focus:border-cyan-400" autoComplete="off" />
+            </label>
+          </div>
+          <label className="block text-sm font-medium text-slate-200">
+            Email
+            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" className="mt-2 h-10 w-full border border-white/10 bg-white/10 px-3 text-sm text-white outline-none focus:border-cyan-400" autoComplete="off" />
+          </label>
+          <label className="block text-sm font-medium text-slate-200">
+            Temporary password
+            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="mt-2 h-10 w-full border border-white/10 bg-white/10 px-3 text-sm text-white outline-none focus:border-cyan-400" autoComplete="new-password" />
+          </label>
+          <p className="-mt-2 text-xs leading-5 text-slate-400">{passwordRequirementText}</p>
+          <label className="block text-sm font-medium text-slate-200">
+            Confirm password
+            <input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" className="mt-2 h-10 w-full border border-white/10 bg-white/10 px-3 text-sm text-white outline-none focus:border-cyan-400" autoComplete="new-password" />
+          </label>
+        </div>
+        {error ? <p className="mt-4 border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">Cancel</button>
+          <button type="submit" disabled={disabled} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">
+            {submitting ? "Creating" : "Create user"}
+          </button>
+        </div>
+      </form>
+    </ModalFrame>
+  );
+}
 
 function AdminPasswordModal({ user, onCancel, onSaved }: { user: AdminUser; onCancel: () => void; onSaved: () => void }) {
   const [nextPassword, setNextPassword] = useState("");

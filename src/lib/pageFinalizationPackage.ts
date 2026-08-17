@@ -4,7 +4,7 @@ import type { PageSignature, PageSignatureTimestamp } from "./types";
 
 type FinalizationPackageFile = {
   path: string;
-  role: "record-package" | "proof-package" | "signature-payload" | "record-manifest" | "record-manifest-checksum" | "timestamp-request" | "timestamp-response" | "readme";
+  role: "record-package" | "proof-package" | "signature-payload" | "record-manifest" | "record-manifest-checksum" | "timestamp-request" | "timestamp-response" | "timestamp-certificates" | "timestamp-trust-anchor" | "timestamp-verification" | "readme";
   mediaType: string;
   bytes: number;
   sha256: string;
@@ -15,9 +15,9 @@ type FinalizationPackageFileEntry = FinalizationPackageFile & {
 };
 
 type PageFinalizationPackageManifestPayload = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   packageType: "novo.page.finalization";
-  packageVersion: 2;
+  packageVersion: 3;
   hashAlgorithm: "sha256";
   finalizationHashMaterial: "canonical-json(manifest without finalizationHash)";
   createdAt: string;
@@ -97,9 +97,9 @@ export function buildPageFinalizationPackage(input: {
     sha256: file.sha256,
   }));
   const manifestPayload: PageFinalizationPackageManifestPayload = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     packageType: "novo.page.finalization",
-    packageVersion: 2,
+    packageVersion: 3,
     hashAlgorithm: "sha256",
     finalizationHashMaterial: "canonical-json(manifest without finalizationHash)",
     createdAt,
@@ -157,6 +157,9 @@ function addTimestampFiles(files: FinalizationPackageFileEntry[], timestamp: Pag
   const directory = `timestamps/${timestamp.id}`;
   addBytesFile(files, `${directory}/request.tsq`, "timestamp-request", Buffer.from(timestamp.requestDerBase64, "base64"), "application/timestamp-query");
   addBytesFile(files, `${directory}/response.tsr`, "timestamp-response", Buffer.from(timestamp.responseDerBase64, "base64"), "application/timestamp-reply");
+  addBytesFile(files, `${directory}/tsa-certificates.pem`, "timestamp-certificates", strToU8(timestamp.certificateChainPem), "application/x-pem-file");
+  addBytesFile(files, `${directory}/trust-anchor.pem`, "timestamp-trust-anchor", strToU8(timestamp.trustAnchorPem), "application/x-pem-file");
+  addBytesFile(files, `${directory}/verification.json`, "timestamp-verification", strToU8(timestamp.verificationJson), "application/json");
 }
 
 function addTextFile(files: FinalizationPackageFileEntry[], filePath: string, role: FinalizationPackageFile["role"], value: string) {
@@ -201,5 +204,8 @@ function finalizationReadme(signature: PageSignature) {
     "proof/proof-package.json contains the user signature and proof hash.",
     "proof/record-manifest.sha256 is the SHA256 checksum of proof/record-manifest.json.",
     "timestamps/*/response.tsr contains the RFC3161 timestamp token from the timestamp authority.",
+    "timestamps/*/tsa-certificates.pem contains the certificates embedded in the RFC3161 token.",
+    "timestamps/*/trust-anchor.pem is the exact trusted root selected from the system CA bundle during verification.",
+    "timestamps/*/verification.json records the OpenSSL, certificate path, trust store, and operating system provenance used during verification.",
   ].filter(Boolean).join("\n");
 }

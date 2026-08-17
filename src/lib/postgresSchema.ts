@@ -146,6 +146,9 @@ export function ensurePostgresDatabase() {
       tsa_time TEXT NOT NULL DEFAULT '',
       tsa_subject TEXT NOT NULL DEFAULT '',
       tsa_cert_fingerprint TEXT NOT NULL DEFAULT '',
+      certificate_chain_pem TEXT NOT NULL DEFAULT '',
+      trust_anchor_pem TEXT NOT NULL DEFAULT '',
+      verification_json TEXT NOT NULL DEFAULT '{}',
       verified_at TEXT,
       error_message TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT novo_now_text()
@@ -153,6 +156,10 @@ export function ensurePostgresDatabase() {
 
     CREATE INDEX IF NOT EXISTS page_signature_timestamps_signature_idx ON page_signature_timestamps(page_signature_id, created_at);
     CREATE INDEX IF NOT EXISTS page_signature_timestamps_message_imprint_idx ON page_signature_timestamps(message_imprint);
+
+    ALTER TABLE page_signature_timestamps ADD COLUMN IF NOT EXISTS certificate_chain_pem TEXT NOT NULL DEFAULT '';
+    ALTER TABLE page_signature_timestamps ADD COLUMN IF NOT EXISTS trust_anchor_pem TEXT NOT NULL DEFAULT '';
+    ALTER TABLE page_signature_timestamps ADD COLUMN IF NOT EXISTS verification_json TEXT NOT NULL DEFAULT '{}';
 
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY,

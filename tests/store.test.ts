@@ -629,6 +629,9 @@ describe("store", () => {
       tsaTime: "Aug  5 17:25:33 2026 GMT",
       tsaSubject: "C = US, O = DigiCert, Inc., CN = DigiCert Timestamp Responder",
       tsaCertFingerprint: "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      certificateChainPem: "-----BEGIN CERTIFICATE-----\ntsa-chain\n-----END CERTIFICATE-----\n",
+      trustAnchorPem: "-----BEGIN CERTIFICATE-----\ntrust-anchor\n-----END CERTIFICATE-----\n",
+      verificationJson: '{"result":"verified","trustAnchor":{"sha256Fingerprint":"sha256:aabb"}}\n',
       verifiedAt: "2026-08-05T17:25:34.000Z",
       errorMessage: "",
     });
@@ -649,8 +652,12 @@ describe("store", () => {
     expect(strFromU8(finalizationEntries["proof/record-manifest.sha256"])).toBe(`${signature.recordHash}  record-manifest.json\n`);
     expect(finalizationEntries[`timestamps/${timestamp.id}/request.tsq`]).toBeTruthy();
     expect(finalizationEntries[`timestamps/${timestamp.id}/response.tsr`]).toBeTruthy();
+    expect(strFromU8(finalizationEntries[`timestamps/${timestamp.id}/tsa-certificates.pem`])).toBe(timestamp.certificateChainPem);
+    expect(strFromU8(finalizationEntries[`timestamps/${timestamp.id}/trust-anchor.pem`])).toBe(timestamp.trustAnchorPem);
+    expect(strFromU8(finalizationEntries[`timestamps/${timestamp.id}/verification.json`])).toBe(timestamp.verificationJson);
     const finalizationManifest = JSON.parse(strFromU8(finalizationEntries["manifest.json"]));
     expect(finalizationManifest.packageType).toBe("novo.page.finalization");
+    expect(finalizationManifest.packageVersion).toBe(3);
     expect(finalizationManifest.signature.proofHash).toBe(signature.proofHash);
     expect(finalizationManifest.timestamps[0].tsaCertFingerprint).toBe(timestamp.tsaCertFingerprint);
     expect(finalizationManifest.timestamps[0].verifiedAt).toBe(timestamp.verifiedAt);
@@ -692,6 +699,8 @@ describe("store", () => {
     expect(schema.tables.find((table) => table.name === "page_signatures")?.columns.map((column) => column.name)).toContain("proof_hash");
     expect(schema.tables.find((table) => table.name === "page_signatures")?.columns.map((column) => column.name)).toContain("finalization_package_storage_key");
     expect(schema.tables.find((table) => table.name === "page_signature_timestamps")?.columns.map((column) => column.name)).toContain("response_der_base64");
+    expect(schema.tables.find((table) => table.name === "page_signature_timestamps")?.columns.map((column) => column.name)).toContain("trust_anchor_pem");
+    expect(schema.tables.find((table) => table.name === "page_signature_timestamps")?.columns.map((column) => column.name)).toContain("verification_json");
     expect(schema.relationships).toContainEqual(expect.objectContaining({
       fromTable: "user_signing_keys",
       fromColumn: "user_id",

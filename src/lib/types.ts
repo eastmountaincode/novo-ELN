@@ -46,6 +46,9 @@ export type PageSignatureTimestamp = {
   tsaTime: string;
   tsaSubject: string;
   tsaCertFingerprint: string;
+  certificateChainPem: string;
+  trustAnchorPem: string;
+  verificationJson: string;
   verifiedAt: string;
   errorMessage: string;
   createdAt: string;

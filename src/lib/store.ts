@@ -184,6 +184,9 @@ export function ensureDatabase() {
       tsa_time TEXT NOT NULL DEFAULT '',
       tsa_subject TEXT NOT NULL DEFAULT '',
       tsa_cert_fingerprint TEXT NOT NULL DEFAULT '',
+      certificate_chain_pem TEXT NOT NULL DEFAULT '',
+      trust_anchor_pem TEXT NOT NULL DEFAULT '',
+      verification_json TEXT NOT NULL DEFAULT '{}',
       verified_at TEXT,
       error_message TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -622,6 +625,9 @@ function ensurePageSignatureTimestampTable() {
       tsa_time TEXT NOT NULL DEFAULT '',
       tsa_subject TEXT NOT NULL DEFAULT '',
       tsa_cert_fingerprint TEXT NOT NULL DEFAULT '',
+      certificate_chain_pem TEXT NOT NULL DEFAULT '',
+      trust_anchor_pem TEXT NOT NULL DEFAULT '',
+      verification_json TEXT NOT NULL DEFAULT '{}',
       verified_at TEXT,
       error_message TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -630,6 +636,11 @@ function ensurePageSignatureTimestampTable() {
     CREATE INDEX IF NOT EXISTS page_signature_timestamps_signature_idx ON page_signature_timestamps(page_signature_id, created_at);
     CREATE INDEX IF NOT EXISTS page_signature_timestamps_message_imprint_idx ON page_signature_timestamps(message_imprint);
   `);
+  const columns = querySql("PRAGMA table_info(page_signature_timestamps);");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("certificate_chain_pem")) execSql("ALTER TABLE page_signature_timestamps ADD COLUMN certificate_chain_pem TEXT NOT NULL DEFAULT '';");
+  if (!names.has("trust_anchor_pem")) execSql("ALTER TABLE page_signature_timestamps ADD COLUMN trust_anchor_pem TEXT NOT NULL DEFAULT '';");
+  if (!names.has("verification_json")) execSql("ALTER TABLE page_signature_timestamps ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{}';");
 }
 
 function migrateAttachmentPreviewTextColumn() {
@@ -1236,6 +1247,9 @@ export function listPageRecordSignatures(userId: string, pageId: string): PageSi
       tsa_time,
       COALESCE(tsa_subject, '') AS tsa_subject,
       COALESCE(tsa_cert_fingerprint, '') AS tsa_cert_fingerprint,
+      COALESCE(certificate_chain_pem, '') AS certificate_chain_pem,
+      COALESCE(trust_anchor_pem, '') AS trust_anchor_pem,
+      COALESCE(verification_json, '{}') AS verification_json,
       COALESCE(verified_at, '') AS verified_at,
       COALESCE(error_message, '') AS error_message,
       created_at
@@ -1477,6 +1491,9 @@ export function createPageSignatureTimestamp(
       tsa_time,
       tsa_subject,
       tsa_cert_fingerprint,
+      certificate_chain_pem,
+      trust_anchor_pem,
+      verification_json,
       verified_at,
       error_message
     ) VALUES (
@@ -1495,6 +1512,9 @@ export function createPageSignatureTimestamp(
       ${sql(input.tsaTime)},
       ${sql(input.tsaSubject)},
       ${sql(input.tsaCertFingerprint)},
+      ${sql(input.certificateChainPem)},
+      ${sql(input.trustAnchorPem)},
+      ${sql(input.verificationJson)},
       ${input.verifiedAt ? sql(input.verifiedAt) : "NULL"},
       ${sql(input.errorMessage)}
     );
@@ -1533,6 +1553,9 @@ export function createPageSignatureTimestamp(
       tsa_time,
       COALESCE(tsa_subject, '') AS tsa_subject,
       COALESCE(tsa_cert_fingerprint, '') AS tsa_cert_fingerprint,
+      COALESCE(certificate_chain_pem, '') AS certificate_chain_pem,
+      COALESCE(trust_anchor_pem, '') AS trust_anchor_pem,
+      COALESCE(verification_json, '{}') AS verification_json,
       COALESCE(verified_at, '') AS verified_at,
       COALESCE(error_message, '') AS error_message,
       created_at
@@ -3487,6 +3510,9 @@ function toPageSignatureTimestamp(row: Record<string, string>): PageSignatureTim
     tsaTime: row.tsa_time,
     tsaSubject: row.tsa_subject,
     tsaCertFingerprint: row.tsa_cert_fingerprint,
+    certificateChainPem: row.certificate_chain_pem,
+    trustAnchorPem: row.trust_anchor_pem,
+    verificationJson: row.verification_json,
     verifiedAt: row.verified_at,
     errorMessage: row.error_message,
     createdAt: row.created_at,

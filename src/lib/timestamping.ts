@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash, X509Certificate } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -31,6 +32,9 @@ export type TimestampAuthorityToken = {
   tsaTime: string;
   tsaSubject: string;
   tsaCertFingerprint: string;
+  certificateChainPem: string;
+  trustAnchorPem: string;
+  verificationJson: string;
   verifiedAt: string;
   errorMessage: string;
 };
@@ -74,6 +78,7 @@ export async function requestTimestampForProofHash(proofHash: string): Promise<T
       untrustedCertFile: config.untrustedCertFile,
     });
 
+    const verifiedAt = new Date().toISOString();
     return {
       provider: config.provider,
       tsaUrl: config.url,
@@ -88,7 +93,16 @@ export async function requestTimestampForProofHash(proofHash: string): Promise<T
       tsaTime: metadata.tsaTime,
       tsaSubject: verification.tsaSubject || metadata.tsaSubject,
       tsaCertFingerprint: verification.tsaCertFingerprint,
-      verifiedAt: new Date().toISOString(),
+      certificateChainPem: verification.certificateChainPem,
+      trustAnchorPem: verification.trustAnchorPem,
+      verificationJson: buildVerificationJson({
+        provider: config.provider,
+        tsaUrl: config.url,
+        verifiedAt,
+        caFile: config.caFile,
+        verification,
+      }),
+      verifiedAt,
       errorMessage: "",
     };
   } finally {
@@ -122,8 +136,9 @@ export async function verifyTimestampResponseFiles(
   const verifyArgs = ["ts", "-verify", "-queryfile", input.requestPath, "-in", input.responsePath, "-CAfile", input.caFile];
   if (input.untrustedCertFile) verifyArgs.push("-untrusted", input.untrustedCertFile);
 
+  let timestampVerification: OpenSslResult;
   try {
-    await runner(verifyArgs);
+    timestampVerification = await runner(verifyArgs);
   } catch (error) {
     throw new Error(`Timestamp authority response verification failed${opensslErrorDetail(error)}.`, { cause: error });
   }
@@ -131,14 +146,258 @@ export async function verifyTimestampResponseFiles(
   const tokenPath = path.join(input.tempDir, "timestamp-token.der");
   const signerPath = path.join(input.tempDir, "timestamp-signer.pem");
   const contentPath = path.join(input.tempDir, "timestamp-content.der");
+  const certificatesPath = path.join(input.tempDir, "timestamp-certificates.pem");
+  const untrustedPath = path.join(input.tempDir, "timestamp-untrusted.pem");
   try {
     await runner(["ts", "-reply", "-in", input.responsePath, "-token_out", "-out", tokenPath]);
     await runner(["cms", "-verify", "-inform", "DER", "-in", tokenPath, "-noverify", "-out", contentPath, "-signer", signerPath]);
+    await runner(["pkcs7", "-inform", "DER", "-in", tokenPath, "-print_certs", "-out", certificatesPath]);
     const certificate = await runner(["x509", "-in", signerPath, "-noout", "-subject", "-fingerprint", "-sha256"]);
-    return parseTsaSignerCertificateText(certificate.stdout);
+    const certificateChainPem = normalizePemBundle(await readFile(certificatesPath, "utf8"));
+    const additionalUntrusted = input.untrustedCertFile ? await readFile(input.untrustedCertFile, "utf8") : "";
+    await writeFile(untrustedPath, normalizePemBundle(`${certificateChainPem}\n${additionalUntrusted}`));
+    const chainResult = await runner([
+      "verify",
+      "-show_chain",
+      "-nameopt",
+      "RFC2253",
+      "-purpose",
+      "timestampsign",
+      "-CAfile",
+      input.caFile,
+      "-untrusted",
+      untrustedPath,
+      signerPath,
+    ]);
+    const caBundle = await readFile(input.caFile);
+    const selectedChain = parseOpenSslCertificateChain(chainResult.stdout);
+    const trustAnchorPem = findTrustAnchorPem(caBundle.toString("utf8"), selectedChain);
+    const signer = parseTsaSignerCertificateText(certificate.stdout);
+    return {
+      ...signer,
+      certificateChainPem,
+      trustAnchorPem,
+      timestampVerificationOutput: cleanVerificationOutput(timestampVerification),
+      certificateChainVerificationOutput: cleanVerificationOutput(chainResult),
+      selectedChain,
+      embeddedCertificates: parsePemCertificates(certificateChainPem).map(certificateMetadata),
+      trustAnchor: certificateMetadata(trustAnchorPem),
+      caBundleSha256: sha256Hex(caBundle),
+      caBundleBytes: caBundle.byteLength,
+      opensslVersion: await readOpenSslVersion(runner),
+      caPackage: await readCaPackageMetadata(),
+      operatingSystem: await readOperatingSystemMetadata(),
+    };
   } catch (error) {
     throw new Error(`Timestamp authority signer certificate inspection failed${opensslErrorDetail(error)}.`, { cause: error });
   }
+}
+
+type SelectedCertificate = {
+  depth: number;
+  subject: string;
+  source: "timestamp-token" | "trust-store";
+};
+
+export function parseOpenSslCertificateChain(text: string): SelectedCertificate[] {
+  const chain = text.split("\n").flatMap((line) => {
+    const match = line.trim().match(/^depth=(\d+):\s*(.*?)(?:\s+\(untrusted\))?$/);
+    if (!match) return [];
+    return [{
+      depth: Number(match[1]),
+      subject: match[2].replace(/\s+\(untrusted\)$/, "").trim(),
+      source: line.includes("(untrusted)") ? "timestamp-token" as const : "trust-store" as const,
+    }];
+  });
+  if (!chain.length || !chain.some((entry) => entry.source === "trust-store")) {
+    throw new Error("OpenSSL did not report a selected timestamp trust anchor.");
+  }
+  return chain.sort((left, right) => left.depth - right.depth);
+}
+
+export function findTrustAnchorPem(caBundlePem: string, selectedChain: SelectedCertificate[]) {
+  const selectedAnchor = [...selectedChain].reverse().find((entry) => entry.source === "trust-store");
+  if (!selectedAnchor) throw new Error("Timestamp trust anchor is missing from the selected certificate chain.");
+  const candidates = parsePemCertificates(caBundlePem).filter((pem) => {
+    const certificate = new X509Certificate(pem);
+    return normalizeDistinguishedName(certificate.subject) === normalizeDistinguishedName(selectedAnchor.subject);
+  });
+  const selfSignedCandidates = candidates.filter((pem) => {
+    const certificate = new X509Certificate(pem);
+    return normalizeDistinguishedName(certificate.subject) === normalizeDistinguishedName(certificate.issuer);
+  });
+  const matches = selfSignedCandidates.length ? selfSignedCandidates : candidates;
+  if (matches.length !== 1) {
+    throw new Error(`Could not uniquely identify the selected timestamp trust anchor in the CA bundle (${matches.length} matches).`);
+  }
+  return `${matches[0].trim()}\n`;
+}
+
+function buildVerificationJson(input: {
+  provider: string;
+  tsaUrl: string;
+  verifiedAt: string;
+  caFile: string;
+  verification: Awaited<ReturnType<typeof verifyTimestampResponseFiles>>;
+}) {
+  return `${JSON.stringify({
+    schemaVersion: 1,
+    verificationType: "novo.rfc3161.timestamp",
+    result: "verified",
+    provider: input.provider,
+    tsaUrl: input.tsaUrl,
+    verifiedAt: input.verifiedAt,
+    timestampVerification: {
+      command: "openssl ts -verify -queryfile request.tsq -in response.tsr -CAfile <system-ca-bundle>",
+      output: input.verification.timestampVerificationOutput,
+    },
+    certificatePathVerification: {
+      command: "openssl verify -show_chain -purpose timestampsign -CAfile <system-ca-bundle> -untrusted tsa-certificates.pem <tsa-signer-certificate>",
+      output: input.verification.certificateChainVerificationOutput,
+      selectedChain: input.verification.selectedChain,
+    },
+    tsaSigner: {
+      subject: input.verification.tsaSubject,
+      sha256Fingerprint: input.verification.tsaCertFingerprint,
+    },
+    embeddedCertificates: input.verification.embeddedCertificates,
+    trustAnchor: {
+      ...input.verification.trustAnchor,
+      source: "system-ca-bundle",
+    },
+    trustStore: {
+      path: input.caFile,
+      sha256: `sha256:${input.verification.caBundleSha256}`,
+      bytes: input.verification.caBundleBytes,
+      package: input.verification.caPackage,
+      operatingSystem: input.verification.operatingSystem,
+    },
+    openssl: input.verification.opensslVersion,
+    certificateValidityCheckedAt: input.verifiedAt,
+    revocationCheck: "not-performed",
+  }, null, 2)}\n`;
+}
+
+function parsePemCertificates(value: string) {
+  return value.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+}
+
+function normalizePemBundle(value: string) {
+  const certificates = parsePemCertificates(value);
+  if (!certificates.length) throw new Error("Timestamp certificate bundle does not contain an X.509 certificate.");
+  return `${certificates.map((certificate) => certificate.trim()).join("\n")}\n`;
+}
+
+function certificateMetadata(value: string) {
+  const certificate = new X509Certificate(value);
+  return {
+    subject: certificate.subject,
+    issuer: certificate.issuer,
+    serialNumber: certificate.serialNumber,
+    validFrom: certificate.validFrom,
+    validTo: certificate.validTo,
+    sha256Fingerprint: `sha256:${certificate.fingerprint256.replaceAll(":", "").toLowerCase()}`,
+  };
+}
+
+function normalizeDistinguishedName(value: string) {
+  const normalized = value.replace(/^subject\s*=\s*/i, "").trim();
+  const components: string[] = [];
+  let current = "";
+  let escaped = false;
+  let quoted = false;
+  for (const character of normalized) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (!quoted && (character === "," || character === "\n")) {
+      if (current.trim()) components.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  if (current.trim()) components.push(current.trim());
+  return components.map((component) => {
+    const separator = component.indexOf("=");
+    if (separator === -1) return component.replace(/\s+/g, " ").toLowerCase();
+    const key = component.slice(0, separator).trim().toUpperCase();
+    const valuePart = component.slice(separator + 1).trim().replace(/\s+/g, " ");
+    return `${key}=${valuePart}`;
+  }).sort().join("|");
+}
+
+function cleanVerificationOutput(result: OpenSslResult) {
+  return [result.stdout, result.stderr]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join("\n")
+    .replaceAll(/\/tmp\/novo-rfc3161-[^/\s]+\//g, "<temporary-directory>/");
+}
+
+function sha256Hex(value: Uint8Array) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function readOpenSslVersion(runner: OpenSslRunner) {
+  try {
+    const result = await runner(["version", "-a"]);
+    return cleanVerificationOutput(result);
+  } catch {
+    return "unknown";
+  }
+}
+
+async function readCaPackageMetadata() {
+  try {
+    const result = await runCommand("dpkg-query", ["-W", "-f=${Version}", "ca-certificates"]);
+    return { manager: "dpkg", name: "ca-certificates", version: result.stdout.trim() || "unknown" };
+  } catch {
+    try {
+      const result = await runCommand("apk", ["info", "-v", "ca-certificates"]);
+      return { manager: "apk", name: "ca-certificates", version: result.stdout.trim() || "unknown" };
+    } catch {
+      // Keep the verification usable on systems without a supported package manager.
+      return { manager: "unknown", name: "ca-certificates", version: "unknown" };
+    }
+  }
+}
+
+async function readOperatingSystemMetadata() {
+  try {
+    const values: Record<string, string> = Object.fromEntries((await readFile("/etc/os-release", "utf8")).split("\n").flatMap((line) => {
+      const separator = line.indexOf("=");
+      if (separator === -1) return [];
+      const key = line.slice(0, separator);
+      const value = line.slice(separator + 1).replace(/^"|"$/g, "");
+      return [[key, value]];
+    }));
+    return {
+      id: values.ID ?? "unknown",
+      versionId: values.VERSION_ID ?? "unknown",
+      prettyName: values.PRETTY_NAME ?? "unknown",
+    };
+  } catch {
+    return { id: "unknown", versionId: "unknown", prettyName: "unknown" };
+  }
+}
+
+async function runCommand(command: string, args: string[]) {
+  return execFileAsync(command, args, {
+    timeout: opensslTimeoutMs,
+    maxBuffer: opensslMaxBuffer,
+    encoding: "utf8",
+  });
 }
 
 export function parseTsaSignerCertificateText(text: string) {

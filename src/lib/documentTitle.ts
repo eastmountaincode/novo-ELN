@@ -4,5 +4,5 @@ export function getNovoDocumentTitle(wordmark: NovoBrand["wordmark"], pageTitle:
   if (pageTitle === null) return wordmark;
 
   const normalizedPageTitle = pageTitle.trim() || "Untitled";
-  return `${wordmark} - ${normalizedPageTitle}`;
+  return `${wordmark} | ${normalizedPageTitle}`;
 }

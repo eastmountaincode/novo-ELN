@@ -9,11 +9,11 @@ describe("Novo document title", () => {
 
   it("appends a normalized page title", () => {
     expect(getNovoDocumentTitle("Novo", " Useful commands ")).toBe(
-      "Novo - Useful commands",
+      "Novo | Useful commands",
     );
   });
 
   it("labels a selected page without a title as untitled", () => {
-    expect(getNovoDocumentTitle("Novo-dev", "   ")).toBe("Novo-dev - Untitled");
+    expect(getNovoDocumentTitle("Novo-dev", "   ")).toBe("Novo-dev | Untitled");
   });
 });

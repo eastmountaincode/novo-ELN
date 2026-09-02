@@ -175,6 +175,17 @@ function searchPostgres(userId: string, query: string, limit: number, scope: Sea
   const advancedCondition = advancedSearchSqlCondition(scope);
   const textExpression = searchableSqlExpression(scope.fields);
   const tokenConditions = tokens.map((token) => `${textExpression} LIKE ${sql(postgresTokenLikePattern(token))} ESCAPE '\\'`);
+  const minimumMatchCount = relaxedMinimumMatchCount(tokens.length);
+  const tokenMatchCountExpression = tokenConditions.map((condition) => `(CASE WHEN ${condition} THEN 1 ELSE 0 END)`).join(" + ");
+  const titleExpression = searchableSqlExpression(["title"]);
+  const titleMatchCountExpression = tokens
+    .map((token) => `(CASE WHEN ${titleExpression} LIKE ${sql(postgresTokenLikePattern(token))} ESCAPE '\\' THEN 1 ELSE 0 END)`)
+    .join(" + ");
+  const normalizedQuery = normalizeSearchText(query);
+  const normalizedTextExpression = `trim(regexp_replace(${textExpression}, '[^a-z0-9_]+', ' ', 'g'))`;
+  const exactPhraseExpression = normalizedQuery
+    ? `(CASE WHEN ${normalizedTextExpression} LIKE ${sql(postgresTokenLikePattern(normalizedQuery))} ESCAPE '\\' THEN 1 ELSE 0 END)`
+    : "0";
   const rows = querySql(`
     SELECT
       f.page_id,
@@ -184,19 +195,25 @@ function searchPostgres(userId: string, query: string, limit: number, scope: Sea
       f.body,
       f.tags,
       f.attachments,
-      f.updated_at
+      f.updated_at,
+      ${tokenMatchCountExpression} AS matched_token_count,
+      ${titleMatchCountExpression} AS title_matched_token_count,
+      ${exactPhraseExpression} AS exact_phrase_match
     FROM search_pages_fts f
     JOIN notebooks n ON n.id = f.notebook_id
     LEFT JOIN notebook_members nm ON nm.notebook_id = n.id AND nm.user_id = ${sql(userId)}
     WHERE ${accessCondition}
       ${notebookCondition}
       ${advancedCondition}
-      AND (${tokenConditions.join(" OR ")})
-    ORDER BY datetime(f.updated_at) DESC
+      AND (${tokenMatchCountExpression}) >= ${minimumMatchCount}
+    ORDER BY
+      exact_phrase_match DESC,
+      title_matched_token_count DESC,
+      matched_token_count DESC,
+      datetime(f.updated_at) DESC
     LIMIT ${Math.max(limit * 10, 300)}
   `);
 
-  const minimumMatchCount = relaxedMinimumMatchCount(tokens.length);
   return rows
     .filter((row) => rowMatchesAdvancedFilters(row, scope))
     .map((row): SearchResult & { matchedTokenCount: number } => {

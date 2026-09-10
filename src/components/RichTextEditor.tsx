@@ -1022,6 +1022,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
             {imageLoaded && !imageLoadError ? <AnnotationOverlay document={annotationDocument} /> : null}
           </div>
           {annotationStatus ? <div className="border-t border-slate-200 bg-white px-3 py-1.5 text-xs text-rose-700">{annotationStatus}</div> : null}
+          <AttachmentFooter attrs={attrs} />
           {!readOnly ? <button
             type="button"
             onPointerDown={startImageResize}
@@ -1084,6 +1085,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
             className="block w-full bg-white"
             style={{ height: `${previewHeight}px` }}
           />
+          <AttachmentFooter attrs={attrs} />
           {!readOnly ? <button
             type="button"
             onPointerDown={startPdfResize}
@@ -1144,6 +1146,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
           ) : (
             <div className="border-t border-slate-200 bg-white px-3 py-4 text-sm text-slate-500">{sheetPreviewStatus || "No spreadsheet preview available."}</div>
           )}
+          <AttachmentFooter attrs={attrs} />
         </div>
       </NodeViewWrapper>
     );
@@ -1155,6 +1158,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
         <div className={`attachment-frame max-w-3xl ${selected ? "attachment-file-selected" : ""}`}>
           <AttachmentHeader attrs={attrs} readOnly={readOnly}><button type="button" className="attachment-action attachment-action-labeled" onClick={() => openPresentation(attrs)} title="Open presentation" aria-label="Open presentation"><Eye size={15} /><span>Open</span></button></AttachmentHeader>
           <div className="attachment-preview overflow-hidden"><PresentationPreviewCarousel attachmentId={attrs.attachmentId} filename={attrs.filename} /></div>
+          <AttachmentFooter attrs={attrs} />
         </div>
       </NodeViewWrapper>
     );
@@ -1164,6 +1168,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
     <NodeViewWrapper className="attachment-row my-3" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
       <div className={`attachment-file attachment-frame ${selected ? "attachment-file-selected" : ""}`}>
         <AttachmentHeader attrs={attrs} readOnly={readOnly} />
+        <AttachmentFooter attrs={attrs} />
       </div>
     </NodeViewWrapper>
   );
@@ -1172,24 +1177,32 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
 function AttachmentHeader({ attrs, readOnly, children }: { attrs: InlineAttachmentAttrs; readOnly: boolean; children?: ReactNode }) {
   const kind = normalizeKind(attrs.kind);
   const label = { image: "image", pdf: "PDF", sheet: "spreadsheet", slides: "presentation", sequence: "sequence file", file: "file" }[kind];
-  const updatedAt = attrs.updatedAt || attrs.createdAt;
   return (
     <div className="attachment-header">
       <div className="attachment-heading">
-        {!readOnly ? <span data-drag-handle className="attachment-file-handle" title={`Move ${label}`} aria-label={`Move ${label}`}><GripVertical size={16} /></span> : null}
-        {renderKindIcon(kind)}
-        <span className="attachment-file-name" title={attrs.filename}>{attrs.filename}</span>
-        <span className="attachment-file-size">{formatBytes(attrs.size)}</span>
-        <a href={`/api/attachments/${attrs.attachmentId}/download`} draggable={false} className="attachment-action" title={`Download ${attrs.filename}`} aria-label={`Download ${attrs.filename}`}><Download size={15} /></a>
+        <div className="attachment-identity">
+          {!readOnly ? <span data-drag-handle className="attachment-file-handle" title={`Move ${label}`} aria-label={`Move ${label}`}><GripVertical size={16} /></span> : null}
+          {renderKindIcon(kind)}
+          <span className="attachment-file-name" title={attrs.filename}>{attrs.filename}</span>
+          <span className="attachment-file-size">{formatBytes(attrs.size)}</span>
+        </div>
+        <div className="attachment-controls">
+          {children}
+          <a href={`/api/attachments/${attrs.attachmentId}/download`} draggable={false} className="attachment-action attachment-action-labeled" title={`Download ${attrs.filename}`} aria-label={`Download ${attrs.filename}`}><Download size={15} /><span>Download</span></a>
+        </div>
       </div>
-      {attrs.createdAt || updatedAt || children ? <div className={`attachment-details ${readOnly ? "attachment-details-readonly" : ""}`}>
-        {attrs.createdAt || updatedAt ? <div className="attachment-dates">
-          {attrs.createdAt ? <span>Added <time dateTime={attrs.createdAt}>{formatDateTime(attrs.createdAt)}</time></span> : null}
-          {updatedAt ? <span>Updated <time dateTime={updatedAt}>{formatDateTime(updatedAt)}</time></span> : null}
-        </div> : null}
-        {children ? <div className="attachment-controls">{children}</div> : null}
-      </div> : null}
     </div>
+  );
+}
+
+function AttachmentFooter({ attrs }: { attrs: InlineAttachmentAttrs }) {
+  const updatedAt = attrs.updatedAt || attrs.createdAt;
+  if (!attrs.createdAt && !updatedAt) return null;
+  return (
+    <dl className="attachment-dates">
+      {attrs.createdAt ? <><dt>Added</dt><dd><time dateTime={attrs.createdAt}>{formatDateTime(attrs.createdAt)}</time></dd></> : null}
+      {updatedAt ? <><dt>Updated</dt><dd><time dateTime={updatedAt}>{formatDateTime(updatedAt)}</time></dd></> : null}
+    </dl>
   );
 }
 

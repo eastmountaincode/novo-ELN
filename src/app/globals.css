@@ -631,29 +631,33 @@ body.inline-attachment-dragging * {
 
 .attachment-header {
   min-width: 0;
-  padding: 5px 8px;
+  padding: 8px 12px;
   border-radius: 6px 6px 0 0;
-  background: #f8fafc;
+  background: #fff;
 }
 
-.attachment-file .attachment-header {
-  border-radius: 6px;
-}
-
-.attachment-frame > iframe,
-.attachment-frame > .attachment-preview {
-  border-radius: 0 0 6px 6px;
+.attachment-frame:not(.attachment-file) > .attachment-header {
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .attachment-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 8px 12px;
   min-width: 0;
   min-height: 28px;
 }
 
-.attachment-heading > svg {
+.attachment-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.attachment-identity > svg {
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -684,32 +688,28 @@ body.inline-attachment-dragging * {
   font-size: 12px;
 }
 
-.attachment-details {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-  padding: 1px 0 3px 54px;
-}
-
-.attachment-details-readonly {
-  padding-left: 26px;
-}
-
 .attachment-dates {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid #e2e8f0;
+  border-radius: 0 0 6px 6px;
+  background: #fff;
   color: #64748b;
-  font-size: 11px;
-  line-height: 17px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
-.attachment-dates > span {
-  white-space: nowrap;
+.attachment-dates dt,
+.attachment-dates dd {
+  margin: 0;
 }
 
 .attachment-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-left: auto;
 }
@@ -726,6 +726,7 @@ body.inline-attachment-dragging * {
   color: #475569;
   padding: 0;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .rich-text-surface .attachment-action-labeled {

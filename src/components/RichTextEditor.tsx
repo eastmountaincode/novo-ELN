@@ -21,6 +21,7 @@ import {
   Columns3,
   Download,
   Eraser,
+  Eye,
   File,
   FileArchive,
   FileImage,
@@ -993,7 +994,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
           style={{ minWidth: `${IMAGE_MIN_WIDTH}px`, ...(displayWidth ? { width: `${displayWidth}px` } : {}) }}
         >
           <AttachmentHeader attrs={attrs} readOnly={readOnly}>
-            {!readOnly ? <button type="button" className="attachment-action" onClick={() => setAnnotationOpen(true)} title="Annotate image" aria-label="Annotate image"><Pencil size={15} /></button> : null}
+            {!readOnly ? <button type="button" className="attachment-action attachment-action-labeled" onClick={() => setAnnotationOpen(true)} title="Annotate image" aria-label="Annotate image"><Pencil size={15} /><span>Annotate</span></button> : null}
           </AttachmentHeader>
           <div data-drag-handle={readOnly ? undefined : ""} className="attachment-preview relative block min-h-28 w-full max-w-full overflow-hidden bg-white">
             {!imageLoaded && !imageLoadError ? (
@@ -1108,7 +1109,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
     return (
       <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
         <div className={`attachment-frame max-w-3xl ${selected ? "attachment-file-selected" : ""}`}>
-          <AttachmentHeader attrs={attrs} readOnly={readOnly}><button type="button" className="attachment-action" onClick={() => openSpreadsheet(attrs)} title="Open spreadsheet" aria-label="Open spreadsheet"><ArrowUpRight size={15} /></button></AttachmentHeader>
+          <AttachmentHeader attrs={attrs} readOnly={readOnly}><button type="button" className="attachment-action attachment-action-labeled" onClick={() => openSpreadsheet(attrs)} title="View spreadsheet" aria-label="View spreadsheet"><Eye size={15} /><span>View</span></button></AttachmentHeader>
           {sheetPreview ? (
             <>
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600">
@@ -1152,7 +1153,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
     return (
       <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
         <div className={`attachment-frame max-w-3xl ${selected ? "attachment-file-selected" : ""}`}>
-          <AttachmentHeader attrs={attrs} readOnly={readOnly}><button type="button" className="attachment-action" onClick={() => openPresentation(attrs)} title="Open presentation" aria-label="Open presentation"><ArrowUpRight size={15} /></button></AttachmentHeader>
+          <AttachmentHeader attrs={attrs} readOnly={readOnly}><button type="button" className="attachment-action attachment-action-labeled" onClick={() => openPresentation(attrs)} title="Open presentation" aria-label="Open presentation"><Eye size={15} /><span>Open</span></button></AttachmentHeader>
           <div className="attachment-preview overflow-hidden"><PresentationPreviewCarousel attachmentId={attrs.attachmentId} filename={attrs.filename} /></div>
         </div>
       </NodeViewWrapper>
@@ -1179,12 +1180,14 @@ function AttachmentHeader({ attrs, readOnly, children }: { attrs: InlineAttachme
         {renderKindIcon(kind)}
         <span className="attachment-file-name" title={attrs.filename}>{attrs.filename}</span>
         <span className="attachment-file-size">{formatBytes(attrs.size)}</span>
-        {children}
         <a href={`/api/attachments/${attrs.attachmentId}/download`} draggable={false} className="attachment-action" title={`Download ${attrs.filename}`} aria-label={`Download ${attrs.filename}`}><Download size={15} /></a>
       </div>
-      {attrs.createdAt || updatedAt ? <div className={`attachment-dates ${readOnly ? "attachment-dates-readonly" : ""}`}>
-        {attrs.createdAt ? <span>Added <time dateTime={attrs.createdAt}>{formatDateTime(attrs.createdAt)}</time></span> : null}
-        {updatedAt ? <span>Updated <time dateTime={updatedAt}>{formatDateTime(updatedAt)}</time></span> : null}
+      {attrs.createdAt || updatedAt || children ? <div className={`attachment-details ${readOnly ? "attachment-details-readonly" : ""}`}>
+        {attrs.createdAt || updatedAt ? <div className="attachment-dates">
+          {attrs.createdAt ? <span>Added <time dateTime={attrs.createdAt}>{formatDateTime(attrs.createdAt)}</time></span> : null}
+          {updatedAt ? <span>Updated <time dateTime={updatedAt}>{formatDateTime(updatedAt)}</time></span> : null}
+        </div> : null}
+        {children ? <div className="attachment-controls">{children}</div> : null}
       </div> : null}
     </div>
   );

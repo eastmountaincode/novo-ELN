@@ -65,6 +65,7 @@ const NOTEBOOK_SORT_OPTIONS: Array<{ key: NotebookSortKey; label: string }> = [
 ];
 
 const NOTEBOOK_SORT_STORAGE_KEY = "novo.notebookSortKey";
+const SHARED_NOTEBOOK_SORT_STORAGE_KEY = "novo.sharedNotebookSortKey";
 const SIDEBAR_VERSION_TEXT =
   appBuildId && appBuildId !== "unknown" && appBuildId !== appVersion
     ? `${appVersion} · ${appBuildId}`
@@ -96,15 +97,16 @@ export function UnifiedSidebar({
   const [myNotebooksCollapsed, setMyNotebooksCollapsed] = useState(false);
   const [sharedNotebooksCollapsed, setSharedNotebooksCollapsed] = useState(false);
   const [notebookSortKey, setNotebookSortKey] = useState<NotebookSortKey>(readStoredNotebookSortKey);
-  const [notebookSortOpen, setNotebookSortOpen] = useState(false);
-  const notebookSortRef = useRef<HTMLDivElement>(null);
+  const [sharedNotebookSortKey, setSharedNotebookSortKey] = useState<NotebookSortKey>(
+    readStoredSharedNotebookSortKey,
+  );
   const sortedOwnNotebooks = useMemo(
     () => sortNotebooks(workspace.notebooks.filter((notebook) => notebook.accessRole === "owner"), notebookSortKey),
     [workspace.notebooks, notebookSortKey],
   );
   const sortedSharedNotebooks = useMemo(
-    () => sortNotebooks(workspace.notebooks.filter((notebook) => notebook.accessRole !== "owner"), notebookSortKey),
-    [workspace.notebooks, notebookSortKey],
+    () => sortNotebooks(workspace.notebooks.filter((notebook) => notebook.accessRole !== "owner"), sharedNotebookSortKey),
+    [workspace.notebooks, sharedNotebookSortKey],
   );
 
   useEffect(() => {
@@ -112,37 +114,8 @@ export function UnifiedSidebar({
   }, [notebookSortKey]);
 
   useEffect(() => {
-    if (!notebookSortOpen) return;
-
-    function isInsideNotebookSort(target: EventTarget | null) {
-      return target instanceof Element && Boolean(notebookSortRef.current?.contains(target));
-    }
-
-    function closeNotebookSort() {
-      setNotebookSortOpen(false);
-    }
-
-    function onPointerDown(event: PointerEvent) {
-      if (!isInsideNotebookSort(event.target)) closeNotebookSort();
-    }
-
-    function onFocusIn(event: FocusEvent) {
-      if (!isInsideNotebookSort(event.target)) closeNotebookSort();
-    }
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") closeNotebookSort();
-    }
-
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("focusin", onFocusIn);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("focusin", onFocusIn);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [notebookSortOpen]);
+    writeStoredSortKey(SHARED_NOTEBOOK_SORT_STORAGE_KEY, sharedNotebookSortKey);
+  }, [sharedNotebookSortKey]);
 
   function renderNotebook(notebook: Notebook) {
     const selected =
@@ -243,54 +216,6 @@ export function UnifiedSidebar({
     );
   }
 
-  const notebookSortControl = (
-    <div ref={notebookSortRef} data-transient-menu="true" className="relative">
-      <button
-        type="button"
-        onClick={() => setNotebookSortOpen((open) => !open)}
-        className="grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white"
-        aria-label="Sort notebooks"
-        aria-haspopup="dialog"
-        aria-expanded={notebookSortOpen}
-        title={`Sort notebooks: ${NOTEBOOK_SORT_OPTIONS.find((option) => option.key === notebookSortKey)?.label}`}
-      >
-        <SlidersHorizontal size={14} />
-      </button>
-      {notebookSortOpen ? (
-        <section
-          role="dialog"
-          aria-label="Sort notebooks"
-          className="absolute right-0 top-7 z-30 w-52 border border-white/10 bg-slate-900 p-1 text-slate-100 shadow-2xl shadow-slate-950/30"
-        >
-          <p className="px-3 pb-1.5 pt-2 text-xs font-semibold text-slate-500">Sort by</p>
-          <div className="space-y-1">
-            {NOTEBOOK_SORT_OPTIONS.map((option) => {
-              const selected = option.key === notebookSortKey;
-              return (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => {
-                    setNotebookSortKey(option.key);
-                    setNotebookSortOpen(false);
-                  }}
-                  className={`flex h-9 w-full items-center justify-between gap-3 px-3 text-left text-sm font-medium ${
-                    selected
-                      ? "bg-white/10 text-white"
-                      : "text-slate-300 hover:bg-white/5 hover:text-white"
-                  }`}
-                >
-                  <span>{option.label}</span>
-                  {selected ? <Check size={14} className="text-cyan-300" /> : null}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-    </div>
-  );
-
   return (
     <aside
       className={`relative z-30 grid min-h-screen grid-rows-[auto_1fr_auto] bg-slate-950 text-slate-200 ${
@@ -373,7 +298,12 @@ export function UnifiedSidebar({
               label="My Notebooks"
               collapsed={myNotebooksCollapsed}
               onToggle={() => setMyNotebooksCollapsed((current) => !current)}
-              action={notebookSortControl}
+              action={
+                <NotebookSortControl
+                  sortKey={notebookSortKey}
+                  onSortChange={setNotebookSortKey}
+                />
+              }
               onAdd={() => createNewNotebook(workspaceProject?.id)}
             />
             {!myNotebooksCollapsed ? (
@@ -389,6 +319,12 @@ export function UnifiedSidebar({
                 label="Shared with Me"
                 collapsed={sharedNotebooksCollapsed}
                 onToggle={() => setSharedNotebooksCollapsed((current) => !current)}
+                action={
+                  <NotebookSortControl
+                    sortKey={sharedNotebookSortKey}
+                    onSortChange={setSharedNotebookSortKey}
+                  />
+                }
               />
             </div>
             {!sharedNotebooksCollapsed ? (
@@ -464,6 +400,97 @@ export function UnifiedSidebar({
   );
 }
 
+function NotebookSortControl({
+  sortKey,
+  onSortChange,
+}: {
+  sortKey: NotebookSortKey;
+  onSortChange: (sortKey: NotebookSortKey) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function closeIfOutside(target: EventTarget | null) {
+      if (target instanceof Element && ref.current?.contains(target)) return;
+      setOpen(false);
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      closeIfOutside(event.target);
+    }
+
+    function onFocusIn(event: FocusEvent) {
+      closeIfOutside(event.target);
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const selectedLabel = NOTEBOOK_SORT_OPTIONS.find((option) => option.key === sortKey)?.label;
+
+  return (
+    <div ref={ref} data-transient-menu="true" className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="grid size-6 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white"
+        aria-label="Sort notebooks"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={`Sort notebooks: ${selectedLabel}`}
+      >
+        <SlidersHorizontal size={14} />
+      </button>
+      {open ? (
+        <section
+          role="dialog"
+          aria-label="Sort notebooks"
+          className="absolute right-0 top-7 z-30 w-52 border border-white/10 bg-slate-900 p-1 text-slate-100 shadow-2xl shadow-slate-950/30"
+        >
+          <p className="px-3 pb-1.5 pt-2 text-xs font-semibold text-slate-500">Sort by</p>
+          <div className="space-y-1">
+            {NOTEBOOK_SORT_OPTIONS.map((option) => {
+              const selected = option.key === sortKey;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => {
+                    onSortChange(option.key);
+                    setOpen(false);
+                  }}
+                  className={`flex h-9 w-full items-center justify-between gap-3 px-3 text-left text-sm font-medium ${
+                    selected
+                      ? "bg-white/10 text-white"
+                      : "text-slate-300 hover:bg-white/5 hover:text-white"
+                  }`}
+                >
+                  <span>{option.label}</span>
+                  {selected ? <Check size={14} className="text-cyan-300" /> : null}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function SidebarSection({
   label,
   onAdd,
@@ -516,6 +543,10 @@ function SidebarSection({
 
 function readStoredNotebookSortKey() {
   return readStoredSortKey(NOTEBOOK_SORT_STORAGE_KEY, NOTEBOOK_SORT_OPTIONS, "updated");
+}
+
+function readStoredSharedNotebookSortKey() {
+  return readStoredSortKey(SHARED_NOTEBOOK_SORT_STORAGE_KEY, NOTEBOOK_SORT_OPTIONS, "updated");
 }
 
 function sortNotebooks(notebooks: Notebook[], sortKey: NotebookSortKey) {

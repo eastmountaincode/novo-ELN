@@ -260,10 +260,9 @@ export function PageAttachmentsPanel({
           ) : pendingUploads.length || page.attachments.length ? (
             <div className="grid max-h-80 gap-2 overflow-y-auto scroll-contained p-2">
               {pendingUploads.map((upload) => <PendingAttachmentUploadRow key={upload.id} upload={upload} />)}
-              {sortedAttachments.map((attachment, index) => (
+              {sortedAttachments.map((attachment) => (
                 <AttachmentRow
                   key={attachment.id}
-                  index={index + 1}
                   attachment={attachment}
                   canEdit={canEdit}
                   usedInline={inlineAttachmentIds.has(attachment.id)}
@@ -286,7 +285,6 @@ function PendingAttachmentUploadRow({ upload }: { upload: PendingAttachmentUploa
     <div className="flex items-center justify-between gap-4 border border-slate-200 bg-white px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
         <GripVertical className="shrink-0 text-slate-300" size={15} aria-hidden="true" />
-        <span className="w-5 shrink-0 text-center text-xs font-medium tabular-nums text-slate-300">-</span>
         {failed ? <X className="shrink-0 text-rose-500" size={17} /> : <Loader2 className="shrink-0 animate-spin text-cyan-600" size={17} />}
         <div className="min-w-0">
           <div className="truncate text-sm text-slate-800">{upload.name}</div>
@@ -301,13 +299,11 @@ function PendingAttachmentUploadRow({ upload }: { upload: PendingAttachmentUploa
 
 function AttachmentRow({
   attachment,
-  index,
   canEdit,
   usedInline,
   onDelete,
 }: {
   attachment: Attachment;
-  index: number;
   canEdit: boolean;
   usedInline: boolean;
   onDelete: () => Promise<boolean>;
@@ -343,7 +339,6 @@ function AttachmentRow({
     >
       <div className="flex min-w-0 items-center gap-2">
         {canEdit ? <GripVertical className={`shrink-0 ${deleting ? "text-slate-300" : "text-slate-400"}`} size={15} aria-hidden="true" /> : null}
-        <span className="w-5 shrink-0 text-center text-xs font-medium tabular-nums text-slate-400">{index}</span>
         <Icon className="shrink-0 text-slate-500" size={17} />
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-1.5">

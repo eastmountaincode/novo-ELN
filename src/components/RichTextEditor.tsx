@@ -3,7 +3,8 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Extension, Mark, Node, mergeAttributes, type Editor } from "@tiptap/core";
 import type { Mark as ProseMirrorMark } from "@tiptap/pm/model";
-import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
+import { NodeSelection, Selection, Plugin, PluginKey } from "@tiptap/pm/state";
+import { GapCursor } from "@tiptap/pm/gapcursor";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, useEditorState, type JSONContent, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -15,8 +16,6 @@ import { TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import {
   Bold,
-  CalendarClock,
-  CalendarPlus,
   ChevronDown,
   Code,
   Columns3,
@@ -31,7 +30,6 @@ import {
   GripVertical,
   Heading1,
   Heading2,
-  HardDrive,
   Italic,
   Loader2,
   Link as LinkIcon,
@@ -56,7 +54,7 @@ import {
   Unlink,
   X,
 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { PresentationPreviewCarousel } from "@/components/PresentationPreviewCarousel";
 import {
@@ -292,6 +290,22 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     editorProps: {
       attributes: {
         class: "rich-text-surface min-h-[460px] outline-none",
+      },
+      handleDOMEvents: {
+        dragstart: (view, event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLElement)) return false;
+          const card = target.closest(".attachment-node")?.querySelector<HTMLElement>(".attachment-row > :first-child");
+          if (!card) return false;
+          if (!view.editable) { event.preventDefault(); return true; }
+          // Native dragstart targets the outer node-view element, outside the
+          // React wrapper. Set the preview here so it contains only the object.
+          startInlineAttachmentDrag();
+          const bounds = card.getBoundingClientRect();
+          event.dataTransfer?.setDragImage(card, Math.max(0, event.clientX - bounds.left), Math.max(0, event.clientY - bounds.top));
+          return false;
+        },
+        dragend: () => { clearInlineAttachmentDragState(); return false; },
       },
       handleClick: (_view, _pos, event) => {
         const target = event.target;
@@ -774,7 +788,7 @@ function createAttachmentCardExtension(actions: { openSpreadsheet: (attachment: 
       return ["div", mergeAttributes(HTMLAttributes, { "data-attachment-card": "true" })];
     },
     addNodeView() {
-      return ReactNodeViewRenderer((props) => <AttachmentCardView {...props} {...actions} />);
+      return ReactNodeViewRenderer((props) => <AttachmentCardView {...props} {...actions} />, { className: "attachment-node" });
     },
   });
 }
@@ -829,12 +843,60 @@ function parseInlineAttachmentDrag(dataTransfer: DataTransfer): InlineAttachment
   }
 }
 
-function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet, openPresentation, readOnly }: NodeViewProps & { openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; readOnly: boolean }) {
+function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, openSpreadsheet, openPresentation, readOnly: initialReadOnly }: NodeViewProps & { openSpreadsheet: (attachment: InlineAttachmentAttrs, onSaved?: (attachment: InlineAttachmentAttrs) => void) => void; openPresentation: (attachment: InlineAttachmentAttrs) => void; readOnly: boolean }) {
+  // Node views outlive the extension's initial action props. Follow the live
+  // editor state when a page is locked or temporarily blocked during saving.
+  const readOnly = useSyncExternalStore(
+    (onChange) => {
+      editor.on("update", onChange);
+      editor.on("transaction", onChange);
+      return () => {
+        editor.off("update", onChange);
+        editor.off("transaction", onChange);
+      };
+    },
+    () => !editor.isEditable,
+    () => initialReadOnly,
+  );
   const attrs = node.attrs as InlineAttachmentAttrs;
   const kind = normalizeKind(attrs.kind);
-  const canViewSheet = kind === "sheet";
-  const canPreview = kind === "slides";
-  const dragHandlers = readOnly ? {} : { onDragStart: startInlineAttachmentDrag, onDragEnd: clearInlineAttachmentDragState };
+  // Select the atom before native dragging can reuse a broader text selection.
+  function selectAttachment() {
+    const position = getPos();
+    if (typeof position !== "number" || !editor.isEditable) return;
+    editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, position)));
+  }
+
+  function handleAttachmentMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
+    if (event.button !== 0 || !editor.isEditable) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, input, textarea, select, [role=dialog]")) return;
+    if (target === event.currentTarget) {
+      const position = getPos();
+      if (typeof position !== "number") return;
+      event.preventDefault();
+      const after = editor.state.doc.resolve(position + node.nodeSize);
+      const next = after.nodeAfter;
+      const canInsertParagraph = after.parent.canReplaceWith(after.index(), after.index(), editor.schema.nodes.paragraph);
+      const isGap = !after.parent.inlineContent && (!next || next.type.name === "attachmentCard") && canInsertParagraph;
+      const selection = isGap ? new GapCursor(after) : Selection.near(after, 1);
+      editor.view.dispatch(editor.state.tr.setSelection(selection).scrollIntoView());
+      editor.view.focus();
+      return;
+    }
+    selectAttachment();
+    // Prevent native text selection inside a file, but let the drag handle
+    // reach ProseMirror's mousedown handler to start a native node move.
+    if (!target.closest("[data-drag-handle]")) {
+      event.preventDefault();
+      editor.view.focus();
+    }
+  }
+
+  const dragHandlers = readOnly ? {} : {
+    onMouseDownCapture: handleAttachmentMouseDown,
+    onDragEnd: clearInlineAttachmentDragState,
+  };
   const updatedAt = attrs.updatedAt || attrs.createdAt;
   const imageWrapperRef = useRef<HTMLDivElement>(null);
   const pdfWrapperRef = useRef<HTMLDivElement>(null);
@@ -927,16 +989,14 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
     }
 
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
+      <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
         <div
           ref={imageWrapperRef}
           className={`group/inline-image relative inline-block max-w-full overflow-hidden border border-slate-300 bg-slate-50 align-top text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
           style={{ minWidth: `${IMAGE_MIN_WIDTH}px`, ...(displayWidth ? { width: `${displayWidth}px` } : {}) }}
         >
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move image" aria-label="Move image">
-              <GripVertical size={16} />
-            </button> : null}
+            {!readOnly ? <span data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move image" aria-label="Move image"><GripVertical size={16} /></span> : null}
             <FileImage size={17} className="shrink-0 text-cyan-700" />
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
@@ -962,7 +1022,7 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
               <Download size={14} />
             </a>
           </div>
-          <div className="relative block min-h-28 w-full max-w-full bg-white">
+          <div data-drag-handle={readOnly ? undefined : ""} className="relative block min-h-28 w-full max-w-full bg-white">
             {!imageLoaded && !imageLoadError ? (
               <div className="flex min-h-28 w-full items-center justify-center gap-2 px-4 py-8 text-xs text-slate-500">
                 <Loader2 size={14} className="animate-spin" />
@@ -1037,16 +1097,14 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
     }
 
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
+      <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
         <div
           ref={pdfWrapperRef}
           className={`group/pdf-preview relative max-w-full border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
           style={{ width: `${displayWidth}px` }}
         >
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move PDF" aria-label="Move PDF">
-              <GripVertical size={16} />
-            </button> : null}
+            {!readOnly ? <span data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move PDF" aria-label="Move PDF"><GripVertical size={16} /></span> : null}
             <FileText size={17} className="shrink-0 text-rose-600" />
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
@@ -1081,12 +1139,10 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
 
   if (kind === "sheet") {
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
+      <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
         <div className={`max-w-3xl overflow-hidden border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move spreadsheet" aria-label="Move spreadsheet">
-              <GripVertical size={16} />
-            </button> : null}
+            {!readOnly ? <span data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move spreadsheet" aria-label="Move spreadsheet"><GripVertical size={16} /></span> : null}
             <FileSpreadsheet size={17} className="shrink-0 text-emerald-700" />
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
@@ -1134,10 +1190,10 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
 
   if (kind === "slides") {
     return (
-      <NodeViewWrapper className="my-4" data-attachment-card="true" {...dragHandlers}>
+      <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
         <div className={`max-w-3xl overflow-hidden border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
           <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            {!readOnly ? <button type="button" tabIndex={-1} data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move presentation" aria-label="Move presentation"><GripVertical size={16} /></button> : null}
+            {!readOnly ? <span data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move presentation" aria-label="Move presentation"><GripVertical size={16} /></span> : null}
             <Presentation size={17} className="shrink-0 text-orange-600" />
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
@@ -1150,28 +1206,21 @@ function AttachmentCardView({ node, selected, updateAttributes, openSpreadsheet,
     );
   }
 
+  const details = [
+    attrs.filename,
+    formatBytes(attrs.size),
+    attrs.createdAt ? `Added ${formatDateTime(attrs.createdAt)}` : "",
+    updatedAt && updatedAt !== attrs.createdAt ? `Updated ${formatDateTime(updatedAt)}` : "",
+  ].filter(Boolean).join("\n");
+
   return (
-    <NodeViewWrapper className="my-3" {...dragHandlers}>
-      <div data-attachment-card="true" className="max-w-lg overflow-hidden border border-slate-300 border-l-cyan-500 border-l-4 bg-slate-50 px-3 py-2.5 text-sm">
-        <div className="flex items-start gap-2.5">
-          {renderKindIcon(kind)}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <div className="min-w-0 flex-1 truncate text-sm font-semibold leading-5 text-slate-950">{attrs.filename}</div>
-              <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{labelForKind(kind)}</span>
-            </div>
-            <dl className="mt-1.5 grid gap-1 text-[11px] leading-4 text-slate-600 sm:grid-cols-2">
-              <AttachmentMeta icon={<HardDrive size={12} />} label="Size" value={formatBytes(attrs.size)} />
-              {attrs.createdAt ? <AttachmentMeta icon={<CalendarPlus size={12} />} label="Added" value={formatDateTime(attrs.createdAt)} /> : null}
-              {updatedAt ? <AttachmentMeta icon={<CalendarClock size={12} />} label="Updated" value={formatDateTime(updatedAt)} /> : null}
-            </dl>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {canViewSheet ? <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Eye size={13} />View</button> : null}
-              {canPreview ? <button type="button" tabIndex={-1} onClick={() => openPresentation(attrs)} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Eye size={13} />Preview</button> : null}
-              <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100"><Download size={13} />Download</a>
-            </div>
-          </div>
-        </div>
+    <NodeViewWrapper className="attachment-row my-3" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
+      <div className={`attachment-file ${selected ? "attachment-file-selected" : ""}`} title={details}>
+        {!readOnly ? <span data-drag-handle className="attachment-file-handle" title="Move file" aria-label="Move file"><GripVertical size={16} /></span> : null}
+        {renderKindIcon(kind)}
+        <span className="attachment-file-name">{attrs.filename}</span>
+        <span className="attachment-file-size">{formatBytes(attrs.size)}</span>
+        <a href={downloadUrl} draggable={false} className="attachment-file-download" title={`Download ${attrs.filename}`} aria-label={`Download ${attrs.filename}`}><Download size={15} /></a>
       </div>
     </NodeViewWrapper>
   );
@@ -1568,15 +1617,6 @@ function handleEditorTab(editor: Editor, outdent: boolean) {
   return editor.commands.insertContent(TAB_INDENT);
 }
 
-function AttachmentMeta({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  return (
-    <div className="flex min-w-0 items-center gap-1.5">
-      <dt className="flex shrink-0 items-center gap-1 text-slate-400">{icon}<span>{label}</span></dt>
-      <dd className="min-w-0 truncate">{value}</dd>
-    </div>
-  );
-}
-
 function startHorizontalAttachmentResize(event: ReactPointerEvent<HTMLButtonElement>, options: { minWidth: number; maxWidth: number; startWidth: number; onResize: (width: number) => void }) {
   event.preventDefault();
   event.stopPropagation();
@@ -1933,17 +1973,6 @@ function renderKindIcon(kind: BlockType) {
   return <File size={22} className={className} />;
 }
 
-function labelForKind(kind: BlockType) {
-  const labels: Record<BlockType, string> = {
-    image: "Image",
-    sheet: "Spreadsheet",
-    pdf: "PDF",
-    slides: "Presentation",
-    sequence: "Sequence",
-    file: "File",
-  };
-  return labels[kind];
-}
 
 function formatBytes(value: number) {
   if (!Number.isFinite(value) || value <= 0) return "0 KB";

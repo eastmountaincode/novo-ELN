@@ -579,3 +579,109 @@ input:disabled {
 body.inline-attachment-dragging [data-attachment-card="true"] iframe {
   pointer-events: none;
 }
+
+
+/* Attachment selection belongs to the visible object, not its full-width row. */
+.rich-text-surface .attachment-node.ProseMirror-selectednode {
+  outline: none;
+}
+
+.rich-text-surface .attachment-row {
+  cursor: text;
+}
+
+.rich-text-surface .attachment-row > * {
+  cursor: default;
+  user-select: none;
+}
+
+.rich-text-surface [data-drag-handle] {
+  cursor: grab;
+  user-select: none;
+}
+
+.rich-text-surface [data-drag-handle]:active,
+body.inline-attachment-dragging,
+body.inline-attachment-dragging * {
+  cursor: grabbing !important;
+}
+
+.rich-text-surface .attachment-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 40px;
+  padding: 5px 8px;
+  border: 1px solid #dbe1e8;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.rich-text-surface .attachment-file:hover {
+  border-color: #94a3b8;
+}
+
+.rich-text-surface .attachment-file-selected {
+  outline: 2px solid #0891b2;
+  outline-offset: 2px;
+}
+
+.attachment-file > svg {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+
+.attachment-file-handle {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 20px;
+  height: 28px;
+  color: #64748b;
+}
+
+.attachment-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #0f172a;
+}
+
+.attachment-file-size {
+  flex-shrink: 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.rich-text-surface .attachment-file-download {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  color: #475569;
+}
+
+.rich-text-surface .attachment-file-download:hover,
+.rich-text-surface .attachment-file-download:focus-visible {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.rich-text-surface .ProseMirror-gapcursor::after {
+  width: 24px;
+  border-top: 2px solid #0f172a;
+}
+
+.rich-text-surface[contenteditable="false"] .attachment-row {
+  cursor: default;
+}

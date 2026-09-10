@@ -21,7 +21,6 @@ import {
   Columns3,
   Download,
   Eraser,
-  Eye,
   File,
   FileArchive,
   FileImage,
@@ -897,12 +896,10 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
     onMouseDownCapture: handleAttachmentMouseDown,
     onDragEnd: clearInlineAttachmentDragState,
   };
-  const updatedAt = attrs.updatedAt || attrs.createdAt;
   const imageWrapperRef = useRef<HTMLDivElement>(null);
   const pdfWrapperRef = useRef<HTMLDivElement>(null);
   const viewUrl = `/api/attachments/${attrs.attachmentId}/view`;
   const pdfViewUrl = `${viewUrl}#toolbar=0&navpanes=0`;
-  const downloadUrl = `/api/attachments/${attrs.attachmentId}/download`;
   const [sheetPreview, setSheetPreview] = useState<SpreadsheetPreview | null>(null);
   const [sheetPreviewStatus, setSheetPreviewStatus] = useState("");
   const [annotationDocument, setAnnotationDocument] = useState<AnnotationDocument>({ items: [] });
@@ -992,37 +989,13 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
       <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
         <div
           ref={imageWrapperRef}
-          className={`group/inline-image relative inline-block max-w-full overflow-hidden border border-slate-300 bg-slate-50 align-top text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
+          className={`attachment-frame group/inline-image relative inline-block max-w-full align-top ${selected ? "attachment-file-selected" : ""}`}
           style={{ minWidth: `${IMAGE_MIN_WIDTH}px`, ...(displayWidth ? { width: `${displayWidth}px` } : {}) }}
         >
-          <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            {!readOnly ? <span data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move image" aria-label="Move image"><GripVertical size={16} /></span> : null}
-            <FileImage size={17} className="shrink-0 text-cyan-700" />
-            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
-            <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
-            {!readOnly ? (
-              <button
-                type="button"
-                tabIndex={-1}
-                onClick={() => setAnnotationOpen(true)}
-                className="grid size-7 shrink-0 place-items-center border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                title="Annotate image"
-                aria-label="Annotate image"
-              >
-                <Pencil size={14} />
-              </button>
-            ) : null}
-            <a
-              href={downloadUrl}
-              tabIndex={-1}
-              className="grid size-7 shrink-0 place-items-center border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-              title="Download image"
-              aria-label="Download image"
-            >
-              <Download size={14} />
-            </a>
-          </div>
-          <div data-drag-handle={readOnly ? undefined : ""} className="relative block min-h-28 w-full max-w-full bg-white">
+          <AttachmentHeader attrs={attrs} readOnly={readOnly}>
+            {!readOnly ? <button type="button" className="attachment-action" onClick={() => setAnnotationOpen(true)} title="Annotate image" aria-label="Annotate image"><Pencil size={15} /></button> : null}
+          </AttachmentHeader>
+          <div data-drag-handle={readOnly ? undefined : ""} className="attachment-preview relative block min-h-28 w-full max-w-full overflow-hidden bg-white">
             {!imageLoaded && !imageLoadError ? (
               <div className="flex min-h-28 w-full items-center justify-center gap-2 px-4 py-8 text-xs text-slate-500">
                 <Loader2 size={14} className="animate-spin" />
@@ -1100,16 +1073,10 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
       <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
         <div
           ref={pdfWrapperRef}
-          className={`group/pdf-preview relative max-w-full border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}
+          className={`attachment-frame group/pdf-preview relative max-w-full ${selected ? "attachment-file-selected" : ""}`}
           style={{ width: `${displayWidth}px` }}
         >
-          <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            {!readOnly ? <span data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move PDF" aria-label="Move PDF"><GripVertical size={16} /></span> : null}
-            <FileText size={17} className="shrink-0 text-rose-600" />
-            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
-            <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
-            <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Download size={13} />Download</a>
-          </div>
+          <AttachmentHeader attrs={attrs} readOnly={readOnly}></AttachmentHeader>
           <iframe
             src={pdfViewUrl}
             title={attrs.filename}
@@ -1140,15 +1107,8 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
   if (kind === "sheet") {
     return (
       <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
-        <div className={`max-w-3xl overflow-hidden border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
-          <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            {!readOnly ? <span data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move spreadsheet" aria-label="Move spreadsheet"><GripVertical size={16} /></span> : null}
-            <FileSpreadsheet size={17} className="shrink-0 text-emerald-700" />
-            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
-            <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
-            <button type="button" tabIndex={-1} onClick={() => openSpreadsheet(attrs)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Eye size={13} />View</button>
-            <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Download size={13} />Download</a>
-          </div>
+        <div className={`attachment-frame max-w-3xl ${selected ? "attachment-file-selected" : ""}`}>
+          <AttachmentHeader attrs={attrs} readOnly={readOnly}><button type="button" className="attachment-action" onClick={() => openSpreadsheet(attrs)} title="Open spreadsheet" aria-label="Open spreadsheet"><ArrowUpRight size={15} /></button></AttachmentHeader>
           {sheetPreview ? (
             <>
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600">
@@ -1158,7 +1118,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
                   {sheetPreview.truncatedRows || sheetPreview.truncatedColumns ? ` · showing ${sheetPreview.previewRowCount} x ${sheetPreview.previewColumnCount}` : ""}
                 </span>
               </div>
-              <div className="max-h-72 overflow-auto scroll-contained bg-white">
+              <div className="attachment-preview max-h-72 overflow-auto scroll-contained bg-white">
                 <table className="min-w-full border-collapse text-xs leading-5">
                   <tbody>
                     {sheetPreview.rows.map((row, rowIndex) => (
@@ -1191,38 +1151,42 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
   if (kind === "slides") {
     return (
       <NodeViewWrapper className="attachment-row my-4" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
-        <div className={`max-w-3xl overflow-hidden border border-slate-300 bg-slate-50 text-sm ${selected ? "outline outline-2 outline-cyan-500" : ""}`}>
-          <div className="flex min-w-0 items-center gap-2 border-b border-slate-300 bg-slate-100 px-3 py-2">
-            {!readOnly ? <span data-drag-handle className="-ml-1 grid size-6 cursor-grab place-items-center text-slate-400 hover:text-slate-700" title="Move presentation" aria-label="Move presentation"><GripVertical size={16} /></span> : null}
-            <Presentation size={17} className="shrink-0 text-orange-600" />
-            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{attrs.filename}</div>
-            <span className="shrink-0 text-xs text-slate-500">{formatBytes(attrs.size)}</span>
-            <button type="button" tabIndex={-1} onClick={() => openPresentation(attrs)} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Eye size={13} />Open</button>
-            <a href={downloadUrl} tabIndex={-1} className="inline-flex h-7 shrink-0 items-center gap-1 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-50"><Download size={13} />Download</a>
-          </div>
-          <PresentationPreviewCarousel attachmentId={attrs.attachmentId} filename={attrs.filename} />
+        <div className={`attachment-frame max-w-3xl ${selected ? "attachment-file-selected" : ""}`}>
+          <AttachmentHeader attrs={attrs} readOnly={readOnly}><button type="button" className="attachment-action" onClick={() => openPresentation(attrs)} title="Open presentation" aria-label="Open presentation"><ArrowUpRight size={15} /></button></AttachmentHeader>
+          <div className="attachment-preview overflow-hidden"><PresentationPreviewCarousel attachmentId={attrs.attachmentId} filename={attrs.filename} /></div>
         </div>
       </NodeViewWrapper>
     );
   }
 
-  const details = [
-    attrs.filename,
-    formatBytes(attrs.size),
-    attrs.createdAt ? `Added ${formatDateTime(attrs.createdAt)}` : "",
-    updatedAt && updatedAt !== attrs.createdAt ? `Updated ${formatDateTime(updatedAt)}` : "",
-  ].filter(Boolean).join("\n");
-
   return (
     <NodeViewWrapper className="attachment-row my-3" contentEditable={false} data-attachment-card="true" {...dragHandlers}>
-      <div className={`attachment-file ${selected ? "attachment-file-selected" : ""}`} title={details}>
-        {!readOnly ? <span data-drag-handle className="attachment-file-handle" title="Move file" aria-label="Move file"><GripVertical size={16} /></span> : null}
-        {renderKindIcon(kind)}
-        <span className="attachment-file-name">{attrs.filename}</span>
-        <span className="attachment-file-size">{formatBytes(attrs.size)}</span>
-        <a href={downloadUrl} draggable={false} className="attachment-file-download" title={`Download ${attrs.filename}`} aria-label={`Download ${attrs.filename}`}><Download size={15} /></a>
+      <div className={`attachment-file attachment-frame ${selected ? "attachment-file-selected" : ""}`}>
+        <AttachmentHeader attrs={attrs} readOnly={readOnly} />
       </div>
     </NodeViewWrapper>
+  );
+}
+
+function AttachmentHeader({ attrs, readOnly, children }: { attrs: InlineAttachmentAttrs; readOnly: boolean; children?: ReactNode }) {
+  const kind = normalizeKind(attrs.kind);
+  const label = { image: "image", pdf: "PDF", sheet: "spreadsheet", slides: "presentation", sequence: "sequence file", file: "file" }[kind];
+  const updatedAt = attrs.updatedAt || attrs.createdAt;
+  return (
+    <div className="attachment-header">
+      <div className="attachment-heading">
+        {!readOnly ? <span data-drag-handle className="attachment-file-handle" title={`Move ${label}`} aria-label={`Move ${label}`}><GripVertical size={16} /></span> : null}
+        {renderKindIcon(kind)}
+        <span className="attachment-file-name" title={attrs.filename}>{attrs.filename}</span>
+        <span className="attachment-file-size">{formatBytes(attrs.size)}</span>
+        {children}
+        <a href={`/api/attachments/${attrs.attachmentId}/download`} draggable={false} className="attachment-action" title={`Download ${attrs.filename}`} aria-label={`Download ${attrs.filename}`}><Download size={15} /></a>
+      </div>
+      {attrs.createdAt || updatedAt ? <div className={`attachment-dates ${readOnly ? "attachment-dates-readonly" : ""}`}>
+        {attrs.createdAt ? <span>Added <time dateTime={attrs.createdAt}>{formatDateTime(attrs.createdAt)}</time></span> : null}
+        {updatedAt ? <span>Updated <time dateTime={updatedAt}>{formatDateTime(updatedAt)}</time></span> : null}
+      </div> : null}
+    </div>
   );
 }
 

@@ -606,24 +606,22 @@ body.inline-attachment-dragging * {
   cursor: grabbing !important;
 }
 
-.rich-text-surface .attachment-file {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: fit-content;
+.rich-text-surface .attachment-frame {
   max-width: 100%;
-  min-height: 40px;
-  padding: 5px 8px;
   border: 1px solid #dbe1e8;
   border-radius: 7px;
-  background: #f8fafc;
+  background: #fff;
   color: #334155;
   font-size: 14px;
   line-height: 20px;
 }
 
-.rich-text-surface .attachment-file:hover {
+.rich-text-surface .attachment-frame:hover {
   border-color: #94a3b8;
+}
+
+.rich-text-surface .attachment-file {
+  width: fit-content;
 }
 
 .rich-text-surface .attachment-file-selected {
@@ -631,7 +629,31 @@ body.inline-attachment-dragging * {
   outline-offset: 2px;
 }
 
-.attachment-file > svg {
+.attachment-header {
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 6px 6px 0 0;
+  background: #f8fafc;
+}
+
+.attachment-file .attachment-header {
+  border-radius: 6px;
+}
+
+.attachment-frame > iframe,
+.attachment-frame > .attachment-preview {
+  border-radius: 0 0 6px 6px;
+}
+
+.attachment-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 28px;
+}
+
+.attachment-heading > svg {
   flex-shrink: 0;
   width: 18px;
   height: 18px;
@@ -647,6 +669,7 @@ body.inline-attachment-dragging * {
 }
 
 .attachment-file-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -661,18 +684,40 @@ body.inline-attachment-dragging * {
   font-size: 12px;
 }
 
-.rich-text-surface .attachment-file-download {
+.attachment-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  padding: 1px 0 3px 54px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.attachment-dates > span {
+  white-space: nowrap;
+}
+
+.attachment-dates-readonly {
+  padding-left: 26px;
+}
+
+.rich-text-surface .attachment-action {
   display: grid;
   flex-shrink: 0;
   place-items: center;
   width: 28px;
   height: 28px;
+  border: 0;
   border-radius: 4px;
+  background: transparent;
   color: #475569;
+  padding: 0;
+  cursor: pointer;
 }
 
-.rich-text-surface .attachment-file-download:hover,
-.rich-text-surface .attachment-file-download:focus-visible {
+.rich-text-surface .attachment-action:hover,
+.rich-text-surface .attachment-action:focus-visible {
   background: #e2e8f0;
   color: #0f172a;
 }

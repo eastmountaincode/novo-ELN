@@ -54,7 +54,7 @@ import {
   Unlink,
   X,
 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { PresentationPreviewCarousel } from "@/components/PresentationPreviewCarousel";
 import {
@@ -63,6 +63,7 @@ import {
   removeCommentMarksFromBody,
 } from "@/lib/editor";
 import type { SpreadsheetPreview, SpreadsheetPreviewCell } from "@/lib/spreadsheetPreview";
+import { containedImageBounds, imageAnnotationPoint } from "@/lib/imageAnnotationGeometry";
 import type { Attachment, BlockType, PageCommentThread } from "@/lib/types";
 
 export const INLINE_ATTACHMENT_DRAG_TYPE = "application/x-novo-attachment";
@@ -898,6 +899,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
     onDragEnd: clearInlineAttachmentDragState,
   };
   const imageWrapperRef = useRef<HTMLDivElement>(null);
+  const inlineImageRef = useRef<HTMLImageElement>(null);
   const pdfWrapperRef = useRef<HTMLDivElement>(null);
   const viewUrl = `/api/attachments/${attrs.attachmentId}/view`;
   const pdfViewUrl = `${viewUrl}#toolbar=0&navpanes=0`;
@@ -1006,6 +1008,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
             {imageLoadError ? <div className="w-full px-4 py-8 text-xs text-rose-700">{imageLoadError}</div> : null}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
+              ref={inlineImageRef}
               src={imageUrl}
               alt={attrs.filename}
               className={`${imageLoaded && !imageLoadError ? "block" : "absolute left-0 top-0 size-px opacity-0"} h-auto max-h-[640px] max-w-full object-contain`}
@@ -1019,7 +1022,7 @@ function AttachmentCardView({ editor, getPos, node, selected, updateAttributes, 
                 setImageLoadError("Unable to load image preview.");
               }}
             />
-            {imageLoaded && !imageLoadError ? <AnnotationOverlay document={annotationDocument} /> : null}
+            {imageLoaded && !imageLoadError ? <AnnotationOverlay document={annotationDocument} imageRef={inlineImageRef} /> : null}
           </div>
           {annotationStatus ? <div className="border-t border-slate-200 bg-white px-3 py-1.5 text-xs text-rose-700">{annotationStatus}</div> : null}
           <AttachmentFooter attrs={attrs} />
@@ -1215,7 +1218,7 @@ function ImageAnnotationModal({ filename, imageUrl, initialDocument, onClose, on
   const [error, setError] = useState("");
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState("");
-  const surfaceRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftRef = useRef(draft);
   const queuedSaveDocument = useRef<AnnotationDocument | null>(null);
@@ -1304,15 +1307,11 @@ function ImageAnnotationModal({ filename, imageUrl, initialDocument, onClose, on
     queueSave(normalizedDocument);
   }
 
-  function pointFromEvent(event: ReactPointerEvent<HTMLElement>): AnnotationPoint | null {
-    const surface = surfaceRef.current;
-    if (!surface) return null;
-    const rect = surface.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-    return {
-      x: clamp((event.clientX - rect.left) / rect.width, 0, 1),
-      y: clamp((event.clientY - rect.top) / rect.height, 0, 1),
-    };
+  function pointFromEvent(event: ReactPointerEvent<HTMLElement>, clampOutside = false): AnnotationPoint | null {
+    const image = imageRef.current;
+    if (!image) return null;
+    const bounds = containedImageBounds(image.getBoundingClientRect(), image.naturalWidth, image.naturalHeight);
+    return imageAnnotationPoint(bounds, event.clientX, event.clientY, clampOutside);
   }
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1335,7 +1334,7 @@ function ImageAnnotationModal({ filename, imageUrl, initialDocument, onClose, on
 
   function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     if (!currentItem) return;
-    const point = pointFromEvent(event);
+    const point = pointFromEvent(event, true);
     if (!point) return;
     if (currentItem.type === "arrow") setCurrentItem({ ...currentItem, to: point });
     if (currentItem.type === "pen") setCurrentItem({ ...currentItem, points: [...currentItem.points, point] });
@@ -1401,7 +1400,6 @@ function ImageAnnotationModal({ filename, imageUrl, initialDocument, onClose, on
         {error ? <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">{error}</div> : null}
         <div className="min-h-0 flex-1 overflow-auto bg-slate-100 p-4">
           <div
-            ref={surfaceRef}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -1417,6 +1415,7 @@ function ImageAnnotationModal({ filename, imageUrl, initialDocument, onClose, on
             {imageError ? <div className="px-5 py-12 text-sm text-rose-700">{imageError}</div> : null}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
+              ref={imageRef}
               src={imageUrl}
               alt={filename}
               className={`${imageLoaded && !imageError ? "block" : "absolute left-0 top-0 size-px opacity-0"} max-h-[72vh] max-w-full object-contain`}
@@ -1430,7 +1429,7 @@ function ImageAnnotationModal({ filename, imageUrl, initialDocument, onClose, on
                 setImageError("Unable to load image preview.");
               }}
             />
-            {imageLoaded && !imageError ? <AnnotationOverlay document={visibleDocument} interactive /> : null}
+            {imageLoaded && !imageError ? <AnnotationOverlay document={visibleDocument} imageRef={imageRef} interactive /> : null}
           </div>
         </div>
       </div>
@@ -1452,11 +1451,47 @@ function AnnotationToolButton({ active, onClick, label, children }: { active: bo
   );
 }
 
-function AnnotationOverlay({ document, interactive = false }: { document: AnnotationDocument; interactive?: boolean }) {
-  if (!document.items.length) return null;
+function AnnotationOverlay({ document, imageRef, interactive = false }: { document: AnnotationDocument; imageRef: RefObject<HTMLImageElement | null>; interactive?: boolean }) {
+  const overlayRef = useRef<SVGSVGElement>(null);
+  const hasItems = document.items.length > 0;
+
+  useLayoutEffect(() => {
+    const image = imageRef.current;
+    const overlay = overlayRef.current;
+    const surface = overlay?.parentElement;
+    if (!image || !overlay || !surface) return;
+
+    function alignWithImage() {
+      if (!image || !overlay || !surface) return;
+      const bounds = containedImageBounds(image.getBoundingClientRect(), image.naturalWidth, image.naturalHeight);
+      if (!bounds) { overlay.style.visibility = "hidden"; return; }
+      const parent = surface.getBoundingClientRect();
+      // Size to the visible image, never the card, its minimum height, or its
+      // empty space. The same normalized coordinates then survive resizing.
+      overlay.style.left = `${bounds.left - parent.left + surface.scrollLeft - surface.clientLeft}px`;
+      overlay.style.top = `${bounds.top - parent.top + surface.scrollTop - surface.clientTop}px`;
+      overlay.style.width = `${bounds.width}px`;
+      overlay.style.height = `${bounds.height}px`;
+      overlay.style.visibility = "visible";
+    }
+
+    alignWithImage();
+    const observer = new ResizeObserver(alignWithImage);
+    observer.observe(image);
+    observer.observe(surface);
+    image.addEventListener("load", alignWithImage);
+    return () => {
+      observer.disconnect();
+      image.removeEventListener("load", alignWithImage);
+    };
+  }, [imageRef, hasItems]);
+
+  if (!hasItems) return null;
   return (
     <svg
-      className={`absolute inset-0 size-full ${interactive ? "" : "pointer-events-none"}`}
+      ref={overlayRef}
+      data-image-annotation-overlay="true"
+      className={`absolute ${interactive ? "" : "pointer-events-none"}`}
       viewBox={`0 0 ${ANNOTATION_CANVAS_SIZE} ${ANNOTATION_CANVAS_SIZE}`}
       preserveAspectRatio="none"
       aria-hidden="true"

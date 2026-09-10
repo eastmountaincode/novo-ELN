@@ -31,6 +31,10 @@ export function adminActivitySummary(event: AuditEvent) {
 }
 
 export function AdminActivityContext({ event }: { event: AuditEvent }) {
+  if (event.entityType === "user") {
+    const targetEmail = typeof event.metadata?.targetEmail === "string" ? event.metadata.targetEmail.trim() : "";
+    return <>{targetEmail || "User administration"}</>;
+  }
   const pageTitle = event.pageTitle?.trim();
   const notebookName = event.notebookName?.trim();
   if (pageTitle) {

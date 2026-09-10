@@ -104,9 +104,11 @@ describe("store", () => {
     expect(queryOne("SELECT COUNT(*) AS count FROM notebooks")?.count).toBe("1");
     expect(queryOne("SELECT COUNT(*) AS count FROM pages")?.count).toBe("1");
     expect(queryOne("SELECT COUNT(*) AS count FROM attachments")?.count).toBe("1");
-    const migratedUser = queryOne("SELECT first_name, last_name FROM users WHERE id = 'user-1'");
+    const migratedUser = queryOne("SELECT first_name, last_name, is_active, deactivated_at FROM users WHERE id = 'user-1'");
     expect(migratedUser?.first_name).toBe("Legacy");
     expect(migratedUser?.last_name).toBe("User");
+    expect(migratedUser?.is_active).toBe("1");
+    expect(migratedUser?.deactivated_at).toBe("");
     expect(queryOne("SELECT COUNT(*) AS count FROM tags WHERE label IN ('Cells', 'Needs review')")?.count).toBe("2");
     expect(queryOne("SELECT COUNT(*) AS count FROM page_tags WHERE page_id = 'page-1' AND tag_id IS NOT NULL")?.count).toBe("2");
   });
@@ -489,6 +491,56 @@ describe("store", () => {
 
     expect(verifyCredentials("lab.member@example.local", "Member-password-2026!")).toBeNull();
     expect(verifyCredentials("lab.member@example.local", "Temporary-password-2026!")?.id).toBe(member.id);
+  });
+
+  it("deactivates accounts without deleting notebooks, signing keys, or audit history", async () => {
+    const {
+      adminSetUserActive,
+      createUser,
+      ensureUserSigningKey,
+      findUserById,
+      getWorkspace,
+      listUsersForAdmin,
+      verifyCredentials,
+    } = await import("../src/lib/store");
+    const { queryOne } = await import("../src/lib/sqlite");
+    const admin = await createTestAdmin();
+    const memberPassword = "Member-password-2026!";
+    const member = createUser({ email: "summer.student@example.local", firstName: "Summer", lastName: "Student", password: memberPassword });
+    const memberNotebookId = getWorkspace(member.id).notebooks[0].id;
+    ensureUserSigningKey(member.id, "Signing passphrase 2026");
+
+    adminSetUserActive(admin.id, member.id, false);
+
+    expect(verifyCredentials(member.email, memberPassword)).toBeNull();
+    expect(findUserById(member.id)).toBeNull();
+    expect(() => getWorkspace(member.id)).toThrow("User not found");
+    expect(listUsersForAdmin(admin.id).find((user) => user.id === member.id)).toEqual(expect.objectContaining({
+      active: false,
+      notebookCount: 1,
+    }));
+    expect(queryOne(`SELECT COUNT(*) AS count FROM notebooks WHERE id = '${memberNotebookId}'`)?.count).toBe("1");
+    expect(queryOne(`SELECT COUNT(*) AS count FROM user_signing_keys WHERE user_id = '${member.id}'`)?.count).toBe("1");
+    expect(queryOne(`SELECT COUNT(*) AS count FROM audit_events WHERE entity_type = 'user' AND entity_id = '${member.id}' AND action = 'user.deactivated'`)?.count).toBe("1");
+
+    adminSetUserActive(admin.id, member.id, true);
+
+    expect(verifyCredentials(member.email, memberPassword)?.id).toBe(member.id);
+    expect(getWorkspace(member.id).notebooks.some((notebook) => notebook.id === memberNotebookId)).toBe(true);
+    expect(listUsersForAdmin(admin.id).find((user) => user.id === member.id)).toEqual(expect.objectContaining({
+      active: true,
+      deactivatedAt: "",
+      notebookCount: 1,
+    }));
+  });
+
+  it("prevents self-deactivation and non-admin user administration", async () => {
+    const { adminSetUserActive, createUser } = await import("../src/lib/store");
+    const admin = await createTestAdmin();
+    const member = createUser({ email: "ordinary.member@example.local", firstName: "Ordinary", lastName: "Member", password: "Member-password-2026!" });
+
+    expect(() => adminSetUserActive(admin.id, admin.id, false)).toThrow("You cannot deactivate your own account.");
+    expect(() => adminSetUserActive(member.id, admin.id, false)).toThrow("Forbidden");
   });
 
   it("only lets admins create new member accounts", async () => {

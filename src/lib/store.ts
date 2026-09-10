@@ -67,6 +67,8 @@ export function ensureDatabase() {
       last_name TEXT NOT NULL DEFAULT '',
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      deactivated_at TEXT,
       last_login_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -294,6 +296,7 @@ export function ensureDatabase() {
   `);
   migrateUserNameColumns();
   ensureUserLastLoginColumn();
+  ensureUserAccountStatusColumns();
   migrateProjectsToTopLevelNotebooks();
   ensureNotebookColumns();
   ensurePageLockColumns();
@@ -425,6 +428,17 @@ function ensureUserLastLoginColumn() {
   const columnNames = new Set(columns.map((column) => column.name));
   if (!columnNames.has("last_login_at")) {
     execSql("ALTER TABLE users ADD COLUMN last_login_at TEXT;");
+  }
+}
+
+function ensureUserAccountStatusColumns() {
+  const columns = querySql("PRAGMA table_info(users);");
+  const columnNames = new Set(columns.map((column) => column.name));
+  if (!columnNames.has("is_active")) {
+    execSql("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;");
+  }
+  if (!columnNames.has("deactivated_at")) {
+    execSql("ALTER TABLE users ADD COLUMN deactivated_at TEXT;");
   }
 }
 
@@ -780,7 +794,7 @@ function migrateGroupedTagsToPageTags() {
 
 export function findUserByEmail(email: string) {
   ensureDatabase();
-  const row = queryOne(`SELECT id, email, first_name, last_name, password_hash, role FROM users WHERE lower(email) = lower(${sql(email)}) LIMIT 1`);
+  const row = queryOne(`SELECT id, email, first_name, last_name, password_hash, role, is_active FROM users WHERE lower(email) = lower(${sql(email)}) LIMIT 1`);
   if (!row) return null;
   return {
     id: row.id,
@@ -789,25 +803,26 @@ export function findUserByEmail(email: string) {
     lastName: row.last_name,
     passwordHash: row.password_hash,
     role: row.role as UserRole,
+    active: databaseBoolean(row.is_active),
   };
 }
 
 export function findUserById(id: string): AppUser | null {
   ensureDatabase();
-  const row = queryOne(`SELECT id, email, first_name, last_name, role FROM users WHERE id = ${sql(id)} LIMIT 1`);
+  const row = queryOne(`SELECT id, email, first_name, last_name, role FROM users WHERE id = ${sql(id)} AND is_active = 1 LIMIT 1`);
   if (!row) return null;
   return { id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, role: row.role as UserRole };
 }
 
 export function verifyCredentials(email: string, password: string): AppUser | null {
   const user = findUserByEmail(email);
-  if (!user || !bcrypt.compareSync(password, user.passwordHash)) return null;
+  if (!user || !user.active || !bcrypt.compareSync(password, user.passwordHash)) return null;
   return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role };
 }
 
 export function verifyUserPassword(userId: string, password: string) {
   ensureDatabase();
-  const user = queryOne(`SELECT password_hash FROM users WHERE id = ${sql(userId)} LIMIT 1`);
+  const user = queryOne(`SELECT password_hash FROM users WHERE id = ${sql(userId)} AND is_active = 1 LIMIT 1`);
   return Boolean(user?.password_hash && bcrypt.compareSync(password, user.password_hash));
 }
 
@@ -917,6 +932,8 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
       u.first_name,
       u.last_name,
       u.role,
+      u.is_active,
+      COALESCE(u.deactivated_at, '') AS deactivated_at,
       COALESCE(u.last_login_at, '') AS last_login_at,
       u.created_at,
       COUNT(DISTINCT nm.notebook_id) AS notebook_count,
@@ -932,6 +949,8 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
     firstName: row.first_name,
     lastName: row.last_name,
     role: row.role as UserRole,
+    active: databaseBoolean(row.is_active),
+    deactivatedAt: row.deactivated_at,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at,
     lastActivityAt: row.last_activity_at,
@@ -1139,6 +1158,43 @@ export function adminSetUserPassword(adminUserId: string, targetUserId: string, 
   if (!findUserById(targetUserId)) throw new Error("User not found.");
   validatePassword(nextPassword);
   execSql(updateUserPasswordSql(targetUserId, nextPassword));
+}
+
+export function adminSetUserActive(adminUserId: string, targetUserId: string, active: boolean) {
+  ensureDatabase();
+  assertAdmin(adminUserId);
+  const target = queryOne(`
+    SELECT id, email, first_name, last_name, role, is_active
+    FROM users
+    WHERE id = ${sql(targetUserId)}
+    LIMIT 1
+  `);
+  if (!target) throw new Error("User not found.");
+  if (!active && adminUserId === targetUserId) throw new Error("You cannot deactivate your own account.");
+  if (databaseBoolean(target.is_active) === active) return;
+
+  execSql(`
+    UPDATE users
+    SET is_active = ${active ? 1 : 0},
+        deactivated_at = ${active ? "NULL" : "datetime('now')"}
+    WHERE id = ${sql(targetUserId)};
+    ${active ? `DELETE FROM login_attempts WHERE lower(email) = lower(${sql(target.email)});` : ""}
+  `);
+  recordAuditEvent({
+    entityType: "user",
+    entityId: targetUserId,
+    actorUserId: adminUserId,
+    action: active ? "user.reactivated" : "user.deactivated",
+    summary: `${active ? "reactivated" : "deactivated"} user ${quoteAuditValue(target.email)}`,
+    metadata: {
+      targetUserId,
+      targetEmail: target.email,
+      targetFirstName: target.first_name,
+      targetLastName: target.last_name,
+      targetRole: target.role,
+      active,
+    },
+  });
 }
 
 export function listUserSigningKeys(userId: string): UserSigningKey[] {
@@ -1712,12 +1768,12 @@ export function getWorkspace(userId: string): Workspace {
     ? querySql(`
         SELECT nm.notebook_id, nm.user_id, nm.role, u.email, u.first_name, u.last_name, u.role AS user_role
         FROM notebook_members nm
-        JOIN users u ON u.id = nm.user_id
+        JOIN users u ON u.id = nm.user_id AND u.is_active = 1
         WHERE nm.notebook_id IN (${inList(notebookIds)})
         ORDER BY lower(u.first_name) ASC, lower(u.last_name) ASC, lower(u.email) ASC
       `)
     : [];
-  const memberRows = querySql(`SELECT id, email, first_name, last_name, role FROM users ORDER BY lower(first_name) ASC, lower(last_name) ASC, lower(email) ASC`);
+  const memberRows = querySql(`SELECT id, email, first_name, last_name, role FROM users WHERE is_active = 1 ORDER BY lower(first_name) ASC, lower(last_name) ASC, lower(email) ASC`);
   const adminMembers = memberRows.filter((row) => row.role === "admin");
 
   const tagsByPage = groupBy(tagRows, "page_id");
@@ -2937,6 +2993,7 @@ export function shareNotebook(input: { actorUserId: string; notebookId: string; 
   assertNotebookManageAccess(input.actorUserId, input.notebookId);
   const user = findUserByEmail(input.email.trim().toLowerCase());
   if (!user) throw new Error("User not found");
+  if (!user.active) throw new Error("User is deactivated.");
   if (user.id === input.actorUserId) throw new Error("Owners cannot change their own role.");
   const role = normalizeInputAccessRole(input.role);
   const currentRole = normalizeAccessRole(queryOne(`SELECT role FROM notebook_members WHERE notebook_id = ${sql(input.notebookId)} AND user_id = ${sql(user.id)} LIMIT 1`)?.role);
@@ -3164,7 +3221,7 @@ function queueSearchIndexForTagPageRows(rows: Array<{ page_id?: string }>) {
 }
 
 function isAdmin(userId: string) {
-  const role = queryOne(`SELECT role FROM users WHERE id = ${sql(userId)} LIMIT 1`)?.role;
+  const role = queryOne(`SELECT role FROM users WHERE id = ${sql(userId)} AND is_active = 1 LIMIT 1`)?.role;
   return role === "admin";
 }
 
@@ -3815,7 +3872,7 @@ function toAuditEvent(row: Record<string, string>): AuditEvent {
 }
 
 function auditEntityType(value: string): AuditEvent["entityType"] {
-  if (value === "notebook" || value === "attachment" || value === "tag") return value;
+  if (value === "notebook" || value === "attachment" || value === "tag" || value === "user") return value;
   return "page";
 }
 

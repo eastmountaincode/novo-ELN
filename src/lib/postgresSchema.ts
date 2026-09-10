@@ -28,9 +28,14 @@ export function ensurePostgresDatabase() {
       last_name TEXT NOT NULL DEFAULT '',
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      deactivated_at TEXT,
       last_login_at TEXT,
       created_at TEXT NOT NULL DEFAULT novo_now_text()
     );
+
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TEXT;
 
     CREATE TABLE IF NOT EXISTS login_attempts (
       email TEXT NOT NULL,

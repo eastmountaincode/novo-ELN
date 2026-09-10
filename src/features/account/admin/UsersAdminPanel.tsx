@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Plus, Shield } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Plus, Shield } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ModalFrame } from "@/components/ModalFrame";
 import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
@@ -7,7 +7,7 @@ import { passwordRequirementText } from "@/lib/passwordRequirements";
 import type { AdminUser } from "@/lib/types";
 import { userDisplayName } from "@/lib/workspaceDisplay";
 
-type AdminUserSortKey = "user" | "role" | "notebooks" | "lastLogin" | "lastActivity" | "created";
+type AdminUserSortKey = "user" | "role" | "status" | "notebooks" | "lastLogin" | "lastActivity" | "created";
 type SortDirection = "asc" | "desc";
 
 export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
@@ -16,6 +16,7 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
   const [error, setError] = useState("");
   const [creatingUser, setCreatingUser] = useState(false);
   const [resetUser, setResetUser] = useState<AdminUser | null>(null);
+  const [statusUser, setStatusUser] = useState<AdminUser | null>(null);
   const [sortKey, setSortKey] = useState<AdminUserSortKey>("user");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
@@ -72,6 +73,8 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
           return compareText(`${userDisplayName(a)} ${a.email}`, `${userDisplayName(b)} ${b.email}`);
         case "role":
           return compareText(a.role, b.role);
+        case "status":
+          return compareText(a.active ? "Active" : "Deactivated", b.active ? "Active" : "Deactivated");
         case "notebooks":
           return compareNumber(a.notebookCount, b.notebookCount);
         case "lastLogin":
@@ -133,20 +136,22 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
         <AdminLoadingState>Loading users...</AdminLoadingState>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full table-fixed border-collapse text-left text-sm">
+          <table className="w-full min-w-[1080px] table-fixed border-collapse text-left text-sm">
             <colgroup>
-              <col className="w-[22%]" />
-              <col className="w-[9%]" />
-              <col className="w-[9%]" />
-              <col className="w-[15%]" />
-              <col className="w-[15%]" />
-              <col className="w-[15%]" />
-              <col className="w-[15%]" />
+              <col className="w-[20%]" />
+              <col className="w-[8%]" />
+              <col className="w-[10%]" />
+              <col className="w-[8%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
+              <col className="w-[21%]" />
             </colgroup>
             <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
               <tr>
                 <th className="px-3 py-3">{renderSortHeader("user", "User")}</th>
                 <th className="px-3 py-3">{renderSortHeader("role", "Role")}</th>
+                <th className="px-3 py-3">{renderSortHeader("status", "Status")}</th>
                 <th className="px-3 py-3">{renderSortHeader("notebooks", "Notebooks")}</th>
                 <th className="px-3 py-3">{renderSortHeader("lastLogin", "Last login")}</th>
                 <th className="px-3 py-3">{renderSortHeader("lastActivity", "Last activity")}</th>
@@ -156,25 +161,38 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {sortedUsers.map((user) => (
-                <tr key={user.id}>
+                <tr key={user.id} className={user.active ? "" : "bg-slate-50"}>
                   <td className="px-3 py-3">
                     <div className="truncate font-medium text-slate-950">{userDisplayName(user)}</div>
                     <div className="mt-1 truncate text-xs text-slate-500">{user.email}</div>
                   </td>
                   <td className="px-3 py-3 capitalize text-slate-700">{user.role}</td>
+                  <td className="px-3 py-3 text-slate-700">
+                    {user.active ? "Active" : "Deactivated"}
+                  </td>
                   <td className="px-3 py-3 text-slate-700">{user.notebookCount}</td>
                   <td className="px-3 py-3 text-xs leading-5 text-slate-500">{user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "Never"}</td>
                   <td className="px-3 py-3 text-xs leading-5 text-slate-500">{user.lastActivityAt ? formatDateTime(user.lastActivityAt) : "None"}</td>
                   <td className="px-3 py-3 text-xs leading-5 text-slate-500">{formatDateTime(user.createdAt)}</td>
                   <td className="px-3 py-3">
-                    <button
-                      onClick={() => setResetUser(user)}
-                      className="min-h-8 border border-slate-300 px-3 py-1 text-sm leading-5 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={user.id === currentUserId}
-                      title={user.id === currentUserId ? "Use Security to change your own password" : "Set temporary password"}
-                    >
-                      Set password
-                    </button>
+                    <div className="flex items-center gap-2 whitespace-nowrap">
+                      <button
+                        onClick={() => setResetUser(user)}
+                        className="min-h-8 whitespace-nowrap border border-slate-300 px-3 py-1 text-sm leading-5 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={user.id === currentUserId || !user.active}
+                        title={user.id === currentUserId ? "Use Security to change your own password" : user.active ? "Set temporary password" : "Reactivate this user before setting a password"}
+                      >
+                        Set password
+                      </button>
+                      <button
+                        onClick={() => setStatusUser(user)}
+                        className={`min-h-8 border px-3 py-1 text-sm leading-5 disabled:cursor-not-allowed disabled:opacity-50 ${user.active ? "border-rose-200 text-rose-700 hover:bg-rose-50" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+                        disabled={user.id === currentUserId}
+                        title={user.id === currentUserId ? "You cannot deactivate your own account" : user.active ? "Deactivate user" : "Reactivate user"}
+                      >
+                        {user.active ? "Deactivate" : "Reactivate"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -202,7 +220,92 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
           }}
         />
       ) : null}
+      {statusUser ? (
+        <AdminUserStatusModal
+          user={statusUser}
+          onCancel={() => setStatusUser(null)}
+          onSaved={() => {
+            setStatusUser(null);
+            void loadUsers();
+          }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function AdminUserStatusModal({ user, onCancel, onSaved }: { user: AdminUser; onCancel: () => void; onSaved: () => void }) {
+  const [confirmationEmail, setConfirmationEmail] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const nextActive = !user.active;
+  const actionLabel = nextActive ? "Reactivate" : "Deactivate";
+  const submittingLabel = nextActive ? "Reactivating..." : "Deactivating...";
+  const notebookLabel = `${user.notebookCount} ${user.notebookCount === 1 ? "notebook" : "notebooks"}`;
+  const canSubmit = nextActive || confirmationEmail.trim() === user.email;
+
+  async function updateStatus() {
+    setSubmitting(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/admin/users/${user.id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: nextActive }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        setError(body?.error ?? "Unable to update user status.");
+        return;
+      }
+      onSaved();
+    } catch {
+      setError("Unable to update user status.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <ModalFrame>
+      <h2 className="text-lg font-semibold text-white">{actionLabel} user?</h2>
+      <p className="mt-3 text-sm leading-6 text-slate-400">
+        {nextActive ? (
+          <><span className="font-semibold text-white">{userDisplayName(user)}</span> will be able to sign in again with their existing password and regain their previous notebook access.</>
+        ) : (
+          <><span className="font-semibold text-white">{userDisplayName(user)}</span> will no longer be able to sign in. Their {notebookLabel}, pages, attachments, activity, comments, signing keys, and finalized proofs will be retained. Administrators will continue to have access to their notebooks. The account can be reactivated later with its existing access restored.</>
+        )}
+      </p>
+      {!nextActive ? (
+        <>
+          <label className="mt-5 block text-sm font-medium text-slate-200" htmlFor="deactivate-user-confirmation">
+            Type the user email to confirm
+          </label>
+          <p className="mt-2 break-all text-sm text-white">{user.email}</p>
+          <input
+            id="deactivate-user-confirmation"
+            value={confirmationEmail}
+            onChange={(event) => setConfirmationEmail(event.target.value)}
+            disabled={submitting}
+            className="mt-2 h-10 w-full border border-white/15 bg-slate-950 px-3 text-sm text-white outline-none focus:border-cyan-400 disabled:opacity-60"
+            placeholder="Enter user email"
+          />
+        </>
+      ) : null}
+      {error ? <p className="mt-4 border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+      <div className="mt-5 flex justify-end gap-2">
+        <button type="button" onClick={onCancel} disabled={submitting} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-60">Cancel</button>
+        <button
+          type="button"
+          onClick={() => void updateStatus()}
+          disabled={submitting || !canSubmit}
+          className={`inline-flex h-9 items-center gap-2 px-3 text-sm font-medium ${nextActive ? "bg-cyan-500 text-slate-950 hover:bg-cyan-400 disabled:bg-cyan-800 disabled:text-cyan-200" : "bg-rose-500 text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200"}`}
+        >
+          {submitting ? <Loader2 size={15} className="animate-spin" /> : null}
+          {submitting ? submittingLabel : `${actionLabel} user`}
+        </button>
+      </div>
+    </ModalFrame>
   );
 }
 

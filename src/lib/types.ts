@@ -12,6 +12,8 @@ export type AppUser = {
 };
 
 export type AdminUser = AppUser & {
+  active: boolean;
+  deactivatedAt: string;
   createdAt: string;
   lastLoginAt: string;
   lastActivityAt: string;
@@ -228,7 +230,7 @@ export type PageCommentThread = {
 
 export type AuditEvent = {
   id: string;
-  entityType: "page" | "notebook" | "attachment" | "tag";
+  entityType: "page" | "notebook" | "attachment" | "tag" | "user";
   entityId: string;
   pageId: string;
   notebookId: string;

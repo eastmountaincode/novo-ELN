@@ -13,6 +13,7 @@ type SortDirection = "asc" | "desc";
 export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showDeactivated, setShowDeactivated] = useState(false);
   const [error, setError] = useState("");
   const [creatingUser, setCreatingUser] = useState(false);
   const [resetUser, setResetUser] = useState<AdminUser | null>(null);
@@ -67,7 +68,7 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
       return (new Date(a).getTime() - new Date(b).getTime()) * direction;
     };
 
-    return [...users].sort((a, b) => {
+    return users.filter((user) => showDeactivated || user.active).sort((a, b) => {
       switch (sortKey) {
         case "user":
           return compareText(`${userDisplayName(a)} ${a.email}`, `${userDisplayName(b)} ${b.email}`);
@@ -85,7 +86,7 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
           return compareNullableDate(a.createdAt, b.createdAt);
       }
     });
-  }, [sortDirection, sortKey, users]);
+  }, [showDeactivated, sortDirection, sortKey, users]);
 
   function toggleSort(nextSortKey: AdminUserSortKey) {
     if (sortKey === nextSortKey) {
@@ -123,6 +124,15 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
         title="Users"
         action={(
           <div className="flex items-center gap-2">
+            <label className="mr-2 inline-flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={showDeactivated}
+                onChange={(event) => setShowDeactivated(event.target.checked)}
+                className="size-4 accent-slate-950"
+              />
+              Show deactivated users
+            </label>
             <button type="button" onClick={() => setCreatingUser(true)} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800">
               <Plus size={16} />
               Create user
@@ -198,7 +208,7 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
               ))}
             </tbody>
           </table>
-          {users.length === 0 ? <p className="p-5 text-sm text-slate-500">No users found.</p> : null}
+          {sortedUsers.length === 0 ? <p className="p-5 text-sm text-slate-500">{showDeactivated ? "No users found." : "No active users found."}</p> : null}
         </div>
       )}
       {resetUser ? (

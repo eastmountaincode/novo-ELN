@@ -67,7 +67,7 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
   ];
 
   return (
-    <section className="min-h-screen overflow-y-auto scroll-contained bg-white p-8">
+    <section className="min-h-screen overflow-y-auto scroll-contained scrollbar-hidden bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8">
           <h1 className="text-2xl font-semibold text-slate-950">Account Settings</h1>

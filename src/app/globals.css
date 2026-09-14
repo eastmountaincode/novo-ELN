@@ -96,26 +96,15 @@ input:disabled {
   overscroll-behavior: contain;
 }
 
-.sidebar-scrollbar {
-  scrollbar-color: #475569 transparent;
+/* Keep pane margins fixed when content starts or stops overflowing. */
+.scrollbar-hidden {
+  scrollbar-width: none;
 }
 
-.sidebar-scrollbar::-webkit-scrollbar {
-  width: 10px;
-}
-
-.sidebar-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.sidebar-scrollbar::-webkit-scrollbar-thumb {
-  background: #475569;
-  border: 2px solid #020617;
-  border-radius: 999px;
-}
-
-.sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .novo-wordmark {

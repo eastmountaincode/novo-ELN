@@ -16,6 +16,15 @@ type TextDiffMetadata = {
   lines?: TextDiffLine[];
 };
 
+type RetainedComment = {
+  id?: string;
+  userId?: string;
+  userFirstName?: string;
+  userLastName?: string;
+  userEmail?: string;
+  body: string;
+};
+
 export function auditActorName(event: AuditEvent) {
   const firstName = event.actorFirstName.trim();
   const lastInitial = event.actorLastName.trim()[0];
@@ -102,6 +111,40 @@ export function ActivityTextDiff({ event }: { event: AuditEvent }) {
   );
 }
 
+export function ActivityCommentHistory({ event }: { event: AuditEvent }) {
+  const retained = retainedComments(event);
+  if (!retained.comments.length) return null;
+
+  if (event.action !== "page.comment.deleted") {
+    return (
+      <blockquote className="mt-2 whitespace-pre-wrap break-words border-l-2 border-slate-300 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-700 [overflow-wrap:anywhere]">
+        {retained.comments[0].body}
+      </blockquote>
+    );
+  }
+
+  return (
+    <details className="mt-2 border border-slate-200 bg-slate-50 text-xs text-slate-700">
+      <summary className="cursor-pointer px-3 py-2 font-medium text-slate-600">
+        Retained comment history ({retained.comments.length})
+      </summary>
+      <div className="space-y-3 border-t border-slate-200 px-3 py-3">
+        {retained.selectedText ? (
+          <p className="whitespace-pre-wrap break-words text-slate-500 [overflow-wrap:anywhere]">
+            Commented text: “{retained.selectedText}”
+          </p>
+        ) : null}
+        {retained.comments.map((comment, index) => (
+          <div key={comment.id || `${index}-${comment.body}`}>
+            <p className="font-medium text-slate-600">{retainedCommentAuthor(comment)}</p>
+            <p className="mt-1 whitespace-pre-wrap break-words leading-5 text-slate-700 [overflow-wrap:anywhere]">{comment.body}</p>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export function auditInitials(event: AuditEvent) {
   return userInitials({ firstName: event.actorFirstName, lastName: event.actorLastName, email: event.actorEmail });
 }
@@ -112,6 +155,47 @@ function readTextDiffMetadata(value: unknown): TextDiffMetadata | null {
   if (candidate.format !== "novo-plain-text-diff-v1") return null;
   if (candidate.lines !== undefined && !Array.isArray(candidate.lines)) return null;
   return candidate as TextDiffMetadata;
+}
+
+function retainedComments(event: AuditEvent): { selectedText: string; comments: RetainedComment[] } {
+  if (event.action === "page.comment.created" || event.action === "page.comment.replied") {
+    const comment = readRetainedComment(event.metadata?.comment);
+    return {
+      selectedText: typeof event.metadata?.selectedText === "string" ? event.metadata.selectedText : "",
+      comments: comment ? [comment] : [],
+    };
+  }
+  if (event.action !== "page.comment.deleted") return { selectedText: "", comments: [] };
+  const deletedThread = readRecord(event.metadata?.deletedThread);
+  const comments = Array.isArray(deletedThread?.comments)
+    ? deletedThread.comments.map(readRetainedComment).filter((comment): comment is RetainedComment => Boolean(comment))
+    : [];
+  return {
+    selectedText: typeof deletedThread?.selectedText === "string" ? deletedThread.selectedText : "",
+    comments,
+  };
+}
+
+function readRetainedComment(value: unknown): RetainedComment | null {
+  const comment = readRecord(value);
+  if (!comment || typeof comment.body !== "string") return null;
+  return {
+    id: typeof comment.id === "string" ? comment.id : undefined,
+    userId: typeof comment.userId === "string" ? comment.userId : undefined,
+    userFirstName: typeof comment.userFirstName === "string" ? comment.userFirstName : undefined,
+    userLastName: typeof comment.userLastName === "string" ? comment.userLastName : undefined,
+    userEmail: typeof comment.userEmail === "string" ? comment.userEmail : undefined,
+    body: comment.body,
+  };
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function retainedCommentAuthor(comment: RetainedComment) {
+  const fullName = [comment.userFirstName?.trim(), comment.userLastName?.trim()].filter(Boolean).join(" ");
+  return fullName || comment.userEmail?.trim() || "Unknown user";
 }
 
 function diffLinePrefix(type: TextDiffLine["type"]) {

@@ -179,6 +179,7 @@ describe("store", () => {
   it("atomically deletes a comment thread and its page marker", async () => {
     const { editorDocumentToBody } = await import("../src/lib/editor");
     const {
+      addPageComment,
       createPage,
       createPageCommentThread,
       deletePageCommentThread,
@@ -195,6 +196,29 @@ describe("store", () => {
     const thread = createPageCommentThread(user.id, pageId, {
       selectedText: "Commented text",
       body: "Review this",
+    });
+    const createdEvent = getPageActivityEvents(user.id, pageId).events.find((event) => event.action === "page.comment.created");
+    expect(createdEvent?.metadata).toMatchObject({
+      threadId: thread.id,
+      selectedText: "Commented text",
+      comment: {
+        id: thread.comments[0].id,
+        userId: user.id,
+        body: "Review this",
+        bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
+    const repliedThread = addPageComment(user.id, thread.id, "Follow-up comment");
+    const reply = repliedThread.comments.at(-1);
+    const repliedEvent = getPageActivityEvents(user.id, pageId).events.find((event) => event.action === "page.comment.replied");
+    expect(repliedEvent?.metadata).toMatchObject({
+      threadId: thread.id,
+      comment: {
+        id: reply?.id,
+        userId: user.id,
+        body: "Follow-up comment",
+        bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
     });
     const markedBody = editorDocumentToBody({
       type: "doc",
@@ -220,9 +244,40 @@ describe("store", () => {
     expect(updatedPage.body).not.toContain(thread.id);
     expect(getPage(user.id, pageId).body).not.toContain(thread.id);
     expect(getPageCommentThreads(user.id, pageId)).toEqual([]);
-    expect(getPageActivityEvents(user.id, pageId).events).toContainEqual(
-      expect.objectContaining({ action: "page.comment.deleted" }),
-    );
+    const deletedEvent = getPageActivityEvents(user.id, pageId).events.find((event) => event.action === "page.comment.deleted");
+    expect(deletedEvent?.metadata).toMatchObject({
+      threadId: thread.id,
+      markerRemoved: true,
+      deletedThread: {
+        id: thread.id,
+        pageId,
+        createdBy: user.id,
+        createdByFirstName: user.firstName,
+        createdByLastName: user.lastName,
+        createdByEmail: user.email,
+        selectedText: "Commented text",
+        comments: [
+          {
+            id: thread.comments[0].id,
+            userId: user.id,
+            userFirstName: user.firstName,
+            userLastName: user.lastName,
+            userEmail: user.email,
+            body: "Review this",
+            bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+          {
+            id: reply?.id,
+            userId: user.id,
+            userFirstName: user.firstName,
+            userLastName: user.lastName,
+            userEmail: user.email,
+            body: "Follow-up comment",
+            bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        ],
+      },
+    });
     expect(deletePageCommentThread(user.id, thread.id, pageId).body).toBe(updatedPage.body);
 
     updatePage(user.id, pageId, { body: markedBody });

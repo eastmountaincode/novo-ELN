@@ -2061,7 +2061,16 @@ export function createPageCommentThread(userId: string, pageId: string, input: {
     INSERT INTO page_comments (id, thread_id, user_id, body)
     VALUES (${sql(commentId)}, ${sql(threadId)}, ${sql(userId)}, ${sql(body)});
   `);
-  recordPageAuditEvent(userId, pageId, "page.comment.created", "added comment", { threadId });
+  recordPageAuditEvent(userId, pageId, "page.comment.created", "added comment", {
+    threadId,
+    selectedText,
+    comment: {
+      id: commentId,
+      userId,
+      body,
+      bodyHash: hashAuditValue(body),
+    },
+  });
   const thread = getPageCommentThreads(userId, pageId).find((candidate) => candidate.id === threadId);
   if (!thread) throw new Error("Comment was not created.");
   return thread;
@@ -2073,15 +2082,24 @@ export function addPageComment(userId: string, threadId: string, bodyValue: stri
   if (!thread) throw new Error("Comment thread not found.");
   assertPageEditAccess(userId, thread.page_id);
   const body = normalizeCommentBody(bodyValue);
+  const commentId = randomUUID();
   execSql(`
     INSERT INTO page_comments (id, thread_id, user_id, body)
-    VALUES (${sql(randomUUID())}, ${sql(threadId)}, ${sql(userId)}, ${sql(body)});
+    VALUES (${sql(commentId)}, ${sql(threadId)}, ${sql(userId)}, ${sql(body)});
 
     UPDATE page_comment_threads
     SET updated_at = datetime('now')
     WHERE id = ${sql(threadId)};
   `);
-  recordPageAuditEvent(userId, thread.page_id, "page.comment.replied", "replied to comment", { threadId });
+  recordPageAuditEvent(userId, thread.page_id, "page.comment.replied", "replied to comment", {
+    threadId,
+    comment: {
+      id: commentId,
+      userId,
+      body,
+      bodyHash: hashAuditValue(body),
+    },
+  });
   const updated = getPageCommentThreads(userId, thread.page_id).find((candidate) => candidate.id === threadId);
   if (!updated) throw new Error("Comment thread not found.");
   return updated;
@@ -2112,10 +2130,19 @@ export function deletePageCommentThread(userId: string, threadId: string, expect
   const thread = queryOne(`
     SELECT
       pct.page_id,
+      COALESCE(pct.created_by, '') AS created_by,
+      COALESCE(u.first_name, '') AS created_by_first_name,
+      COALESCE(u.last_name, '') AS created_by_last_name,
+      COALESCE(u.email, '') AS created_by_email,
+      pct.selected_text,
+      COALESCE(pct.resolved_at, '') AS resolved_at,
+      pct.created_at,
+      pct.updated_at,
       p.notebook_id,
       p.body
     FROM page_comment_threads pct
     JOIN pages p ON p.id = pct.page_id
+    LEFT JOIN users u ON u.id = pct.created_by
     WHERE pct.id = ${sql(threadId)}
     LIMIT 1
   `);
@@ -2128,6 +2155,31 @@ export function deletePageCommentThread(userId: string, threadId: string, expect
   }
   if (expectedPageId && thread.page_id !== expectedPageId) throw new Error("Comment thread not found.");
   assertPageEditAccess(userId, thread.page_id);
+  const deletedComments = querySql(`
+    SELECT
+      pc.id,
+      COALESCE(pc.user_id, '') AS user_id,
+      COALESCE(u.first_name, '') AS user_first_name,
+      COALESCE(u.last_name, '') AS user_last_name,
+      COALESCE(u.email, '') AS user_email,
+      pc.body,
+      pc.created_at,
+      pc.updated_at
+    FROM page_comments pc
+    LEFT JOIN users u ON u.id = pc.user_id
+    WHERE pc.thread_id = ${sql(threadId)}
+    ORDER BY pc.created_at ASC, pc.id ASC
+  `).map((comment) => ({
+    id: comment.id,
+    userId: comment.user_id,
+    userFirstName: comment.user_first_name,
+    userLastName: comment.user_last_name,
+    userEmail: comment.user_email,
+    body: comment.body,
+    bodyHash: hashAuditValue(comment.body),
+    createdAt: comment.created_at,
+    updatedAt: comment.updated_at,
+  }));
   const storedBody = String(thread.body ?? "");
   const previousBody = normalizePageBody(storedBody);
   const nextBody = removeCommentMarksFromBody(previousBody, threadId);
@@ -2136,6 +2188,19 @@ export function deletePageCommentThread(userId: string, threadId: string, expect
   const auditMetadata = JSON.stringify({
     threadId,
     markerRemoved: bodyChanged,
+    deletedThread: {
+      id: threadId,
+      pageId: thread.page_id,
+      createdBy: thread.created_by,
+      createdByFirstName: thread.created_by_first_name,
+      createdByLastName: thread.created_by_last_name,
+      createdByEmail: thread.created_by_email,
+      selectedText: thread.selected_text,
+      resolvedAt: thread.resolved_at,
+      createdAt: thread.created_at,
+      updatedAt: thread.updated_at,
+      comments: deletedComments,
+    },
     ...(bodyChanged ? {
       oldHash: hashAuditValue(previousBody),
       newHash: hashAuditValue(nextBody),
@@ -2161,6 +2226,11 @@ export function deletePageCommentThread(userId: string, threadId: string, expect
             AND COALESCE(p.locked_at, '') = ''
             AND p.body = ${sql(storedBody)}
             AND p.notebook_id = ${sql(thread.notebook_id)}
+            AND (
+              SELECT COUNT(*)
+              FROM page_comments pc
+              WHERE pc.thread_id = ${sql(threadId)}
+            ) = ${deletedComments.length}
             AND (
               EXISTS (
                 SELECT 1

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { AuditEvent } from "@/lib/types";
 import { userInitials } from "@/lib/workspaceDisplay";
@@ -60,9 +60,32 @@ export function AdminActivityContext({ event }: { event: AuditEvent }) {
   return <>No longer attached to an active page or notebook</>;
 }
 
-export function ActivityTextDiff({ event }: { event: AuditEvent }) {
+function ActivityDetails({ label, summary, children }: { label: string; summary?: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const contentId = useId();
 
+  return (
+    <div className="mt-2 text-xs">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex h-7 items-center gap-1.5 border border-slate-200 bg-white px-2 font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-950"
+        aria-expanded={open}
+        aria-controls={contentId}
+        aria-label={`${open ? "Hide" : "Show"} ${label.toLowerCase()}`}
+      >
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <span>{label}</span>
+        {summary}
+      </button>
+      <div id={contentId} hidden={!open} className="mt-2">
+        {open ? children : null}
+      </div>
+    </div>
+  );
+}
+
+export function ActivityTextDiff({ event }: { event: AuditEvent }) {
   if (event.action !== "page.body.updated") return null;
   const textDiff = readTextDiffMetadata(event.metadata?.textDiff);
   if (!textDiff) return null;
@@ -80,34 +103,28 @@ export function ActivityTextDiff({ event }: { event: AuditEvent }) {
   );
 
   return (
-    <div className="mt-2 text-xs">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        className="inline-flex h-7 items-center gap-1.5 border border-slate-200 bg-white px-2 font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-950"
-        aria-expanded={open}
-        aria-label={open ? "Hide text changes" : "Show text changes"}
-      >
-        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <span>Text changes</span>
-        <span className="text-emerald-700">+{counts.added}</span>
-        <span className="text-rose-700">-{counts.removed}</span>
-        {textDiff.truncated ? <span className="text-slate-400">shortened</span> : null}
-      </button>
-      {open ? (
-        <div className="mt-2 max-h-80 overflow-x-hidden overflow-y-auto border border-slate-200 bg-slate-50">
-          <div className="font-mono leading-5">
-            {textDiff.lines.map((line, index) => (
-              <div key={`${index}-${line.type}`} className={`grid grid-cols-[1.5rem_minmax(0,1fr)] ${diffLineClassName(line.type)}`}>
-                <span className="select-none text-center">{diffLinePrefix(line.type)}</span>
-                <span className="whitespace-pre-wrap break-words pr-2 [overflow-wrap:anywhere]">{line.text || " "}</span>
-              </div>
-            ))}
-          </div>
-          {textDiff.reason ? <div className="border-t border-slate-200 px-2 py-1 text-slate-500">{textDiff.reason}</div> : null}
+    <ActivityDetails
+      label="Text changes"
+      summary={(
+        <>
+          <span className="text-emerald-700">+{counts.added}</span>
+          <span className="text-rose-700">-{counts.removed}</span>
+          {textDiff.truncated ? <span className="text-slate-400">shortened</span> : null}
+        </>
+      )}
+    >
+      <div className="max-h-80 overflow-x-hidden overflow-y-auto border border-slate-200 bg-slate-50">
+        <div className="font-mono leading-5">
+          {textDiff.lines.map((line, index) => (
+            <div key={`${index}-${line.type}`} className={`grid grid-cols-[1.5rem_minmax(0,1fr)] ${diffLineClassName(line.type)}`}>
+              <span className="select-none text-center">{diffLinePrefix(line.type)}</span>
+              <span className="whitespace-pre-wrap break-words pr-2 [overflow-wrap:anywhere]">{line.text || " "}</span>
+            </div>
+          ))}
         </div>
-      ) : null}
-    </div>
+        {textDiff.reason ? <div className="border-t border-slate-200 px-2 py-1 text-slate-500">{textDiff.reason}</div> : null}
+      </div>
+    </ActivityDetails>
   );
 }
 
@@ -117,18 +134,15 @@ export function ActivityCommentHistory({ event }: { event: AuditEvent }) {
 
   if (event.action !== "page.comment.deleted") {
     return (
-      <blockquote className="mt-2 whitespace-pre-wrap break-words border-l-2 border-slate-300 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-700 [overflow-wrap:anywhere]">
+      <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-slate-700 [overflow-wrap:anywhere]">
         {retained.comments[0].body}
-      </blockquote>
+      </p>
     );
   }
 
   return (
-    <details className="mt-2 border border-slate-200 bg-slate-50 text-xs text-slate-700">
-      <summary className="cursor-pointer px-3 py-2 font-medium text-slate-600">
-        Retained comment history ({retained.comments.length})
-      </summary>
-      <div className="space-y-3 border-t border-slate-200 px-3 py-3">
+    <ActivityDetails label="Deleted comments" summary={<span>({retained.comments.length})</span>}>
+      <div className="space-y-2 text-slate-700">
         {retained.selectedText ? (
           <p className="whitespace-pre-wrap break-words text-slate-500 [overflow-wrap:anywhere]">
             Commented text: “{retained.selectedText}”
@@ -136,12 +150,12 @@ export function ActivityCommentHistory({ event }: { event: AuditEvent }) {
         ) : null}
         {retained.comments.map((comment, index) => (
           <div key={comment.id || `${index}-${comment.body}`}>
-            <p className="font-medium text-slate-600">{retainedCommentAuthor(comment)}</p>
+            <p className="font-semibold text-slate-950">{retainedCommentAuthor(comment)}</p>
             <p className="mt-1 whitespace-pre-wrap break-words leading-5 text-slate-700 [overflow-wrap:anywhere]">{comment.body}</p>
           </div>
         ))}
       </div>
-    </details>
+    </ActivityDetails>
   );
 }
 
@@ -194,8 +208,10 @@ function readRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function retainedCommentAuthor(comment: RetainedComment) {
-  const fullName = [comment.userFirstName?.trim(), comment.userLastName?.trim()].filter(Boolean).join(" ");
-  return fullName || comment.userEmail?.trim() || "Unknown user";
+  const firstName = comment.userFirstName?.trim();
+  const lastInitial = comment.userLastName?.trim()[0];
+  if (firstName && lastInitial) return `${firstName} ${lastInitial.toUpperCase()}.`;
+  return firstName || comment.userLastName?.trim() || comment.userEmail?.trim() || "Unknown user";
 }
 
 function diffLinePrefix(type: TextDiffLine["type"]) {

@@ -148,14 +148,16 @@ export async function verifyTimestampResponseFiles(
   const contentPath = path.join(input.tempDir, "timestamp-content.der");
   const certificatesPath = path.join(input.tempDir, "timestamp-certificates.pem");
   const untrustedPath = path.join(input.tempDir, "timestamp-untrusted.pem");
+  const trustAnchorPath = path.join(input.tempDir, "timestamp-trust-anchor.pem");
   try {
     await runner(["ts", "-reply", "-in", input.responsePath, "-token_out", "-out", tokenPath]);
     await runner(["cms", "-verify", "-inform", "DER", "-in", tokenPath, "-noverify", "-out", contentPath, "-signer", signerPath]);
     await runner(["pkcs7", "-inform", "DER", "-in", tokenPath, "-print_certs", "-out", certificatesPath]);
     const certificate = await runner(["x509", "-in", signerPath, "-noout", "-subject", "-fingerprint", "-sha256"]);
-    const certificateChainPem = normalizePemBundle(await readFile(certificatesPath, "utf8"));
+    const embeddedCertificatesPem = normalizePemBundle(await readFile(certificatesPath, "utf8"));
     const additionalUntrusted = input.untrustedCertFile ? await readFile(input.untrustedCertFile, "utf8") : "";
-    await writeFile(untrustedPath, normalizePemBundle(`${certificateChainPem}\n${additionalUntrusted}`));
+    const certificateChainPem = normalizePemBundle(`${embeddedCertificatesPem}\n${additionalUntrusted}`);
+    await writeFile(untrustedPath, certificateChainPem);
     const chainResult = await runner([
       "verify",
       "-show_chain",
@@ -172,6 +174,16 @@ export async function verifyTimestampResponseFiles(
     const caBundle = await readFile(input.caFile);
     const selectedChain = parseOpenSslCertificateChain(chainResult.stdout);
     const trustAnchorPem = findTrustAnchorPem(caBundle.toString("utf8"), selectedChain);
+    await writeFile(trustAnchorPath, trustAnchorPem);
+    let archivedChainVerification: OpenSslResult;
+    try {
+      archivedChainVerification = await runner([
+        "ts", "-verify", "-queryfile", input.requestPath, "-in", input.responsePath,
+        "-CAfile", trustAnchorPath, "-untrusted", untrustedPath,
+      ]);
+    } catch (error) {
+      throw new Error(`Timestamp authority response cannot be verified using only the archived certificates${opensslErrorDetail(error)}.`, { cause: error });
+    }
     const signer = parseTsaSignerCertificateText(certificate.stdout);
     return {
       ...signer,
@@ -179,8 +191,10 @@ export async function verifyTimestampResponseFiles(
       trustAnchorPem,
       timestampVerificationOutput: cleanVerificationOutput(timestampVerification),
       certificateChainVerificationOutput: cleanVerificationOutput(chainResult),
+      archivedChainVerificationOutput: cleanVerificationOutput(archivedChainVerification),
       selectedChain,
-      embeddedCertificates: parsePemCertificates(certificateChainPem).map(certificateMetadata),
+      embeddedCertificates: parsePemCertificates(embeddedCertificatesPem).map(certificateMetadata),
+      archivedCertificates: parsePemCertificates(certificateChainPem).map(certificateMetadata),
       trustAnchor: certificateMetadata(trustAnchorPem),
       caBundleSha256: sha256Hex(caBundle),
       caBundleBytes: caBundle.byteLength,
@@ -189,6 +203,7 @@ export async function verifyTimestampResponseFiles(
       operatingSystem: await readOperatingSystemMetadata(),
     };
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Timestamp authority response cannot be verified using only the archived certificates")) throw error;
     throw new Error(`Timestamp authority signer certificate inspection failed${opensslErrorDetail(error)}.`, { cause: error });
   }
 }
@@ -256,11 +271,16 @@ function buildVerificationJson(input: {
       output: input.verification.certificateChainVerificationOutput,
       selectedChain: input.verification.selectedChain,
     },
+    archivedChainVerification: {
+      command: "openssl ts -verify -queryfile request.tsq -in response.tsr -CAfile trust-anchor.pem -untrusted tsa-certificates.pem",
+      output: input.verification.archivedChainVerificationOutput,
+    },
     tsaSigner: {
       subject: input.verification.tsaSubject,
       sha256Fingerprint: input.verification.tsaCertFingerprint,
     },
     embeddedCertificates: input.verification.embeddedCertificates,
+    archivedCertificates: input.verification.archivedCertificates,
     trustAnchor: {
       ...input.verification.trustAnchor,
       source: "system-ca-bundle",
@@ -285,7 +305,12 @@ function parsePemCertificates(value: string) {
 function normalizePemBundle(value: string) {
   const certificates = parsePemCertificates(value);
   if (!certificates.length) throw new Error("Timestamp certificate bundle does not contain an X.509 certificate.");
-  return `${certificates.map((certificate) => certificate.trim()).join("\n")}\n`;
+  const uniqueCertificates = new Map<string, string>();
+  for (const pem of certificates) {
+    const certificate = new X509Certificate(pem);
+    uniqueCertificates.set(certificate.fingerprint256, pem.trim());
+  }
+  return `${[...uniqueCertificates.values()].join("\n")}\n`;
 }
 
 function certificateMetadata(value: string) {

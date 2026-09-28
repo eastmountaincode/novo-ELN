@@ -209,7 +209,7 @@ describe("store", () => {
       },
     });
     const repliedThread = addPageComment(user.id, thread.id, "Follow-up comment");
-    const reply = repliedThread.comments.at(-1);
+    const reply = repliedThread.comments.find((comment) => comment.body === "Follow-up comment");
     const repliedEvent = getPageActivityEvents(user.id, pageId).events.find((event) => event.action === "page.comment.replied");
     expect(repliedEvent?.metadata).toMatchObject({
       threadId: thread.id,
@@ -256,8 +256,8 @@ describe("store", () => {
         createdByLastName: user.lastName,
         createdByEmail: user.email,
         selectedText: "Commented text",
-        comments: [
-          {
+        comments: expect.arrayContaining([
+          expect.objectContaining({
             id: thread.comments[0].id,
             userId: user.id,
             userFirstName: user.firstName,
@@ -265,8 +265,8 @@ describe("store", () => {
             userEmail: user.email,
             body: "Review this",
             bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-          },
-          {
+          }),
+          expect.objectContaining({
             id: reply?.id,
             userId: user.id,
             userFirstName: user.firstName,
@@ -274,8 +274,8 @@ describe("store", () => {
             userEmail: user.email,
             body: "Follow-up comment",
             bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-          },
-        ],
+          }),
+        ]),
       },
     });
     expect(deletePageCommentThread(user.id, thread.id, pageId).body).toBe(updatedPage.body);

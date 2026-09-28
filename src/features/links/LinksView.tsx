@@ -118,6 +118,11 @@ function LinkForm({ link, onClose, onSaved }: { link: SharedLink | null; onClose
     return () => dialog?.close();
   }, []);
 
+  function close() {
+    dialogRef.current?.close();
+    onClose();
+  }
+
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saving) return;
@@ -130,6 +135,7 @@ function LinkForm({ link, onClose, onSaved }: { link: SharedLink | null; onClose
         body: JSON.stringify({ title, url, description }),
       });
       const body = await readResponse<{ link: SharedLink }>(response);
+      dialogRef.current?.close();
       onSaved(body.link);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Unable to save link.");
@@ -140,7 +146,7 @@ function LinkForm({ link, onClose, onSaved }: { link: SharedLink | null; onClose
 
   const inputClass = "mt-2 w-full border border-white/10 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400";
   return (
-    <dialog ref={dialogRef} aria-labelledby="link-form-title" onCancel={(event) => { event.preventDefault(); if (!saving) onClose(); }} className="m-auto w-[calc(100%-3rem)] max-w-md border border-white/10 bg-slate-900 p-5 text-slate-200 shadow-2xl backdrop:bg-slate-950/70">
+    <dialog ref={dialogRef} aria-labelledby="link-form-title" onCancel={(event) => { event.preventDefault(); if (!saving) close(); }} className="m-auto w-[calc(100%-3rem)] max-w-md border border-white/10 bg-slate-900 p-5 text-slate-200 shadow-2xl backdrop:bg-slate-950/70">
       <form onSubmit={(event) => void save(event)}>
         <h2 id="link-form-title" className="text-lg font-semibold text-white">{link ? "Edit link" : "Add link"}</h2>
         <fieldset disabled={saving} className="mt-5 space-y-4">
@@ -150,7 +156,7 @@ function LinkForm({ link, onClose, onSaved }: { link: SharedLink | null; onClose
         </fieldset>
         {error ? <p role="alert" className="mt-4 text-sm text-red-300">{error}</p> : null}
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" disabled={saving} onClick={onClose} className="h-9 border border-white/10 px-3 text-sm hover:bg-white/10 disabled:opacity-50">Cancel</button>
+          <button type="button" disabled={saving} onClick={close} className="h-9 border border-white/10 px-3 text-sm hover:bg-white/10 disabled:opacity-50">Cancel</button>
           <button type="submit" disabled={saving || !title.trim() || !url.trim()} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-400">{saving ? "Saving…" : link ? "Save changes" : "Add link"}</button>
         </div>
       </form>

@@ -78,7 +78,8 @@ export function ensureDatabase() {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       url TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT ''
+      description TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS login_attempts (
@@ -303,6 +304,7 @@ export function ensureDatabase() {
     DROP TABLE IF EXISTS page_versions;
   `);
   migrateUserNameColumns();
+  ensureSharedLinkOrderColumn();
   ensureUserLastLoginColumn();
   ensureUserAccountStatusColumns();
   migrateProjectsToTopLevelNotebooks();
@@ -402,6 +404,17 @@ function migrateProjectsToTopLevelNotebooks() {
     DROP TABLE IF EXISTS import_jobs;
     DROP TABLE IF EXISTS page_versions;
   `);
+}
+
+function ensureSharedLinkOrderColumn() {
+  const columns = querySql("PRAGMA table_info(shared_links);");
+  if (!columns.some((column) => column.name === "sort_order")) {
+    execSql(`
+      ALTER TABLE shared_links ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+      WITH ordered AS (SELECT id, ROW_NUMBER() OVER (ORDER BY lower(title), id) - 1 AS position FROM shared_links)
+      UPDATE shared_links SET sort_order = (SELECT position FROM ordered WHERE ordered.id = shared_links.id);
+    `);
+  }
 }
 
 function migrateUserNameColumns() {

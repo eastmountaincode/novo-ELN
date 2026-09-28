@@ -59,6 +59,7 @@ describe("shared group links", () => {
       expect(() => api.createSharedLink(userId, input)).toThrow("Forbidden");
       expect(() => api.updateSharedLink(userId, link.id, input)).toThrow("Forbidden");
       expect(() => api.deleteSharedLink(userId, link.id)).toThrow("Forbidden");
+      expect(() => api.reorderSharedLinks(userId, { ids: [link.id] })).toThrow("Forbidden");
     }
     expect(api.listSharedLinks("alice")).toHaveLength(1);
   });
@@ -72,5 +73,56 @@ describe("shared group links", () => {
       expect(() => api.updateSharedLink("bob", link.id, invalid)).toThrow();
     }
     expect(api.listSharedLinks("bob")).toEqual([link]);
+  });
+
+  it("persists the shared order, retains positions on edit, and appends new links", async () => {
+    const api = await members();
+    const original = ["Zebra", "Alpha", "Middle"].map((title) => api.createSharedLink("alice", { title, url: "https://example.test" }));
+    expect(api.listSharedLinks("bob")).toEqual(original);
+    const reordered = [original[2], original[0], original[1]];
+    expect(api.reorderSharedLinks("bob", { ids: reordered.map((link) => link.id) })).toEqual(reordered);
+    vi.resetModules();
+    const reloaded = await import("../src/lib/sharedLinks");
+    expect(reloaded.listSharedLinks("alice")).toEqual(reordered);
+    const edited = reloaded.updateSharedLink("alice", original[0].id, { ...original[0], title: "AAA" });
+    const appended = reloaded.createSharedLink("bob", { title: "AAA new", url: "https://example.test/new" });
+    expect(reloaded.listSharedLinks("alice")).toEqual([original[2], edited, original[1], appended]);
+    reloaded.deleteSharedLink("alice", original[1].id);
+    expect(reloaded.listSharedLinks("bob")).toEqual([original[2], edited, appended]);
+  });
+
+  it("rejects invalid and stale orders atomically, including concurrent additions and deletions", async () => {
+    const api = await members();
+    const original = ["Alpha", "Beta", "Gamma"].map((title) => api.createSharedLink("alice", { title, url: "https://example.test" }));
+    const ids = original.map((link) => link.id);
+    for (const invalid of [null, [], {}, { ids: [] }, { ids: "abc" }, { ids: [42] }, { ids: [ids[0], ids[0], ids[1]] }]) {
+      expect(() => api.reorderSharedLinks("bob", invalid)).toThrow(/exactly once/);
+      expect(api.listSharedLinks("alice")).toEqual(original);
+    }
+    for (const staleIds of [[ids[1], ids[0]], [ids[2], ids[1], "missing' id"], [...ids, "missing"]]) {
+      expect(() => api.reorderSharedLinks("bob", { ids: staleIds })).toThrow(expect.objectContaining({ status: 409 }));
+      expect(api.listSharedLinks("alice")).toEqual(original);
+    }
+    const added = api.createSharedLink("alice", { title: "New", url: "https://example.test" });
+    expect(() => api.reorderSharedLinks("bob", { ids: [...ids].reverse() })).toThrow(expect.objectContaining({ status: 409 }));
+    expect(api.listSharedLinks("alice")).toEqual([...original, added]);
+    api.deleteSharedLink("alice", added.id);
+    api.deleteSharedLink("alice", ids[1]);
+    expect(() => api.reorderSharedLinks("bob", { ids: [...ids].reverse() })).toThrow(expect.objectContaining({ status: 409 }));
+    expect(api.listSharedLinks("alice")).toEqual([original[0], original[2]]);
+  });
+
+  it("upgrades existing links without changing their alphabetical order", async () => {
+    const { execSql } = await import("../src/lib/sqlite");
+    execSql(`CREATE TABLE shared_links (id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL, description TEXT NOT NULL DEFAULT '');
+      INSERT INTO shared_links (id, title, url) VALUES ('z', 'Zebra', 'https://example.test'), ('a', 'Alpha', 'https://example.test');`);
+    const api = await members();
+    expect(api.listSharedLinks("alice").map((link) => link.id)).toEqual(["a", "z"]);
+    api.updateSharedLink("alice", "a", { title: "ZZZ renamed", url: "https://example.test" });
+    expect(api.listSharedLinks("bob").map((link) => link.id)).toEqual(["a", "z"]);
+    api.reorderSharedLinks("alice", { ids: ["z", "a"] });
+    vi.resetModules();
+    const reloaded = await import("../src/lib/sharedLinks");
+    expect(reloaded.listSharedLinks("bob").map((link) => link.id)).toEqual(["z", "a"]);
   });
 });

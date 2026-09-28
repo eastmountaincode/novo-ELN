@@ -1,7 +1,10 @@
 "use client";
 
-import { Check, Copy, ExternalLink, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { closestCenter, DndContext, DragOverlay, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { ArrowUpDown, Check, Copy, ExternalLink, GripVertical, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { SharedLink } from "@/lib/sharedLinkTypes";
 
 async function readResponse<T>(response: Response): Promise<T> {
@@ -13,10 +16,6 @@ async function readResponse<T>(response: Response): Promise<T> {
   return body as T;
 }
 
-function sortLinks(links: SharedLink[]) {
-  return [...links].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
-}
-
 export function LinksView() {
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const [links, setLinks] = useState<SharedLink[]>([]);
@@ -24,13 +23,24 @@ export function LinksView() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<SharedLink | "new" | null>(null);
   const [deleting, setDeleting] = useState<SharedLink | null>(null);
+  const [originalLinks, setOriginalLinks] = useState<SharedLink[] | null>(null);
+  const reordering = originalLinks !== null;
+  const orderChanged = originalLinks !== null && links.some((link, index) => link.id !== originalLinks[index]?.id);
+  const [savingOrder, setSavingOrder] = useState(false);
+  const savingOrderRef = useRef(false);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const activeLink = links.find((link) => link.id === activeId);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   useEffect(() => {
     const controller = new AbortController();
     fetch("/api/links", { cache: "no-store", signal: controller.signal })
       .then((response) => readResponse<{ links: SharedLink[] }>(response))
       .then((body) => {
-        if (!controller.signal.aborted) setLinks(sortLinks(body.links));
+        if (!controller.signal.aborted) setLinks(body.links);
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Unable to load links.");
@@ -41,14 +51,50 @@ export function LinksView() {
     return () => controller.abort();
   }, []);
 
+  function finishDrag({ active, over }: DragEndEvent) {
+    setActiveId(null);
+    if (!over || active.id === over.id || savingOrderRef.current) return;
+    const from = links.findIndex((link) => link.id === active.id);
+    const to = links.findIndex((link) => link.id === over.id);
+    if (from < 0 || to < 0) return;
+    setLinks(arrayMove(links, from, to));
+  }
+
+  async function saveOrder() {
+    if (savingOrderRef.current || !orderChanged) return;
+    savingOrderRef.current = true;
+    setSavingOrder(true);
+    setError("");
+    try {
+      const body = await readResponse<{ links: SharedLink[] }>(await fetch("/api/links/order", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: links.map((link) => link.id) }),
+      }));
+      setLinks(body.links);
+      setOriginalLinks(null);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to save the order. Please try again.");
+    } finally {
+      savingOrderRef.current = false;
+      setSavingOrder(false);
+    }
+  }
+
   return (
     <section className="min-h-0 overflow-y-auto scroll-contained [scrollbar-gutter:stable] bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold text-slate-950">Links</h1>
-          <button ref={addButtonRef} type="button" disabled={loading} onClick={() => setEditing("new")} className="inline-flex h-8 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
-            <Plus size={16} />Add link
-          </button>
+          <div className="flex items-center gap-2">
+            {reordering ? <>
+              <button type="button" disabled={savingOrder || activeId !== null} onClick={() => { setLinks(originalLinks); setOriginalLinks(null); setError(""); }} className="inline-flex h-8 items-center px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50">Cancel</button>
+              <button type="button" disabled={!orderChanged || savingOrder || activeId !== null} onClick={() => void saveOrder()} className="inline-flex h-8 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"><Check size={16} />{savingOrder ? "Saving…" : "Save"}</button>
+            </> : <button type="button" disabled={loading || links.length < 2} onClick={() => { setOriginalLinks(links); setError(""); }} className="inline-flex h-8 items-center gap-2 px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50"><ArrowUpDown size={16} />Reorder</button>}
+            <button ref={addButtonRef} type="button" disabled={loading || reordering} onClick={() => setEditing("new")} className="inline-flex h-8 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+              <Plus size={16} />Add link
+            </button>
+          </div>
         </div>
         {error ? <p role="alert" className="mb-4 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
         {loading ? <p role="status" className="text-sm text-slate-500">Loading links…</p> : links.length === 0 && !error ? (
@@ -57,28 +103,51 @@ export function LinksView() {
             <h2 className="font-medium text-slate-950">No links</h2>
           </div>
         ) : (
-          <ul className="divide-y divide-slate-200 border border-slate-200">
-            {links.map((link) => (
-              <li key={link.id} className="flex items-start justify-between gap-5 p-4">
-                <div className="min-w-0">
-                  <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-baseline gap-2 font-semibold text-slate-950 hover:underline">
-                    <span className="break-words [overflow-wrap:anywhere]">{link.title}</span><ExternalLink size={14} className="shrink-0 self-center" aria-label="Opens in a new tab" />
-                  </a>
-                  {link.description ? <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-600 [overflow-wrap:anywhere]">{link.description}</p> : null}
-                  <LinkUrl key={link.url} url={link.url} title={link.title} />
-                </div>
-                <div className="flex shrink-0 gap-1">
-                  <button type="button" onClick={() => setEditing(link)} aria-label={`Edit ${link.title}`} title="Edit link" className="grid size-8 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950"><Pencil size={16} /></button>
-                  <button type="button" onClick={() => setDeleting(link)} aria-label={`Delete ${link.title}`} title="Delete link" className="grid size-8 place-items-center text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 size={16} /></button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <DndContext id="shared-links" sensors={sensors} collisionDetection={closestCenter} onDragStart={({ active }) => setActiveId(String(active.id))} onDragCancel={() => setActiveId(null)} onDragEnd={finishDrag}>
+            <SortableContext items={links.map((link) => link.id)} strategy={verticalListSortingStrategy}>
+              <ul aria-label="Links" aria-busy={savingOrder} className="divide-y divide-slate-200 border border-slate-200">
+                {links.map((link) => <SortableLinkRow key={link.id} link={link} reordering={reordering} saving={savingOrder} onEdit={() => setEditing(link)} onDelete={() => setDeleting(link)} />)}
+              </ul>
+            </SortableContext>
+            <DragOverlay>
+              {activeLink ? <div inert className="border border-slate-300 bg-white shadow-lg"><LinkRowContent link={activeLink} handle={<span className="grid size-8 shrink-0 place-items-center text-slate-500"><GripVertical size={16} /></span>} /></div> : null}
+            </DragOverlay>
+          </DndContext>
         )}
       </div>
-      {editing !== null ? <LinkForm key={editing === "new" ? "new" : editing.id} link={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={(link) => { setLinks((current) => sortLinks([...current.filter((item) => item.id !== link.id), link])); setError(""); setEditing(null); }} /> : null}
+      {editing !== null ? <LinkForm key={editing === "new" ? "new" : editing.id} link={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={(link) => { setLinks((current) => current.some((item) => item.id === link.id) ? current.map((item) => item.id === link.id ? link : item) : [...current, link]); setError(""); setEditing(null); }} /> : null}
       {deleting ? <DeleteLinkDialog link={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setLinks((current) => current.filter((link) => link.id !== deleting.id)); setError(""); setDeleting(null); addButtonRef.current?.focus(); }} /> : null}
     </section>
+  );
+}
+
+function SortableLinkRow({ link, reordering, saving, onEdit, onDelete }: { link: SharedLink; reordering: boolean; saving: boolean; onEdit: () => void; onDelete: () => void }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: link.id, disabled: !reordering || saving });
+  return (
+    <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : undefined }} className="bg-white motion-reduce:!transition-none">
+      <LinkRowContent link={link} handle={reordering ? <button ref={setActivatorNodeRef} type="button" {...attributes} {...listeners} disabled={saving} aria-label={`Reorder ${link.title}`} className="grid size-8 shrink-0 touch-none place-items-center text-slate-400 hover:bg-slate-100 hover:text-slate-700 enabled:cursor-grab enabled:active:cursor-grabbing disabled:opacity-50"><GripVertical size={16} /></button> : undefined} actions={!reordering ? <div className="flex shrink-0 gap-1">
+        <button type="button" onClick={onEdit} aria-label={`Edit ${link.title}`} title="Edit link" className="grid size-8 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950"><Pencil size={16} /></button>
+        <button type="button" onClick={onDelete} aria-label={`Delete ${link.title}`} title="Delete link" className="grid size-8 place-items-center text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 size={16} /></button>
+      </div> : undefined} />
+    </li>
+  );
+}
+
+function LinkRowContent({ link, handle, actions }: { link: SharedLink; handle?: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 p-4">
+      {handle}
+      <div className="flex min-w-0 flex-1 items-start justify-between gap-5">
+        <div className="min-w-0">
+          <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-baseline gap-2 font-semibold text-slate-950 hover:underline">
+            <span className="break-words [overflow-wrap:anywhere]">{link.title}</span><ExternalLink size={14} className="shrink-0 self-center" aria-label="Opens in a new tab" />
+          </a>
+          {link.description ? <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-600 [overflow-wrap:anywhere]">{link.description}</p> : null}
+          <LinkUrl key={link.url} url={link.url} title={link.title} />
+        </div>
+        {actions}
+      </div>
+    </div>
   );
 }
 

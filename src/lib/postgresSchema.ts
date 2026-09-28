@@ -41,8 +41,17 @@ export function ensurePostgresDatabase() {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       url TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT ''
+      description TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0
     );
+
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'shared_links' AND column_name = 'sort_order') THEN
+        ALTER TABLE shared_links ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+        WITH ordered AS (SELECT id, ROW_NUMBER() OVER (ORDER BY lower(title), id) - 1 AS position FROM shared_links)
+        UPDATE shared_links SET sort_order = (SELECT position FROM ordered WHERE ordered.id = shared_links.id);
+      END IF;
+    END $$;
 
     CREATE TABLE IF NOT EXISTS login_attempts (
       email TEXT NOT NULL,

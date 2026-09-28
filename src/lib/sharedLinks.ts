@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { findUserById } from "./store";
-import { queryOne, querySql, sql, type SqlRow } from "./sqlite";
+import { isPostgresDatabase, queryOne, querySql, sql, type SqlRow } from "./sqlite";
 import type { SharedLink } from "./sharedLinkTypes";
 
 export class SharedLinkError extends Error {
@@ -47,19 +47,53 @@ function toLink(row: SqlRow): SharedLink {
 
 export function listSharedLinks(userId: string): SharedLink[] {
   requireMember(userId);
-  return querySql("SELECT id, title, url, description FROM shared_links ORDER BY lower(title), id").map(toLink);
+  return querySql("SELECT id, title, url, description FROM shared_links ORDER BY sort_order, lower(title), id").map(toLink);
+}
+
+// Serialize ordering and appends, including the membership check, on one connection.
+function queryLinkOrderWrite(statement: string) {
+  return querySql(`
+    ${isPostgresDatabase() ? "BEGIN; LOCK TABLE shared_links IN SHARE ROW EXCLUSIVE MODE;" : "BEGIN IMMEDIATE;"}
+    ${statement}
+    COMMIT;
+  `);
 }
 
 export function createSharedLink(userId: string, input: unknown): SharedLink {
   requireMember(userId);
   const link = validateLink(input);
-  const row = queryOne(`
-    INSERT INTO shared_links (id, title, url, description)
-    VALUES (${sql(randomUUID())}, ${sql(link.title)}, ${sql(link.url)}, ${sql(link.description)})
+  const [row] = queryLinkOrderWrite(`
+    INSERT INTO shared_links (id, title, url, description, sort_order)
+    SELECT ${sql(randomUUID())}, ${sql(link.title)}, ${sql(link.url)}, ${sql(link.description)},
+      COALESCE(MAX(sort_order), -1) + 1 FROM shared_links
     RETURNING id, title, url, description;
   `);
   if (!row) throw new Error("Unable to create link.");
   return toLink(row);
+}
+
+export function reorderSharedLinks(userId: string, input: unknown): SharedLink[] {
+  requireMember(userId);
+  const ids = input && typeof input === "object" && !Array.isArray(input)
+    ? (input as Record<string, unknown>).ids : null;
+  if (!Array.isArray(ids) || ids.length === 0 ||
+      ids.some((id) => typeof id !== "string" || !id || id.length > 200) ||
+      new Set(ids).size !== ids.length) {
+    throw new SharedLinkError("Provide each link exactly once.");
+  }
+  const rows = queryLinkOrderWrite(`
+    WITH requested(id, position) AS (VALUES ${ids.map((id, index) => `(${sql(id)}, ${index})`).join(", ")})
+    UPDATE shared_links
+    SET sort_order = (SELECT position FROM requested WHERE requested.id = shared_links.id)
+    WHERE (SELECT COUNT(*) FROM shared_links) = ${ids.length}
+      AND NOT EXISTS (SELECT 1 FROM requested WHERE NOT EXISTS (SELECT 1 FROM shared_links WHERE shared_links.id = requested.id))
+    RETURNING id, title, url, description;
+  `);
+  if (rows.length !== ids.length) {
+    throw new SharedLinkError("The links changed. Reload the page and try again.", 409);
+  }
+  const linksById = new Map(rows.map((row) => [row.id, toLink(row)]));
+  return ids.map((id) => linksById.get(id)!);
 }
 
 export function updateSharedLink(userId: string, id: string, input: unknown): SharedLink {

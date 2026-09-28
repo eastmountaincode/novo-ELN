@@ -1,7 +1,7 @@
 "use client";
 
-import { ExternalLink, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Check, Copy, ExternalLink, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { SharedLink } from "@/lib/sharedLinkTypes";
 
 async function readResponse<T>(response: Response): Promise<T> {
@@ -42,11 +42,11 @@ export function LinksView() {
   }, []);
 
   return (
-    <section className="min-h-0 overflow-y-auto scroll-contained bg-white p-8">
+    <section className="min-h-0 overflow-y-auto scroll-contained [scrollbar-gutter:stable] bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold text-slate-950">Links</h1>
-          <button ref={addButtonRef} type="button" disabled={loading} onClick={() => setEditing("new")} className="inline-flex h-9 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+          <button ref={addButtonRef} type="button" disabled={loading} onClick={() => setEditing("new")} className="inline-flex h-8 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             <Plus size={16} />Add link
           </button>
         </div>
@@ -59,7 +59,7 @@ export function LinksView() {
         ) : (
           <ul className="divide-y divide-slate-200 border border-slate-200">
             {links.map((link) => (
-              <li key={link.id} className="flex items-start justify-between gap-5 px-5 py-4">
+              <li key={link.id} className="flex items-start justify-between gap-5 p-4">
                 <div className="min-w-0">
                   <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-baseline gap-2 font-semibold text-slate-950 hover:underline">
                     <span className="break-words [overflow-wrap:anywhere]">{link.title}</span><ExternalLink size={14} className="shrink-0 self-center" aria-label="Opens in a new tab" />
@@ -83,6 +83,8 @@ export function LinksView() {
 }
 
 function LinkUrl({ url, title }: { url: string; title: string }) {
+  const tooltipId = useId();
+  const [hintOpen, setHintOpen] = useState(false);
   const [feedback, setFeedback] = useState<"idle" | "copied" | "error">("idle");
 
   useEffect(() => {
@@ -92,6 +94,7 @@ function LinkUrl({ url, title }: { url: string; title: string }) {
   }, [feedback]);
 
   async function copy() {
+    setFeedback("idle");
     try {
       await navigator.clipboard.writeText(url);
       setFeedback("copied");
@@ -100,13 +103,18 @@ function LinkUrl({ url, title }: { url: string; title: string }) {
     }
   }
 
+  const showHint = hintOpen || feedback === "copied";
+
   return (
     <>
-      <div className="mt-2 flex min-w-0 items-center gap-2">
+      <div className="mt-2 flex min-w-0 items-center gap-1">
         <p className="truncate text-sm text-slate-500" title={url}>{url}</p>
-        <button type="button" onClick={() => void copy()} aria-label={`Copy URL for ${title}`} title={feedback === "copied" ? "Copied!" : "Copy URL"} className="inline-flex h-7 w-16 shrink-0 items-center justify-center border border-slate-200 bg-white px-2 text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950">
-          <span className="text-xs font-medium leading-none">{feedback === "copied" ? "Copied!" : "Copy"}</span>
-        </button>
+        <span className="relative shrink-0" onPointerEnter={() => setHintOpen(true)} onPointerLeave={() => setHintOpen(false)}>
+          <button type="button" onClick={() => void copy()} onFocus={() => setHintOpen(true)} onBlur={() => setHintOpen(false)} onKeyDown={(event) => { if (event.key === "Escape") { setHintOpen(false); setFeedback("idle"); } }} aria-label={`Copy URL for ${title}`} aria-describedby={showHint ? tooltipId : undefined} className="grid size-6 place-items-center text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:text-slate-700">
+            {feedback === "copied" ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+          </button>
+          {showHint ? <span id={tooltipId} role="tooltip" className="absolute bottom-full left-1/2 z-10 -translate-x-1/2 whitespace-nowrap pb-1"><span className="block bg-slate-950 px-2 py-1 text-xs text-white shadow-sm">{feedback === "copied" ? "Copied" : "Copy URL"}</span></span> : null}
+        </span>
         <span role="status" className="sr-only">{feedback === "copied" ? "URL copied" : ""}</span>
       </div>
       {feedback === "error" ? <p role="alert" className="mt-1 text-xs text-red-700">Unable to copy. Select the URL to copy it.</p> : null}

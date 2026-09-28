@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, ExternalLink, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { SharedLink } from "@/lib/sharedLinkTypes";
 
@@ -104,8 +104,8 @@ function LinkUrl({ url, title }: { url: string; title: string }) {
     <>
       <div className="mt-2 flex min-w-0 items-center gap-1">
         <p className="truncate text-xs text-slate-400" title={url}>{url}</p>
-        <button type="button" onClick={() => void copy()} aria-label={`Copy URL for ${title}`} title={feedback === "copied" ? "Copied" : "Copy URL"} className="grid size-6 shrink-0 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950">
-          {feedback === "copied" ? <Check size={14} /> : <Copy size={14} />}
+        <button type="button" onClick={() => void copy()} aria-label={`Copy URL for ${title}`} title={feedback === "copied" ? "Copied!" : "Copy URL"} className="h-6 w-20 shrink-0 px-2 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-950">
+          {feedback === "copied" ? "Copied!" : "Copy"}
         </button>
         <span role="status" className="sr-only">{feedback === "copied" ? "URL copied" : ""}</span>
       </div>

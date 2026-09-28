@@ -107,7 +107,7 @@ function LinkUrl({ url, title }: { url: string; title: string }) {
 
   return (
     <>
-      <div className="mt-2 flex min-w-0 items-center gap-1">
+      <div className="mt-1 flex h-5 min-w-0 items-center gap-1">
         <p className="truncate text-sm text-slate-500" title={url}>{url}</p>
         <span className="relative shrink-0" onPointerEnter={() => setHintOpen(true)} onPointerLeave={() => setHintOpen(false)}>
           <button type="button" onClick={() => void copy()} onFocus={() => setHintOpen(true)} onBlur={() => setHintOpen(false)} onKeyDown={(event) => { if (event.key === "Escape") { setHintOpen(false); setFeedback("idle"); } }} aria-label={`Copy URL for ${title}`} aria-describedby={showHint ? tooltipId : undefined} className="grid size-6 place-items-center text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:text-slate-700">

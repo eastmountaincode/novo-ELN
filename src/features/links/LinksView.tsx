@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import { Check, Copy, ExternalLink, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { SharedLink } from "@/lib/sharedLinkTypes";
 
@@ -18,11 +18,12 @@ function sortLinks(links: SharedLink[]) {
 }
 
 export function LinksView() {
+  const addButtonRef = useRef<HTMLButtonElement>(null);
   const [links, setLinks] = useState<SharedLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<SharedLink | "new" | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<SharedLink | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -40,26 +41,12 @@ export function LinksView() {
     return () => controller.abort();
   }, []);
 
-  async function deleteLink(link: SharedLink) {
-    if (!window.confirm(`Delete “${link.title}” from the group's links?`)) return;
-    setDeletingId(link.id);
-    setError("");
-    try {
-      await readResponse(await fetch(`/api/links/${encodeURIComponent(link.id)}`, { method: "DELETE" }));
-      setLinks((current) => current.filter((item) => item.id !== link.id));
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Unable to delete link.");
-    } finally {
-      setDeletingId(null);
-    }
-  }
-
   return (
     <section className="min-h-0 overflow-y-auto scroll-contained bg-white p-8">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold text-slate-950">Links</h1>
-          <button type="button" disabled={loading || !!deletingId} onClick={() => setEditing("new")} className="inline-flex h-9 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+          <button ref={addButtonRef} type="button" disabled={loading} onClick={() => setEditing("new")} className="inline-flex h-9 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             <Plus size={16} />Add link
           </button>
         </div>
@@ -78,11 +65,11 @@ export function LinksView() {
                     <span className="break-words [overflow-wrap:anywhere]">{link.title}</span><ExternalLink size={14} className="shrink-0 self-center" aria-label="Opens in a new tab" />
                   </a>
                   {link.description ? <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-600 [overflow-wrap:anywhere]">{link.description}</p> : null}
-                  <p className="mt-2 truncate text-xs text-slate-400" title={link.url}>{link.url}</p>
+                  <LinkUrl key={link.url} url={link.url} title={link.title} />
                 </div>
                 <div className="flex shrink-0 gap-1">
-                  <button type="button" onClick={() => setEditing(link)} disabled={!!deletingId} aria-label={`Edit ${link.title}`} title="Edit link" className="grid size-8 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50"><Pencil size={16} /></button>
-                  <button type="button" onClick={() => void deleteLink(link)} disabled={!!deletingId} aria-label={`Delete ${link.title}`} title="Delete link" className="grid size-8 place-items-center text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"><Trash2 size={16} /></button>
+                  <button type="button" onClick={() => setEditing(link)} aria-label={`Edit ${link.title}`} title="Edit link" className="grid size-8 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950"><Pencil size={16} /></button>
+                  <button type="button" onClick={() => setDeleting(link)} aria-label={`Delete ${link.title}`} title="Delete link" className="grid size-8 place-items-center text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 size={16} /></button>
                 </div>
               </li>
             ))}
@@ -90,7 +77,87 @@ export function LinksView() {
         )}
       </div>
       {editing !== null ? <LinkForm key={editing === "new" ? "new" : editing.id} link={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={(link) => { setLinks((current) => sortLinks([...current.filter((item) => item.id !== link.id), link])); setError(""); setEditing(null); }} /> : null}
+      {deleting ? <DeleteLinkDialog link={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setLinks((current) => current.filter((link) => link.id !== deleting.id)); setError(""); setDeleting(null); addButtonRef.current?.focus(); }} /> : null}
     </section>
+  );
+}
+
+function LinkUrl({ url, title }: { url: string; title: string }) {
+  const [feedback, setFeedback] = useState<"idle" | "copied" | "error">("idle");
+
+  useEffect(() => {
+    if (feedback !== "copied") return;
+    const timeout = window.setTimeout(() => setFeedback("idle"), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [feedback]);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setFeedback("copied");
+    } catch {
+      setFeedback("error");
+    }
+  }
+
+  return (
+    <>
+      <div className="mt-2 flex min-w-0 items-center gap-1">
+        <p className="truncate text-xs text-slate-400" title={url}>{url}</p>
+        <button type="button" onClick={() => void copy()} aria-label={`Copy URL for ${title}`} title={feedback === "copied" ? "Copied" : "Copy URL"} className="grid size-6 shrink-0 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950">
+          {feedback === "copied" ? <Check size={14} /> : <Copy size={14} />}
+        </button>
+        <span role="status" className="sr-only">{feedback === "copied" ? "URL copied" : ""}</span>
+      </div>
+      {feedback === "error" ? <p role="alert" className="mt-1 text-xs text-red-700">Unable to copy. Select the URL to copy it.</p> : null}
+    </>
+  );
+}
+
+function DeleteLinkDialog({ link, onClose, onDeleted }: { link: SharedLink; onClose: () => void; onDeleted: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+
+  function close() {
+    dialogRef.current?.close();
+    onClose();
+  }
+
+  async function confirmDelete() {
+    if (deleting) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await readResponse(await fetch(`/api/links/${encodeURIComponent(link.id)}`, { method: "DELETE" }));
+      dialogRef.current?.close();
+      onDeleted();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to delete link.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <dialog ref={dialogRef} aria-labelledby="link-delete-title" aria-describedby="link-delete-description" aria-busy={deleting} onCancel={(event) => { event.preventDefault(); if (!deleting) close(); }} className="m-auto w-[calc(100%-3rem)] max-w-md border border-white/10 bg-slate-900 p-5 text-slate-200 shadow-2xl backdrop:bg-slate-950/70">
+      <h2 id="link-delete-title" className="text-lg font-semibold text-white">Delete link?</h2>
+      <div id="link-delete-description" className="mt-3">
+        <p className="break-words text-sm font-medium text-white [overflow-wrap:anywhere]">{link.title}</p>
+        <p className="mt-1 break-words text-xs text-slate-400 [overflow-wrap:anywhere]">{link.url}</p>
+      </div>
+      {error ? <p role="alert" className="mt-4 text-sm text-red-300">{error}</p> : null}
+      <div className="mt-5 flex justify-end gap-2">
+        <button type="button" autoFocus disabled={deleting} onClick={close} className="h-9 border border-white/10 px-3 text-sm hover:bg-white/10 disabled:opacity-60">Cancel</button>
+        <button type="button" disabled={deleting} onClick={() => void confirmDelete()} className="h-9 bg-rose-500 px-3 text-sm font-medium text-white hover:bg-rose-400 disabled:bg-rose-800 disabled:text-rose-200">{deleting ? "Deleting…" : "Delete link"}</button>
+      </div>
+    </dialog>
   );
 }
 

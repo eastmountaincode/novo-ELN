@@ -43,12 +43,18 @@ sha256 Fingerprint=4A:A0:3F:A2:2C:D7:5C:84:C5:5C:93:8F:82:8E:67:6B:9C:AE:CA:B3:3
   it("verifies the response against the original request and trusted CA file", async () => {
     const { verifyTimestampResponseFiles } = await import("../src/lib/timestamping");
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "novo-timestamp-test-"));
-    const caFile = "/etc/ssl/certs/ca-certificates.crt";
-    const caBundle = fs.readFileSync(caFile, "utf8");
-    const rootPem = (caBundle.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [])
+    const caFile = ["/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem"].find(fs.existsSync);
+    expect(caFile).toBeTruthy();
+    const caBundle = fs.readFileSync(caFile!, "utf8");
+    const caCertificates = caBundle.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+    const rootPem = caCertificates
       .find((pem) => new X509Certificate(pem).subject.includes("DigiCert Trusted Root G4"));
     expect(rootPem).toBeTruthy();
     const rootCertificate = new X509Certificate(rootPem!);
+    const supplementalPem = caCertificates.find((pem) => new X509Certificate(pem).fingerprint256 !== rootCertificate.fingerprint256);
+    expect(supplementalPem).toBeTruthy();
+    const supplementalPath = path.join(tempDir, "supplemental.pem");
+    fs.writeFileSync(supplementalPath, `${rootPem}\n${supplementalPem}\n`);
     const rootSubject = rootCertificate.subject.split("\n").reverse().join(",");
     const runner = vi.fn(async (args: string[]) => {
       if (args[0] === "pkcs7") {
@@ -74,16 +80,36 @@ sha256 Fingerprint=4A:A0:3F:A2:2C:D7:5C:84:C5:5C:93:8F:82:8E:67:6B:9C:AE:CA:B3:3
       requestPath: path.join(tempDir, "request.tsq"),
       responsePath: path.join(tempDir, "response.tsr"),
       tempDir,
-      caFile,
+      caFile: caFile!,
+      untrustedCertFile: supplementalPath,
     }, runner);
 
     expect(runner.mock.calls[0][0]).toEqual([
-      "ts", "-verify", "-queryfile", path.join(tempDir, "request.tsq"), "-in", path.join(tempDir, "response.tsr"), "-CAfile", caFile,
+      "ts", "-verify", "-queryfile", path.join(tempDir, "request.tsq"), "-in", path.join(tempDir, "response.tsr"), "-CAfile", caFile, "-untrusted", supplementalPath,
     ]);
+    expect(runner.mock.calls.some(([args]) => args[0] === "ts" && args[1] === "-verify" && args.includes(path.join(tempDir, "timestamp-trust-anchor.pem")))).toBe(true);
+    expect(fs.readFileSync(path.join(tempDir, "timestamp-trust-anchor.pem"), "utf8")).toBe(`${rootPem!.trim()}\n`);
+    expect(fs.readFileSync(path.join(tempDir, "timestamp-untrusted.pem"), "utf8")).toBe(result.certificateChainPem);
+    expect(result.certificateChainPem.match(/-----BEGIN CERTIFICATE-----/g)).toHaveLength(2);
+    expect(result.certificateChainPem).toContain(supplementalPem!.trim());
     expect(result.tsaSubject).toBe("CN = Example TSA");
     expect(result.tsaCertFingerprint).toBe("sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
     expect(result.trustAnchor.sha256Fingerprint).toBe(`sha256:${rootCertificate.fingerprint256.replaceAll(":", "").toLowerCase()}`);
     expect(result.caBundleSha256).toMatch(/^[a-f0-9]{64}$/);
+
+    const archivedCheckFailureRunner = vi.fn(async (args: string[]) => {
+      if (args[0] === "ts" && args[1] === "-verify" && args.includes(path.join(tempDir, "timestamp-trust-anchor.pem"))) {
+        throw Object.assign(new Error("verification failed"), { stderr: "Verification: FAILED\n" });
+      }
+      return runner(args);
+    });
+    await expect(verifyTimestampResponseFiles({
+      requestPath: path.join(tempDir, "request.tsq"),
+      responsePath: path.join(tempDir, "response.tsr"),
+      tempDir,
+      caFile: caFile!,
+      untrustedCertFile: supplementalPath,
+    }, archivedCheckFailureRunner)).rejects.toThrow("Timestamp authority response cannot be verified using only the archived certificates: Verification: FAILED.");
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 

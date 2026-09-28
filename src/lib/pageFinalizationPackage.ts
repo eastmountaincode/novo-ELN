@@ -204,8 +204,9 @@ function finalizationReadme(signature: PageSignature) {
     "proof/proof-package.json contains the user signature and proof hash.",
     "proof/record-manifest.sha256 is the SHA256 checksum of proof/record-manifest.json.",
     "timestamps/*/response.tsr contains the RFC3161 timestamp token from the timestamp authority.",
-    "timestamps/*/tsa-certificates.pem contains the certificates embedded in the RFC3161 token.",
-    "timestamps/*/trust-anchor.pem is the exact trusted root selected from the system CA bundle during verification.",
+    "timestamps/*/tsa-certificates.pem contains the TSA certificates embedded in the RFC3161 token and any additional intermediates used for verification.",
+    "timestamps/*/trust-anchor.pem is the exact trust anchor selected from the system CA bundle during verification; an independent verifier must decide whether to trust it.",
+    "At finalization, Novo verifies request.tsq and response.tsr using only tsa-certificates.pem and trust-anchor.pem, without the original system CA bundle.",
     "timestamps/*/verification.json records the OpenSSL, certificate path, trust store, and operating system provenance used during verification.",
   ].filter(Boolean).join("\n");
 }

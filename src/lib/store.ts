@@ -74,6 +74,13 @@ export function ensureDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS shared_links (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE TABLE IF NOT EXISTS login_attempts (
       email TEXT NOT NULL,
       ip_address TEXT NOT NULL,

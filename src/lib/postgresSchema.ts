@@ -37,6 +37,13 @@ export function ensurePostgresDatabase() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TEXT;
 
+    CREATE TABLE IF NOT EXISTS shared_links (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE TABLE IF NOT EXISTS login_attempts (
       email TEXT NOT NULL,
       ip_address TEXT NOT NULL,

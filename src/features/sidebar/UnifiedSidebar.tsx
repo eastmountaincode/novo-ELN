@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Home as HomeIcon,
+  Link as LinkIcon,
   MoreHorizontal,
   Notebook as NotebookIcon,
   Palette,
@@ -28,7 +29,7 @@ type NotebookSortKey = "updated" | "created" | "title";
 
 type UnifiedSidebarProps = {
   workspace: Workspace;
-  activeView: "home" | "projectHome" | "project" | "notebookSettings" | "account";
+  activeView: "home" | "projectHome" | "project" | "notebookSettings" | "account" | "links";
   selectedProject?: Project;
   selectedNotebook?: Notebook;
   sidebarCollapsed: boolean;
@@ -42,6 +43,7 @@ type UnifiedSidebarProps = {
   setProjectMenuId: (value: string | null) => void;
   setNotebookMenuId: (value: string | null) => void;
   openHome: () => void;
+  openLinks: () => void;
   openAccount: () => void;
   selectProject: (project: Project) => void;
   toggleProject: (project: Project) => void;
@@ -84,6 +86,7 @@ export function UnifiedSidebar({
   setProjectMenuId,
   setNotebookMenuId,
   openHome,
+  openLinks,
   openAccount,
   selectNotebook,
   renameNotebook,
@@ -290,6 +293,17 @@ export function UnifiedSidebar({
           >
             <HomeIcon size={16} className="shrink-0" />
             <span className="sidebar-wide min-w-0 truncate font-medium">Overview</span>
+          </button>
+          <button
+            onClick={openLinks}
+            className={`flex w-full min-w-0 items-center overflow-hidden py-2 text-left text-sm ${
+              sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
+            } ${activeView === "links" ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5"}`}
+            title="Links"
+            aria-current={activeView === "links" ? "page" : undefined}
+          >
+            <LinkIcon size={16} className="shrink-0" />
+            <span className="sidebar-wide min-w-0 truncate font-medium">Links</span>
           </button>
         </div>
         {!sidebarCollapsed ? (

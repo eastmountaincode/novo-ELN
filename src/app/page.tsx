@@ -20,6 +20,7 @@ import {
   preparePageEditingSessionsForRemoval,
 } from "@/features/editor/page/pageEditingSession";
 import { HomeView } from "@/features/home/HomeView";
+import { LinksView } from "@/features/links/LinksView";
 import { NotebookSettingsView } from "@/features/notebooks/settings/NotebookSettingsView";
 import { PagesSidebar } from "@/features/pages/PagesSidebar";
 import {
@@ -87,7 +88,7 @@ export default function Home() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
-  const [activeView, setActiveView] = useState<"home" | "projectHome" | "project" | "notebookSettings" | "account">("home");
+  const [activeView, setActiveView] = useState<"home" | "projectHome" | "project" | "notebookSettings" | "account" | "links">("home");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedNotebookId, setSelectedNotebookId] = useState("");
   const [selectedPageId, setSelectedPageId] = useState("");
@@ -171,6 +172,12 @@ export default function Home() {
   }, []);
 
   const selectFirstAvailable = useCallback((data: Workspace) => {
+    if (readLinksViewFromUrl()) {
+      setActiveView("links");
+      setPageMenuId(null);
+      setAccountOpen(false);
+      return;
+    }
     if (readAccountViewFromUrl()) {
       setActiveView("account");
       setPageMenuId(null);
@@ -275,6 +282,12 @@ export default function Home() {
     const currentWorkspace = workspace;
 
     function onPopState() {
+      if (readLinksViewFromUrl()) {
+        setActiveView("links");
+        setPageMenuId(null);
+        setAccountOpen(false);
+        return;
+      }
       if (readAccountViewFromUrl()) {
         setActiveView("account");
         setPageMenuId(null);
@@ -691,6 +704,15 @@ export default function Home() {
     setAccountOpen(false);
     setPageMenuId(null);
     writePageUrl(null, "push");
+  }
+
+  function openLinks() {
+    setActiveView("links");
+    setAccountOpen(false);
+    setProjectMenuId(null);
+    setNotebookMenuId(null);
+    setPageMenuId(null);
+    writeLinksUrl("push");
   }
 
   function openAccount() {
@@ -1119,6 +1141,7 @@ export default function Home() {
           setProjectMenuId={setProjectMenuId}
           setNotebookMenuId={setNotebookMenuId}
           openHome={openHome}
+          openLinks={openLinks}
           openAccount={openAccount}
           selectProject={selectProject}
           toggleProject={toggleProject}
@@ -1139,6 +1162,8 @@ export default function Home() {
 
         {activeView === "home" || activeView === "projectHome" ? (
           <HomeView recentPages={recentPages} members={workspace.members} selectPage={selectPage} />
+        ) : activeView === "links" ? (
+          <LinksView />
         ) : activeView === "account" ? (
           <AccountView user={workspace.user} notebooks={workspace.notebooks} onChanged={() => refreshWorkspace()} />
         ) : activeView === "notebookSettings" ? (
@@ -1313,6 +1338,11 @@ function findProjectSelection(workspace: Workspace, projectId: string | null): P
   return project ? { project } : null;
 }
 
+function readLinksViewFromUrl() {
+  if (typeof window === "undefined") return false;
+  return new URL(window.location.href).pathname === "/links";
+}
+
 function readAccountViewFromUrl() {
   if (typeof window === "undefined") return false;
   return new URL(window.location.href).pathname === "/settings";
@@ -1435,6 +1465,17 @@ function writeProjectUrl(projectId: string | null, mode: "push" | "replace") {
     url.searchParams.delete("page");
     url.searchParams.delete("notebook");
   }
+  writeUrl(url, mode);
+}
+
+function writeLinksUrl(mode: "push" | "replace") {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.pathname = "/links";
+  url.searchParams.delete("project");
+  url.searchParams.delete("notebook");
+  url.searchParams.delete("notebookSettings");
+  url.searchParams.delete("page");
   writeUrl(url, mode);
 }
 

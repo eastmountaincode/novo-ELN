@@ -1,0 +1,159 @@
+"use client";
+
+import { ExternalLink, Link as LinkIcon, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { SharedLink } from "@/lib/sharedLinkTypes";
+
+async function readResponse<T>(response: Response): Promise<T> {
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(response.status === 401 ? "Your session has expired. Reload the page to sign in." : body?.error || "Unable to load links. Please try again.");
+  }
+  if (!body) throw new Error("Unable to load links. Please try again.");
+  return body as T;
+}
+
+function sortLinks(links: SharedLink[]) {
+  return [...links].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+}
+
+export function LinksView() {
+  const [links, setLinks] = useState<SharedLink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState<SharedLink | "new" | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/links", { cache: "no-store", signal: controller.signal })
+      .then((response) => readResponse<{ links: SharedLink[] }>(response))
+      .then((body) => {
+        if (!controller.signal.aborted) setLinks(sortLinks(body.links));
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Unable to load links.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [refreshKey]);
+
+  async function deleteLink(link: SharedLink) {
+    if (!window.confirm(`Delete “${link.title}” from the group's links?`)) return;
+    setDeletingId(link.id);
+    setError("");
+    try {
+      await readResponse(await fetch(`/api/links/${encodeURIComponent(link.id)}`, { method: "DELETE" }));
+      setLinks((current) => current.filter((item) => item.id !== link.id));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to delete link.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <section className="min-h-0 overflow-y-auto scroll-contained bg-white p-8">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-950">Links</h1>
+            <p className="mt-2 text-sm text-slate-500">Shared resources for your group. Everyone can add, edit, and delete links.</p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <button type="button" disabled={loading || !!deletingId || editing !== null} onClick={() => { setLoading(true); setError(""); setRefreshKey((key) => key + 1); }} className="inline-flex h-9 items-center gap-2 border border-slate-200 px-3 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+              <RefreshCw size={15} className={loading ? "animate-spin" : ""} />Refresh
+            </button>
+            <button type="button" disabled={loading || !!deletingId} onClick={() => setEditing("new")} className="inline-flex h-9 items-center gap-2 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50">
+              <Plus size={16} />Add link
+            </button>
+          </div>
+        </div>
+        {error ? <p role="alert" className="mb-4 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+        {loading ? <p role="status" className="text-sm text-slate-500">Loading links…</p> : links.length === 0 && !error ? (
+          <div className="border border-slate-200 px-6 py-12 text-center">
+            <LinkIcon size={24} className="mx-auto mb-3 text-slate-400" />
+            <h2 className="font-medium text-slate-950">No shared links yet</h2>
+            <p className="mt-2 text-sm text-slate-500">Add a tool, document, or other resource your group uses.</p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-slate-200 border border-slate-200">
+            {links.map((link) => (
+              <li key={link.id} className="flex items-start justify-between gap-5 px-5 py-4">
+                <div className="min-w-0">
+                  <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-baseline gap-2 font-semibold text-cyan-700 hover:underline">
+                    <span className="break-words [overflow-wrap:anywhere]">{link.title}</span><ExternalLink size={14} className="shrink-0 self-center" aria-label="Opens in a new tab" />
+                  </a>
+                  {link.description ? <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-600 [overflow-wrap:anywhere]">{link.description}</p> : null}
+                  <p className="mt-2 truncate text-xs text-slate-400" title={link.url}>{link.url}</p>
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <button type="button" onClick={() => setEditing(link)} disabled={!!deletingId} aria-label={`Edit ${link.title}`} title="Edit link" className="grid size-8 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50"><Pencil size={16} /></button>
+                  <button type="button" onClick={() => void deleteLink(link)} disabled={!!deletingId} aria-label={`Delete ${link.title}`} title="Delete link" className="grid size-8 place-items-center text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"><Trash2 size={16} /></button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {editing !== null ? <LinkForm key={editing === "new" ? "new" : editing.id} link={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={(link) => { setLinks((current) => sortLinks([...current.filter((item) => item.id !== link.id), link])); setError(""); setEditing(null); }} /> : null}
+    </section>
+  );
+}
+
+function LinkForm({ link, onClose, onSaved }: { link: SharedLink | null; onClose: () => void; onSaved: (link: SharedLink) => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [title, setTitle] = useState(link?.title ?? "");
+  const [url, setUrl] = useState(link?.url ?? "");
+  const [description, setDescription] = useState(link?.description ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+
+  async function save(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(link ? `/api/links/${encodeURIComponent(link.id)}` : "/api/links", {
+        method: link ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, url, description }),
+      });
+      const body = await readResponse<{ link: SharedLink }>(response);
+      onSaved(body.link);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to save link.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputClass = "mt-2 w-full border border-white/10 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400";
+  return (
+    <dialog ref={dialogRef} aria-labelledby="link-form-title" onCancel={(event) => { event.preventDefault(); if (!saving) onClose(); }} className="m-auto w-[calc(100%-3rem)] max-w-md border border-white/10 bg-slate-900 p-5 text-slate-200 shadow-2xl backdrop:bg-slate-950/70">
+      <form onSubmit={(event) => void save(event)}>
+        <h2 id="link-form-title" className="text-lg font-semibold text-white">{link ? "Edit link" : "Add link"}</h2>
+        <fieldset disabled={saving} className="mt-5 space-y-4">
+          <label className="block text-sm font-medium">Title<input autoFocus required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} className={inputClass} placeholder="Resource name" /></label>
+          <label className="block text-sm font-medium">URL<input required type="url" maxLength={2048} value={url} onChange={(event) => setUrl(event.target.value)} className={inputClass} placeholder="https://" /></label>
+          <label className="block text-sm font-medium">Description <span className="font-normal text-slate-400">(optional)</span><textarea maxLength={1000} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} className={`${inputClass} resize-y`} /></label>
+        </fieldset>
+        {error ? <p role="alert" className="mt-4 text-sm text-red-300">{error}</p> : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" disabled={saving} onClick={onClose} className="h-9 border border-white/10 px-3 text-sm hover:bg-white/10 disabled:opacity-50">Cancel</button>
+          <button type="submit" disabled={saving || !title.trim() || !url.trim()} className="h-9 bg-cyan-500 px-3 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-400">{saving ? "Saving…" : link ? "Save changes" : "Add link"}</button>
+        </div>
+      </form>
+    </dialog>
+  );
+}

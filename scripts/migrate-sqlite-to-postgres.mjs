@@ -14,6 +14,7 @@ const derivedSearchTables = ["search_pages_vocab", "search_pages_fts"];
 
 const tableOrder = [
   "users",
+  "shared_links",
   "login_attempts",
   "notebooks",
   "notebook_members",

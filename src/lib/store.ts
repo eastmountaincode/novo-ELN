@@ -6,6 +6,7 @@ import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOver
 import { readDatabaseSchema } from "./databaseSchema";
 import { bodyToEditorDocument, bodyToEditorText, commentThreadIdsFromBody, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody, removeCommentMarksFromBody, removeUnknownCommentMarksFromBody } from "./editor";
 import { buildPageFinalizationPackage } from "./pageFinalizationPackage";
+import { PAGE_SIGNATURE_MEANING } from "./pageSignatureMeaning";
 import { calculatePageRecordHash, stableJsonStringify, type PageRecordManifest } from "./pageRecordPackage";
 import { proofDir, uploadDir } from "./paths";
 import { ensurePostgresDatabase } from "./postgresSchema";
@@ -1367,7 +1368,7 @@ export function createPageRecordSignature(
   const signaturePayload = canonicalSigningJson({
     schemaVersion: 2,
     payloadType: "novo.page.record.signature",
-    signatureMeaning: "The signer attests to this Novo page record package hash.",
+    signatureMeaning: PAGE_SIGNATURE_MEANING,
     signedAt: createdAt,
     page: {
       id: page.id,

@@ -30,6 +30,7 @@ import { PAGE_STATUS_OPTIONS, StatusDot } from "@/features/pages/PageStatus";
 import type { PageUpdater } from "@/features/pages/workspacePageState";
 import { attachmentIdsFromBody } from "@/lib/editor";
 import { formatBytes } from "@/lib/formatBytes";
+import { PAGE_SIGNATURE_MEANING, signatureMeaningFromPayload } from "@/lib/pageSignatureMeaning";
 import { normalizeTagList } from "@/lib/tags";
 import type {
   AuditEvent,
@@ -809,6 +810,7 @@ function PageSignatureModal({
           </div>
         ) : (
           <>
+            <p className="text-sm text-slate-200">Signature meaning: <span className="font-medium text-white">{PAGE_SIGNATURE_MEANING}</span></p>
             <label className="block text-sm font-medium text-slate-200">
               Signing passphrase
               <input
@@ -890,6 +892,7 @@ function PageFinalizationPanel({
         <div className="mt-3 px-2 pb-2">
           <div className="grid gap-x-8 gap-y-2 text-sm text-slate-700 sm:grid-cols-2">
             <div><span className="font-medium text-slate-900">Signed by:</span> {signerName}</div>
+            <div><span className="font-medium text-slate-900">Signature meaning:</span> {signatureMeaningFromPayload(signature.signaturePayload)}</div>
             <div><span className="font-medium text-slate-900">Timestamp:</span> {timestamp ? `${timestamp.provider}, ${timestamp.tsaTime || timestamp.createdAt}` : "Stored"}</div>
             <div><span className="font-medium text-slate-900">Record package:</span> {formatBytes(signature.recordPackageBytes)}</div>
             <div><span className="font-medium text-slate-900">Proof package:</span> {formatBytes(proofPackageBytes)}</div>

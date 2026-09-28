@@ -713,6 +713,7 @@ describe("store", () => {
     expect(fs.existsSync(path.join(process.env.ELN_DATA_DIR!, "proofs", signature.recordPackageStorageKey))).toBe(true);
     expect(JSON.parse(signature.signaturePayload).record.hash).toBe(recordPackage.recordHash);
     expect(JSON.parse(signature.signaturePayload).schemaVersion).toBe(2);
+    expect(JSON.parse(signature.signaturePayload).signatureMeaning).toBe("Authorship");
     expect(verify(null, Buffer.from(signature.signaturePayload, "utf8"), signature.signingPublicKey, Buffer.from(signature.signature, "base64"))).toBe(true);
     expect(signature.proofHashAlgorithm).toBe("sha256");
     expect(signature.proofHash).toMatch(/^[a-f0-9]{64}$/);

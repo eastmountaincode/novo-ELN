@@ -102,10 +102,10 @@ function LinkUrl({ url, title }: { url: string; title: string }) {
 
   return (
     <>
-      <div className="mt-2 flex min-w-0 items-center gap-1">
-        <p className="truncate text-xs text-slate-400" title={url}>{url}</p>
-        <button type="button" onClick={() => void copy()} aria-label={`Copy URL for ${title}`} title={feedback === "copied" ? "Copied!" : "Copy URL"} className="h-6 w-20 shrink-0 px-2 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-950">
-          {feedback === "copied" ? "Copied!" : "Copy"}
+      <div className="mt-2 flex min-w-0 items-center gap-2">
+        <p className="truncate text-sm text-slate-500" title={url}>{url}</p>
+        <button type="button" onClick={() => void copy()} aria-label={`Copy URL for ${title}`} title={feedback === "copied" ? "Copied!" : "Copy URL"} className="inline-flex h-7 w-16 shrink-0 items-center justify-center border border-slate-200 bg-white px-2 text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950">
+          <span className="text-xs font-medium leading-none">{feedback === "copied" ? "Copied!" : "Copy"}</span>
         </button>
         <span role="status" className="sr-only">{feedback === "copied" ? "URL copied" : ""}</span>
       </div>

@@ -137,7 +137,6 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
               <Plus size={16} />
               Create user
             </button>
-            <button onClick={() => void loadUsers()} className="h-9 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
           </div>
         )}
       />

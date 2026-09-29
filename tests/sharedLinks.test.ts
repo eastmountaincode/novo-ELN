@@ -64,11 +64,28 @@ describe("shared group links", () => {
     expect(api.listSharedLinks("alice")).toHaveLength(1);
   });
 
+  it("saves plain website addresses and preserves explicitly entered HTTP links", async () => {
+    const api = await members();
+    for (const [url, expected] of [
+      [" example.test/docs?view=all#details ", "https://example.test/docs?view=all#details"],
+      ["www.example.test", "https://www.example.test/"],
+      ["//example.test/docs", "https://example.test/docs"],
+      ["example.test:8080/docs", "https://example.test:8080/docs"],
+      ["localhost:8080/docs", "https://localhost:8080/docs"],
+      ["http://intranet.test:8080/docs", "http://intranet.test:8080/docs"],
+    ]) {
+      const link = api.createSharedLink("alice", { title: "Resource", url });
+      expect(link.url).toBe(expected);
+      api.updateSharedLink("bob", link.id, { title: "Updated", url });
+      expect(api.listSharedLinks("alice").find((item) => item.id === link.id)?.url).toBe(expected);
+    }
+  });
+
   it("rejects malformed input and unsafe URLs without changing stored links", async () => {
     const api = await members();
     const input = { title: "Resource", url: "https://example.test" };
     const link = api.createSharedLink("alice", input);
-    for (const invalid of [null, [], 42, { ...input, title: " " }, { ...input, title: "x".repeat(201) }, { ...input, url: 42 }, { ...input, description: false }, { ...input, description: "x".repeat(1001) }, ...["javascript:alert(1)", "data:text/html,hello", "file:///tmp/file", "https://name:password@example.test", "example.test", `https://example.test/${"x".repeat(2048)}`].map((url) => ({ ...input, url }))]) {
+    for (const invalid of [null, [], 42, { ...input, title: " " }, { ...input, title: "x".repeat(201) }, { ...input, url: 42 }, { ...input, description: false }, { ...input, description: "x".repeat(1001) }, ...["javascript:alert(1)", "data:text/html,hello", "file:///tmp/file", "mailto:name@example.test", "https://name:password@example.test", "name@example.test", "/relative/path", "?query=value", "#fragment", "not a website", `https://example.test/${"x".repeat(2048)}`, `example.test/${"x".repeat(2029)}`].map((url) => ({ ...input, url }))]) {
       expect(() => api.createSharedLink("alice", invalid)).toThrow();
       expect(() => api.updateSharedLink("bob", link.id, invalid)).toThrow();
     }

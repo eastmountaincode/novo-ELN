@@ -4,6 +4,7 @@ import { closestCenter, DndContext, DragOverlay, KeyboardSensor, PointerSensor, 
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowUpDown, Check, Copy, ExternalLink, GripVertical, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { SharedLink } from "@/lib/sharedLinkTypes";
 
@@ -91,9 +92,9 @@ export function LinksView() {
               <button type="button" disabled={savingOrder || activeId !== null} onClick={() => { setLinks(originalLinks); setOriginalLinks(null); setError(""); }} className="inline-flex h-8 items-center px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50">Cancel</button>
               <button type="button" disabled={!orderChanged || savingOrder || activeId !== null} onClick={() => void saveOrder()} className="inline-flex h-8 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"><Check size={16} />{savingOrder ? "Saving…" : "Save"}</button>
             </> : <button type="button" disabled={loading || links.length < 2} onClick={() => { setOriginalLinks(links); setError(""); }} className="inline-flex h-8 items-center gap-2 px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50"><ArrowUpDown size={16} />Reorder</button>}
-            <button ref={addButtonRef} type="button" disabled={loading || reordering} onClick={() => setEditing("new")} className="inline-flex h-8 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+            {!reordering ? <button ref={addButtonRef} type="button" disabled={loading} onClick={() => setEditing("new")} className="inline-flex h-8 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
               <Plus size={16} />Add link
-            </button>
+            </button> : null}
           </div>
         </div>
         {error ? <p role="alert" className="mb-4 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
@@ -109,8 +110,8 @@ export function LinksView() {
                 {links.map((link) => <SortableLinkRow key={link.id} link={link} reordering={reordering} saving={savingOrder} onEdit={() => setEditing(link)} onDelete={() => setDeleting(link)} />)}
               </ul>
             </SortableContext>
-            <DragOverlay>
-              {activeLink ? <div inert className="border border-slate-300 bg-white shadow-lg"><LinkRowContent link={activeLink} handle={<span className="grid size-8 shrink-0 place-items-center text-slate-500"><GripVertical size={16} /></span>} /></div> : null}
+            <DragOverlay style={{ cursor: "grabbing" }}>
+              {activeLink ? <div inert className="border border-slate-300 bg-white shadow-lg"><LinkRowContent link={activeLink} handle={<span className="grid size-8 shrink-0 self-center place-items-center text-slate-500"><GripVertical size={16} /></span>} /></div> : null}
             </DragOverlay>
           </DndContext>
         )}
@@ -125,7 +126,7 @@ function SortableLinkRow({ link, reordering, saving, onEdit, onDelete }: { link:
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: link.id, disabled: !reordering || saving });
   return (
     <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : undefined }} className="bg-white motion-reduce:!transition-none">
-      <LinkRowContent link={link} handle={reordering ? <button ref={setActivatorNodeRef} type="button" {...attributes} {...listeners} disabled={saving} aria-label={`Reorder ${link.title}`} className="grid size-8 shrink-0 touch-none place-items-center text-slate-400 hover:bg-slate-100 hover:text-slate-700 enabled:cursor-grab enabled:active:cursor-grabbing disabled:opacity-50"><GripVertical size={16} /></button> : undefined} actions={!reordering ? <div className="flex shrink-0 gap-1">
+      <LinkRowContent link={link} handle={reordering ? <button ref={setActivatorNodeRef} type="button" {...attributes} {...listeners} disabled={saving} aria-label={`Reorder ${link.title}`} className="grid size-8 shrink-0 self-center touch-none place-items-center text-slate-400 hover:bg-slate-100 hover:text-slate-700 enabled:cursor-grab! enabled:active:cursor-grabbing! disabled:opacity-50"><GripVertical size={16} /></button> : undefined} actions={!reordering ? <div className="flex shrink-0 gap-1">
         <button type="button" onClick={onEdit} aria-label={`Edit ${link.title}`} title="Edit link" className="grid size-8 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950"><Pencil size={16} /></button>
         <button type="button" onClick={onDelete} aria-label={`Delete ${link.title}`} title="Delete link" className="grid size-8 place-items-center text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 size={16} /></button>
       </div> : undefined} />
@@ -137,6 +138,7 @@ function LinkRowContent({ link, handle, actions }: { link: SharedLink; handle?: 
   return (
     <div className="flex items-start gap-3 p-4">
       {handle}
+      <LinkFavicon key={link.url} id={link.id} />
       <div className="flex min-w-0 flex-1 items-start justify-between gap-5">
         <div className="min-w-0">
           <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-baseline gap-2 font-semibold text-slate-950 hover:underline">
@@ -148,6 +150,17 @@ function LinkRowContent({ link, handle, actions }: { link: SharedLink; handle?: 
         {actions}
       </div>
     </div>
+  );
+}
+
+function LinkFavicon({ id }: { id: string }) {
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <span aria-hidden="true" className="mr-2 grid size-12 shrink-0 self-center place-items-center rounded-full border border-slate-200 bg-slate-50 text-slate-400">
+      {!loaded || failed ? <LinkIcon size={18} className="col-start-1 row-start-1" /> : null}
+      {!failed ? <Image src={`/api/links/${encodeURIComponent(id)}/favicon`} alt="" width={24} height={24} unoptimized draggable={false} referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={`col-start-1 row-start-1 size-6 object-contain ${loaded ? "" : "invisible"}`} /> : null}
+    </span>
   );
 }
 
@@ -285,7 +298,7 @@ function LinkForm({ link, onClose, onSaved }: { link: SharedLink | null; onClose
         <h2 id="link-form-title" className="text-lg font-semibold text-white">{link ? "Edit link" : "Add link"}</h2>
         <fieldset disabled={saving} className="mt-5 space-y-4">
           <label className="block text-sm font-medium">Title<input autoFocus required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} className={inputClass} /></label>
-          <label className="block text-sm font-medium">URL<input required type="url" maxLength={2048} value={url} onChange={(event) => setUrl(event.target.value)} className={inputClass} placeholder="https://" /></label>
+          <label className="block text-sm font-medium">URL<input required type="text" inputMode="url" autoComplete="url" autoCapitalize="none" spellCheck={false} maxLength={2048} value={url} onChange={(event) => setUrl(event.target.value)} className={inputClass} placeholder="example.com" /></label>
           <label className="block text-sm font-medium">Description <span className="font-normal text-slate-400">(optional)</span><textarea maxLength={1000} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} className={`${inputClass} resize-y`} /></label>
         </fieldset>
         {error ? <p role="alert" className="mt-4 text-sm text-red-300">{error}</p> : null}

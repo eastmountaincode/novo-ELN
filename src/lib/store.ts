@@ -1198,12 +1198,16 @@ export function changeOwnPassword(userId: string, currentPassword: string, nextP
   execSql(updateUserPasswordSql(userId, nextPassword));
 }
 
-export function updateOwnProfile(userId: string, input: { firstName: string; lastName?: string; authorTag?: string }): AppUser {
+export function updateOwnProfile(userId: string, input: { firstName?: string; lastName?: string; authorTag?: string }): AppUser {
   ensureDatabase();
   if (!findUserById(userId)) throw new Error("Forbidden");
-  const firstName = normalizeUserNamePart(input.firstName);
-  const lastName = normalizeUserNamePart(input.lastName ?? "");
-  if (!firstName) throw new Error("First name is required.");
+  const nameUpdates: string[] = [];
+  if (input.firstName !== undefined) {
+    const firstName = normalizeUserNamePart(input.firstName);
+    if (!firstName) throw new Error("First name is required.");
+    nameUpdates.push(`first_name = ${sql(firstName)}`);
+  }
+  if (input.lastName !== undefined) nameUpdates.push(`last_name = ${sql(normalizeUserNamePart(input.lastName))}`);
   const currentTag = getAuthorTag(userId);
   const label = input.authorTag === undefined ? currentTag?.label : normalizeAuthorTag(input.authorTag);
   const tagChanged = label !== undefined && label !== currentTag?.label;
@@ -1213,7 +1217,7 @@ export function updateOwnProfile(userId: string, input: { firstName: string; las
   try {
     execSql(`
       BEGIN;
-      UPDATE users SET first_name = ${sql(firstName)}, last_name = ${sql(lastName)} WHERE id = ${sql(userId)};
+      ${nameUpdates.length ? `UPDATE users SET ${nameUpdates.join(", ")} WHERE id = ${sql(userId)};` : ""}
       ${tagChanged ? currentTag
         ? `UPDATE tags SET label = ${sql(label!)} WHERE id = ${sql(tagId)}; ${renameAuthorTagSql(tagId, label!)}`
         : insertAuthorTagSql(userId, { id: tagId, label: label! }) : ""}

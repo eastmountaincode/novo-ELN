@@ -124,7 +124,8 @@ describe(`author tags (${postgres ? "Postgres" : "SQLite"})`, () => {
     const anne = await create("Anne", "Hakim");
     const oldId = getAuthorTag(anne.id)?.id;
     const pageId = api.getWorkspace(anne.id).notebooks[0].pages[0].id;
-    api.updateOwnProfile(anne.id, { firstName: "Anne", lastName: "Hakim", authorTag: " Anne-H " });
+    api.updateOwnProfile(anne.id, { authorTag: " Anne-H " });
+    expect(api.findUserById(anne.id)).toMatchObject({ firstName: "Anne", lastName: "Hakim" });
     expect(getAuthorTag(anne.id)?.id).toBe(oldId);
     expect(await pageTags(pageId)).toEqual(["Anne-H"]);
     expect((await create("Anne", "Smith")).authorTag).toBe("Anne-S");

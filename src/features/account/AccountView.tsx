@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import type { AppUser, Notebook } from "@/lib/types";
 import { AccountNotebooks } from "@/features/account/AccountNotebooks";
 import { AccountProfile } from "@/features/account/AccountProfile";
+import { AuthorTagPanel } from "@/features/account/AuthorTagPanel";
 import { PasswordPanel } from "@/features/account/PasswordPanel";
 import { SigningKeysPanel } from "@/features/account/SigningKeysPanel";
 import { AdminActivityPanel } from "@/features/account/admin/AdminActivityPanel";
@@ -99,7 +100,12 @@ export function AccountView({ user, notebooks, onChanged }: { user: AppUser; not
           })}
         </div>
 
-        {activeTab === "profile" ? <AccountProfile user={user} onChanged={onChanged} /> : null}
+        {activeTab === "profile" ? (
+          <div className="max-w-2xl space-y-4">
+            <AccountProfile user={user} onChanged={onChanged} />
+            <AuthorTagPanel user={user} onChanged={onChanged} />
+          </div>
+        ) : null}
         {activeTab === "notebooks" ? <AccountNotebooks notebooks={notebooks} /> : null}
         {activeTab === "security" ? (
           <div className="space-y-4">

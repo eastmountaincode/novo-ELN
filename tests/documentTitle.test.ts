@@ -7,13 +7,13 @@ describe("Novo document title", () => {
     expect(getNovoDocumentTitle("Novo-dev", null)).toBe("Novo-dev");
   });
 
-  it("appends a normalized page title", () => {
+  it("puts the normalized page title before the environment wordmark", () => {
     expect(getNovoDocumentTitle("Novo", " Useful commands ")).toBe(
-      "Novo | Useful commands",
+      "Useful commands | Novo",
     );
   });
 
   it("labels a selected page without a title as untitled", () => {
-    expect(getNovoDocumentTitle("Novo-dev", "   ")).toBe("Novo-dev | Untitled");
+    expect(getNovoDocumentTitle("Novo-dev", "   ")).toBe("Untitled | Novo-dev");
   });
 });

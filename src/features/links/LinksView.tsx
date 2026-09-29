@@ -157,9 +157,9 @@ function LinkFavicon({ id }: { id: string }) {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   return (
-    <span aria-hidden="true" className="grid h-6 w-5 shrink-0 place-items-center text-slate-400">
-      {!loaded || failed ? <LinkIcon size={16} className="col-start-1 row-start-1" /> : null}
-      {!failed ? <Image src={`/api/links/${encodeURIComponent(id)}/favicon`} alt="" width={16} height={16} unoptimized draggable={false} referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={`col-start-1 row-start-1 size-4 object-contain ${loaded ? "" : "invisible"}`} /> : null}
+    <span aria-hidden="true" className="grid size-8 shrink-0 self-center place-items-center text-slate-400">
+      {!loaded || failed ? <LinkIcon size={32} className="col-start-1 row-start-1" /> : null}
+      {!failed ? <Image src={`/api/links/${encodeURIComponent(id)}/favicon`} alt="" width={32} height={32} unoptimized draggable={false} referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={`col-start-1 row-start-1 size-8 object-contain ${loaded ? "" : "invisible"}`} /> : null}
     </span>
   );
 }

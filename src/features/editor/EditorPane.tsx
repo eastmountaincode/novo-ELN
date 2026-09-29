@@ -30,7 +30,7 @@ import { PAGE_STATUS_OPTIONS, StatusDot } from "@/features/pages/PageStatus";
 import type { PageUpdater } from "@/features/pages/workspacePageState";
 import { attachmentIdsFromBody } from "@/lib/editor";
 import { formatBytes } from "@/lib/formatBytes";
-import { PAGE_SIGNATURE_MEANING, signatureMeaningFromPayload } from "@/lib/pageSignatureMeaning";
+import { PAGE_SIGNATURE_MEANINGS, pageSignatureMeaningOption, signatureMeaningDisplayFromPayload, type PageSignatureMeaning } from "@/lib/pageSignatureMeaning";
 import { normalizeTagList } from "@/lib/tags";
 import type {
   AuditEvent,
@@ -402,7 +402,7 @@ export function EditorPane({
   }
 
 
-  async function signPageRecord(signingPassphrase: string, reportProgress: (message: string) => void): Promise<PageSignature> {
+  async function signPageRecord(signingPassphrase: string, signatureMeaning: PageSignatureMeaning, reportProgress: (message: string) => void): Promise<PageSignature> {
     if (finalized) throw new Error("This page is already finalized.");
     reportProgress("Saving page");
     const flushResults = await pageController.flush();
@@ -412,7 +412,7 @@ export function EditorPane({
     const response = await fetch(`/api/pages/${page.id}/proof/sign`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ signingPassphrase }),
+      body: JSON.stringify({ signingPassphrase, signatureMeaning }),
     });
     const body = (await response.json().catch(() => null)) as { signature?: PageSignature; page?: PageEntry; error?: string } | null;
     if (!response.ok || !body?.signature) throw new Error(body?.error ?? `Finalization failed with ${response.status}`);
@@ -722,22 +722,29 @@ function PageSignatureModal({
   onClose,
 }: {
   pageTitle: string;
-  onSign: (signingPassphrase: string, reportProgress: (message: string) => void) => Promise<PageSignature>;
+  onSign: (signingPassphrase: string, signatureMeaning: PageSignatureMeaning, reportProgress: (message: string) => void) => Promise<PageSignature>;
   onClose: () => void;
 }) {
   const [signingPassphrase, setSigningPassphrase] = useState("");
+  const [signatureMeaning, setSignatureMeaning] = useState<PageSignatureMeaning | "">("");
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [signature, setSignature] = useState<PageSignature | null>(null);
+  const selectedMeaning = pageSignatureMeaningOption(signatureMeaning);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting || signature) return;
+    const meaning = pageSignatureMeaningOption(signatureMeaning);
+    if (!meaning) {
+      setError("Select a signature meaning.");
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
-      const createdSignature = await onSign(signingPassphrase, setProgress);
+      const createdSignature = await onSign(signingPassphrase, meaning.value, setProgress);
       setSignature(createdSignature);
       setSigningPassphrase("");
       setProgress("Finalized");
@@ -757,7 +764,7 @@ function PageSignatureModal({
             <h2 className="text-lg font-semibold text-white">Finalize page</h2>
             <p className="mt-1 truncate text-sm text-slate-400">{pageTitle || "Untitled page"}</p>
           </div>
-          <button type="button" onClick={onClose} className="grid size-8 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Close signing dialog">
+          <button type="button" onClick={onClose} disabled={submitting} className="grid size-8 shrink-0 place-items-center text-slate-400 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60" aria-label="Close signing dialog">
             <X size={16} />
           </button>
         </div>
@@ -766,6 +773,10 @@ function PageSignatureModal({
           <div className="space-y-3 border border-white/10 bg-white/5 p-3 text-sm text-slate-100">
             <div className="flex items-center gap-2 font-medium"><FileSignature size={15} />Finalized</div>
             <dl className="space-y-2 text-xs text-slate-200">
+              <div>
+                <dt className="text-slate-400">Signature</dt>
+                <dd className="mt-1">{signatureMeaningDisplayFromPayload(signature.signaturePayload)}</dd>
+              </div>
               {signature.timestamps[0] ? (
                 <div>
                   <dt className="text-slate-400">Timestamp</dt>
@@ -802,7 +813,24 @@ function PageSignatureModal({
           </div>
         ) : (
           <>
-            <p className="text-sm text-slate-200">Signature meaning: <span className="font-medium text-white">{PAGE_SIGNATURE_MEANING}</span></p>
+            <label className="block text-sm font-medium text-slate-200">
+              Signature meaning
+              <select
+                value={signatureMeaning}
+                onChange={(event) => setSignatureMeaning(event.target.value as PageSignatureMeaning | "")}
+                required
+                autoFocus
+                disabled={submitting}
+                className="mt-2 h-10 w-full border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-white/30"
+              >
+                <option value="">Select a meaning</option>
+                {PAGE_SIGNATURE_MEANINGS.map((option) => <option key={option.value} value={option.value}>{option.value}</option>)}
+              </select>
+            </label>
+            {selectedMeaning ? (
+              <p className="text-sm text-slate-200"><span className="font-medium text-white">{selectedMeaning.value}:</span> {selectedMeaning.statement}</p>
+            ) : null}
+            <p className="text-xs text-slate-400">Finalizing locks the page, regardless of the meaning selected.</p>
             <label className="block text-sm font-medium text-slate-200">
               Signing passphrase
               <input
@@ -810,25 +838,26 @@ function PageSignatureModal({
                 value={signingPassphrase}
                 onChange={(event) => setSigningPassphrase(event.target.value)}
                 className="mt-2 h-10 w-full border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-white/30"
-                autoFocus
+                required
+                disabled={submitting}
               />
             </label>
             {progress ? (
-              <div className="flex items-center gap-2 text-sm text-slate-300">
+              <div role="status" className="flex items-center gap-2 text-sm text-slate-300">
                 <Loader2 size={15} className="animate-spin" />
                 <span>{progress}</span>
               </div>
             ) : null}
-            {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+            {error ? <p role="alert" className="text-sm text-rose-300">{error}</p> : null}
           </>
         )}
 
         <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onClose} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10">
+          <button type="button" onClick={onClose} disabled={submitting} className="h-9 border border-white/10 px-3 text-sm text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60">
             {signature ? "Close" : "Cancel"}
           </button>
           {!signature ? (
-            <button type="submit" disabled={submitting || signingPassphrase.length === 0} className="inline-flex h-9 items-center gap-2 bg-white px-3 text-sm font-medium text-slate-950 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60">
+            <button type="submit" disabled={submitting || signingPassphrase.length === 0 || !selectedMeaning} className="inline-flex h-9 items-center gap-2 bg-white px-3 text-sm font-medium text-slate-950 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60">
               {submitting ? <Loader2 size={15} className="animate-spin" /> : <FileSignature size={15} />}
               <span>{submitting ? "Finalizing" : "Finalize page"}</span>
             </button>
@@ -856,6 +885,7 @@ function PageFinalizationPanel({
   const timestamp = signature.timestamps[0];
   const signerName = [signature.signerFirstName, signature.signerLastName].filter(Boolean).join(" ") || signature.signerEmail;
   const proofPackageBytes = textByteLength(signature.proofPackageJson);
+  const signatureMeaningDisplay = signatureMeaningDisplayFromPayload(signature.signaturePayload);
   return (
     <section className="mt-4 border border-slate-200 bg-slate-50 p-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -884,7 +914,7 @@ function PageFinalizationPanel({
         <div className="mt-3 px-2 pb-2">
           <div className="grid gap-x-8 gap-y-2 text-sm text-slate-700 sm:grid-cols-2">
             <div><span className="font-medium text-slate-900">Signed by:</span> {signerName}</div>
-            <div><span className="font-medium text-slate-900">Signature meaning:</span> {signatureMeaningFromPayload(signature.signaturePayload)}</div>
+            <div className="sm:col-span-2"><span className="font-medium text-slate-900">Signature:</span> {signatureMeaningDisplay}</div>
             <div><span className="font-medium text-slate-900">Timestamp:</span> {timestamp ? `${timestamp.provider}, ${timestamp.tsaTime || timestamp.createdAt}` : "Stored"}</div>
             <div><span className="font-medium text-slate-900">Record package:</span> {formatBytes(signature.recordPackageBytes)}</div>
             <div><span className="font-medium text-slate-900">Proof package:</span> {formatBytes(proofPackageBytes)}</div>

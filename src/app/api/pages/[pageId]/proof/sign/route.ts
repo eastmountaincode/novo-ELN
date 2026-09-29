@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { buildPageRecordPackage } from "@/lib/pageRecordPackage";
+import { pageSignatureMeaningOption } from "@/lib/pageSignatureMeaning";
 import { createPageRecordSignature, createPageSignatureTimestamp, getPage, getPageCommentThreads, getPageNotebook, listPageRecordAuditEvents, listPageRecordSignatures, rollbackPageRecordFinalization, setPageLocked, storePageFinalizationPackage } from "@/lib/store";
 import { requestTimestampForProofHash } from "@/lib/timestamping";
 
@@ -24,9 +25,11 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { pageId } = await context.params;
-  const body = (await request.json().catch(() => null)) as { signingPassphrase?: string } | null;
-  const signingPassphrase = body?.signingPassphrase ?? "";
+  const body = (await request.json().catch(() => null)) as { signingPassphrase?: unknown; signatureMeaning?: unknown } | null;
+  const signingPassphrase = typeof body?.signingPassphrase === "string" ? body.signingPassphrase : "";
   if (!signingPassphrase) return NextResponse.json({ error: "Signing passphrase is required." }, { status: 400 });
+  const meaning = pageSignatureMeaningOption(body?.signatureMeaning);
+  if (!meaning) return NextResponse.json({ error: "Select a valid signature meaning." }, { status: 400 });
 
   let pageSignatureId = "";
   try {
@@ -41,6 +44,7 @@ export async function POST(request: Request, context: { params: Promise<{ pageId
       recordManifest: recordPackage.manifest,
       recordArchive: recordPackage.archive,
       signingPassphrase,
+      signatureMeaning: meaning.value,
     });
     pageSignatureId = signature.id;
     const timestamp = createPageSignatureTimestamp(user.id, signature.id, await requestTimestampForProofHash(signature.proofHash));

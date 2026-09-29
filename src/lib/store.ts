@@ -6,7 +6,7 @@ import type { AccessRole, AdminActivityOverview, AdminAppSettings, AdminDataOver
 import { readDatabaseSchema } from "./databaseSchema";
 import { bodyToEditorDocument, bodyToEditorText, commentThreadIdsFromBody, editorDocumentToBody, remapAttachmentCardsInBody, removeAttachmentCardsFromBody, removeCommentMarksFromBody, removeUnknownCommentMarksFromBody } from "./editor";
 import { buildPageFinalizationPackage } from "./pageFinalizationPackage";
-import { PAGE_SIGNATURE_MEANING } from "./pageSignatureMeaning";
+import { pageSignatureMeaningOption, type PageSignatureMeaning } from "./pageSignatureMeaning";
 import { calculatePageRecordHash, stableJsonStringify, type PageRecordManifest } from "./pageRecordPackage";
 import { proofDir, uploadDir } from "./paths";
 import { ensurePostgresDatabase } from "./postgresSchema";
@@ -1423,6 +1423,7 @@ export function createPageRecordSignature(
     recordManifest: PageRecordManifest;
     recordArchive: Uint8Array;
     signingPassphrase: string;
+    signatureMeaning: PageSignatureMeaning;
   },
 ): PageSignature {
   ensureDatabase();
@@ -1447,13 +1448,16 @@ export function createPageRecordSignature(
   if (input.recordManifest.page.id !== input.pageId || input.recordManifest.page.notebookId !== page.notebook_id) {
     throw new Error("Record manifest does not match the page.");
   }
+  const meaning = pageSignatureMeaningOption(input.signatureMeaning);
+  if (!meaning) throw new Error("Select a valid signature meaning.");
 
   const createdAt = new Date().toISOString();
   const recordManifestJson = canonicalSigningJson(input.recordManifest);
   const signaturePayload = canonicalSigningJson({
-    schemaVersion: 2,
+    schemaVersion: 3,
     payloadType: "novo.page.record.signature",
-    signatureMeaning: PAGE_SIGNATURE_MEANING,
+    signatureMeaning: meaning.value,
+    signatureMeaningStatement: meaning.statement,
     signedAt: createdAt,
     page: {
       id: page.id,

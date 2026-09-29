@@ -37,10 +37,14 @@ export function* authorTagCandidates(firstName: string, lastName: string) {
   }
 }
 
-export function newAuthorTag(firstName: string, lastName: string) {
+export function newAuthorTag(firstName: string, lastName: string, ownUserId?: string) {
   const occupied = new Set(querySql("SELECT label FROM tags").map((tag) => authorTagKey(tag.label)));
+  const duplicateFirstName = querySql("SELECT id, first_name FROM users")
+    .some((user) => user.id !== ownUserId && authorTagKey(user.first_name) === authorTagKey(firstName));
+  let firstCandidate = true;
   for (const label of authorTagCandidates(firstName, lastName)) {
-    if (!occupied.has(authorTagKey(label))) return { id: randomUUID(), label };
+    if (!(firstCandidate && duplicateFirstName) && !occupied.has(authorTagKey(label))) return { id: randomUUID(), label };
+    firstCandidate = false;
   }
   throw new Error("Unable to generate an author tag.");
 }

@@ -127,6 +127,7 @@ describe(`author tags (${postgres ? "Postgres" : "SQLite"})`, () => {
     api.updateOwnProfile(anne.id, { firstName: "Anne", lastName: "Hakim", authorTag: " Anne-H " });
     expect(getAuthorTag(anne.id)?.id).toBe(oldId);
     expect(await pageTags(pageId)).toEqual(["Anne-H"]);
+    expect((await create("Anne", "Smith")).authorTag).toBe("Anne-S");
     expect(() => api.updateOwnProfile(anne.id, { firstName: "Changed", authorTag: " ANDREW " })).toThrow(/already exists/);
     expect(api.findUserById(anne.id)?.firstName).toBe("Anne");
     api.updateOwnProfile(anne.id, { firstName: "Annie", lastName: "Hakim" });

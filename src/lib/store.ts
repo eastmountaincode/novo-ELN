@@ -3411,7 +3411,7 @@ function ensureAuthorTagForNewPage(userId: string) {
   if (!user) throw new Error("Forbidden");
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      const tag = newAuthorTag(user.firstName, user.lastName);
+      const tag = newAuthorTag(user.firstName, user.lastName, user.id);
       execSql(`BEGIN; ${insertAuthorTagSql(userId, tag)} COMMIT;`);
       return;
     } catch (error) {

@@ -66,6 +66,19 @@ export function AppSettingsPanel({ onChanged }: { onChanged: () => Promise<void>
           <label className="flex cursor-pointer items-start gap-3 p-5">
             <input
               type="checkbox"
+              checked={Boolean(settings?.addAuthorTagToNewPages)}
+              onChange={(event) => void updateAppSettings({ addAuthorTagToNewPages: event.target.checked })}
+              disabled={saving || !settings}
+              className="mt-1 size-4 cursor-pointer border-slate-300 disabled:cursor-wait"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-950">Automatically add author tags to new notes</span>
+            </span>
+            {saving ? <Loader2 size={16} className="mt-1 shrink-0 animate-spin text-slate-400" /> : null}
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 p-5">
+            <input
+              type="checkbox"
               checked={Boolean(settings?.prependDateToNewPages)}
               onChange={(event) => void updateAppSettings({ prependDateToNewPages: event.target.checked })}
               disabled={saving || !settings}

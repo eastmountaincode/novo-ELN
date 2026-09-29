@@ -8,6 +8,7 @@ export type AppUser = {
   email: string;
   firstName: string;
   lastName: string;
+  authorTag?: string;
   role: UserRole;
 };
 
@@ -259,6 +260,7 @@ export type AdminActivityOverview = {
 export type AdminAppSettings = {
   prependDateToNewPages: boolean;
   suggestTagsGlobally: boolean;
+  addAuthorTagToNewPages: boolean;
 };
 
 export type PageEntry = {

@@ -189,6 +189,13 @@ export function ensurePostgresDatabase() {
 
     CREATE UNIQUE INDEX IF NOT EXISTS tags_label_unique_idx ON tags ((lower(label)));
 
+
+    CREATE TABLE IF NOT EXISTS user_author_tags (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      tag_id TEXT NOT NULL UNIQUE REFERENCES tags(id) ON DELETE RESTRICT,
+      label_key TEXT NOT NULL UNIQUE
+    );
+
     CREATE TABLE IF NOT EXISTS page_tags (
       page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
       tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,

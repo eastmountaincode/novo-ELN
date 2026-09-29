@@ -45,7 +45,7 @@ import { colorWithAlpha, projectColor } from "@/lib/workspaceDisplay";
 
 const PAGE_ACTIVITY_PAGE_SIZE = 25;
 
-type PageExportFormat = "pdf" | "archive" | "record";
+type PageExportFormat = "pdf" | "archive";
 
 type EditorPaneProps = {
   page: PageEntry;
@@ -379,18 +379,11 @@ export function EditorPane({
     if (exportingPage) return;
     setExportingPage(format);
     try {
-      if (format === "record") {
-        const flushResults = await pageController.flush();
-        if (!flushResults.every(Boolean)) throw new Error("Could not save the current page before creating a record package.");
-      }
-      const endpoint = format === "record"
-        ? `/api/pages/${page.id}/proof/record`
-        : `/api/pages/${page.id}/export/${format}`;
-      const response = await fetch(endpoint);
+      const response = await fetch(`/api/pages/${page.id}/export/${format}`);
       if (!response.ok) throw new Error(`Export failed with ${response.status}`);
       const blob = await response.blob();
       const disposition = response.headers.get("Content-Disposition");
-      const fallbackName = `${safeDownloadName(page.title || "page")}.${format === "pdf" ? "pdf" : format === "record" ? "record.zip" : "zip"}`;
+      const fallbackName = `${safeDownloadName(page.title || "page")}.${format === "pdf" ? "pdf" : "zip"}`;
       const filename = filenameFromContentDisposition(disposition) || fallbackName;
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -402,7 +395,7 @@ export function EditorPane({
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error(error);
-      window.alert(format === "record" ? "Record package export failed. Please try again." : "Export failed. Please try again.");
+      window.alert("Export failed. Please try again.");
     } finally {
       setExportingPage(null);
     }
@@ -554,7 +547,6 @@ export function EditorPane({
               exporting={Boolean(exportingPage)}
               onExportPdf={() => downloadPageExport("pdf")}
               onExportArchive={() => downloadPageExport("archive")}
-              onExportRecordPackage={() => downloadPageExport("record")}
               onCreateComment={effectiveCanEdit ? createComment : undefined}
               onDiscardComment={discardComment}
               runEditorMutation={pageController.runEditorMutation}

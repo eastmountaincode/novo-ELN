@@ -7,7 +7,7 @@ import { passwordRequirementText } from "@/lib/passwordRequirements";
 import type { AdminUser } from "@/lib/types";
 import { userDisplayName } from "@/lib/workspaceDisplay";
 
-type AdminUserSortKey = "user" | "role" | "status" | "notebooks" | "lastLogin" | "lastActivity" | "created";
+type AdminUserSortKey = "user" | "authorTag" | "role" | "status" | "notebooks" | "lastLogin" | "lastActivity" | "created";
 type SortDirection = "asc" | "desc";
 
 export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
@@ -72,6 +72,8 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
       switch (sortKey) {
         case "user":
           return compareText(`${userDisplayName(a)} ${a.email}`, `${userDisplayName(b)} ${b.email}`);
+        case "authorTag":
+          return compareText(a.authorTag ?? "", b.authorTag ?? "");
         case "role":
           return compareText(a.role, b.role);
         case "status":
@@ -145,20 +147,22 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
         <AdminLoadingState>Loading users...</AdminLoadingState>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] table-fixed border-collapse text-left text-sm">
+          <table className="w-full min-w-[1220px] table-fixed border-collapse text-left text-sm">
             <colgroup>
-              <col className="w-[20%]" />
-              <col className="w-[8%]" />
+              <col className="w-[18%]" />
+              <col className="w-[12%]" />
+              <col className="w-[7%]" />
+              <col className="w-[9%]" />
+              <col className="w-[7%]" />
+              <col className="w-[9%]" />
+              <col className="w-[9%]" />
               <col className="w-[10%]" />
-              <col className="w-[8%]" />
-              <col className="w-[11%]" />
-              <col className="w-[11%]" />
-              <col className="w-[11%]" />
-              <col className="w-[21%]" />
+              <col className="w-[19%]" />
             </colgroup>
             <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500">
               <tr>
                 <th className="px-3 py-3">{renderSortHeader("user", "User")}</th>
+                <th className="px-3 py-3">{renderSortHeader("authorTag", "Author tag")}</th>
                 <th className="px-3 py-3">{renderSortHeader("role", "Role")}</th>
                 <th className="px-3 py-3">{renderSortHeader("status", "Status")}</th>
                 <th className="px-3 py-3">{renderSortHeader("notebooks", "Notebooks")}</th>
@@ -174,6 +178,13 @@ export function UsersAdminPanel({ currentUserId }: { currentUserId: string }) {
                   <td className="px-3 py-3">
                     <div className="truncate font-medium text-slate-950">{userDisplayName(user)}</div>
                     <div className="mt-1 truncate text-xs text-slate-500">{user.email}</div>
+                  </td>
+                  <td className="px-3 py-3">
+                    {user.authorTag ? (
+                      <span title={user.authorTag} className="inline-flex h-7 max-w-full min-w-0 items-center border border-slate-200 bg-slate-100 px-2 text-sm text-slate-700">
+                        <span className="min-w-0 truncate">{user.authorTag}</span>
+                      </span>
+                    ) : <span className="text-slate-500">Not set</span>}
                   </td>
                   <td className="px-3 py-3 capitalize text-slate-700">{user.role}</td>
                   <td className="px-3 py-3 text-slate-700">

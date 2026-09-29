@@ -27,9 +27,15 @@ function validateLink(input: unknown) {
   }
   let parsed: URL;
   try {
-    parsed = new URL(url.trim());
+    const value = url.trim();
+    const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(value);
+    const hasHostPort = /^(?:localhost|[a-z\d.-]+\.[a-z\d.-]+):\d+(?:[/?#]|$)/i.test(value);
+    // Plain addresses default to HTTPS; explicitly entered HTTP stays HTTP.
+    const address = value.startsWith("//") ? `https:${value}`
+      : ((!hasScheme || hasHostPort) && !/^[/?#]/.test(value)) ? `https://${value}` : value;
+    parsed = new URL(address);
   } catch {
-    throw new SharedLinkError("Enter a complete URL starting with https:// or http://.");
+    throw new SharedLinkError("Enter a valid website address.");
   }
   if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password) {
     throw new SharedLinkError("Use an http:// or https:// URL without embedded login details.");

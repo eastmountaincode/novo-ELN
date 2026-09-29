@@ -157,9 +157,9 @@ function LinkFavicon({ id }: { id: string }) {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   return (
-    <span aria-hidden="true" className="grid size-8 shrink-0 self-center place-items-center text-slate-400">
-      {!loaded || failed ? <LinkIcon size={32} className="col-start-1 row-start-1" /> : null}
-      {!failed ? <Image src={`/api/links/${encodeURIComponent(id)}/favicon`} alt="" width={32} height={32} unoptimized draggable={false} referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={`col-start-1 row-start-1 size-8 object-contain ${loaded ? "" : "invisible"}`} /> : null}
+    <span aria-hidden="true" className="mr-2 grid size-12 shrink-0 self-center place-items-center rounded-full border border-slate-200 bg-slate-50 text-slate-400">
+      {!loaded || failed ? <LinkIcon size={18} className="col-start-1 row-start-1" /> : null}
+      {!failed ? <Image src={`/api/links/${encodeURIComponent(id)}/favicon`} alt="" width={24} height={24} unoptimized draggable={false} referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={`col-start-1 row-start-1 size-6 object-contain ${loaded ? "" : "invisible"}`} /> : null}
     </span>
   );
 }
@@ -298,7 +298,7 @@ function LinkForm({ link, onClose, onSaved }: { link: SharedLink | null; onClose
         <h2 id="link-form-title" className="text-lg font-semibold text-white">{link ? "Edit link" : "Add link"}</h2>
         <fieldset disabled={saving} className="mt-5 space-y-4">
           <label className="block text-sm font-medium">Title<input autoFocus required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} className={inputClass} /></label>
-          <label className="block text-sm font-medium">URL<input required type="url" maxLength={2048} value={url} onChange={(event) => setUrl(event.target.value)} className={inputClass} placeholder="https://" /></label>
+          <label className="block text-sm font-medium">URL<input required type="text" inputMode="url" autoComplete="url" autoCapitalize="none" spellCheck={false} maxLength={2048} value={url} onChange={(event) => setUrl(event.target.value)} className={inputClass} placeholder="example.com" /></label>
           <label className="block text-sm font-medium">Description <span className="font-normal text-slate-400">(optional)</span><textarea maxLength={1000} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} className={`${inputClass} resize-y`} /></label>
         </fieldset>
         {error ? <p role="alert" className="mt-4 text-sm text-red-300">{error}</p> : null}

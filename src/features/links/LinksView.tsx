@@ -111,7 +111,7 @@ export function LinksView() {
               </ul>
             </SortableContext>
             <DragOverlay>
-              {activeLink ? <div inert className="border border-slate-300 bg-white shadow-lg"><LinkRowContent link={activeLink} handle={<span className="grid size-8 shrink-0 place-items-center text-slate-500"><GripVertical size={16} /></span>} /></div> : null}
+              {activeLink ? <div inert className="border border-slate-300 bg-white shadow-lg"><LinkRowContent link={activeLink} handle={<span className="grid size-8 shrink-0 self-center place-items-center text-slate-500"><GripVertical size={16} /></span>} /></div> : null}
             </DragOverlay>
           </DndContext>
         )}
@@ -126,7 +126,7 @@ function SortableLinkRow({ link, reordering, saving, onEdit, onDelete }: { link:
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: link.id, disabled: !reordering || saving });
   return (
     <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : undefined }} className="bg-white motion-reduce:!transition-none">
-      <LinkRowContent link={link} handle={reordering ? <button ref={setActivatorNodeRef} type="button" {...attributes} {...listeners} disabled={saving} aria-label={`Reorder ${link.title}`} className="grid size-8 shrink-0 touch-none place-items-center text-slate-400 hover:bg-slate-100 hover:text-slate-700 enabled:cursor-grab enabled:active:cursor-grabbing disabled:opacity-50"><GripVertical size={16} /></button> : undefined} actions={!reordering ? <div className="flex shrink-0 gap-1">
+      <LinkRowContent link={link} handle={reordering ? <button ref={setActivatorNodeRef} type="button" {...attributes} {...listeners} disabled={saving} aria-label={`Reorder ${link.title}`} className="grid size-8 shrink-0 self-center touch-none place-items-center text-slate-400 hover:bg-slate-100 hover:text-slate-700 enabled:cursor-grab enabled:active:cursor-grabbing disabled:opacity-50"><GripVertical size={16} /></button> : undefined} actions={!reordering ? <div className="flex shrink-0 gap-1">
         <button type="button" onClick={onEdit} aria-label={`Edit ${link.title}`} title="Edit link" className="grid size-8 place-items-center text-slate-500 hover:bg-slate-100 hover:text-slate-950"><Pencil size={16} /></button>
         <button type="button" onClick={onDelete} aria-label={`Delete ${link.title}`} title="Delete link" className="grid size-8 place-items-center text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 size={16} /></button>
       </div> : undefined} />

@@ -4,6 +4,7 @@ import { closestCenter, DndContext, DragOverlay, KeyboardSensor, PointerSensor, 
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowUpDown, Check, Copy, ExternalLink, GripVertical, Link as LinkIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import Image from "next/image";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { SharedLink } from "@/lib/sharedLinkTypes";
 
@@ -137,6 +138,7 @@ function LinkRowContent({ link, handle, actions }: { link: SharedLink; handle?: 
   return (
     <div className="flex items-start gap-3 p-4">
       {handle}
+      <LinkFavicon key={link.url} id={link.id} />
       <div className="flex min-w-0 flex-1 items-start justify-between gap-5">
         <div className="min-w-0">
           <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-baseline gap-2 font-semibold text-slate-950 hover:underline">
@@ -148,6 +150,17 @@ function LinkRowContent({ link, handle, actions }: { link: SharedLink; handle?: 
         {actions}
       </div>
     </div>
+  );
+}
+
+function LinkFavicon({ id }: { id: string }) {
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <span aria-hidden="true" className="grid h-6 w-5 shrink-0 place-items-center text-slate-400">
+      {!loaded || failed ? <LinkIcon size={16} className="col-start-1 row-start-1" /> : null}
+      {!failed ? <Image src={`/api/links/${encodeURIComponent(id)}/favicon`} alt="" width={16} height={16} unoptimized draggable={false} referrerPolicy="no-referrer" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={`col-start-1 row-start-1 size-4 object-contain ${loaded ? "" : "invisible"}`} /> : null}
+    </span>
   );
 }
 

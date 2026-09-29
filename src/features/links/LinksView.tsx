@@ -92,9 +92,9 @@ export function LinksView() {
               <button type="button" disabled={savingOrder || activeId !== null} onClick={() => { setLinks(originalLinks); setOriginalLinks(null); setError(""); }} className="inline-flex h-8 items-center px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50">Cancel</button>
               <button type="button" disabled={!orderChanged || savingOrder || activeId !== null} onClick={() => void saveOrder()} className="inline-flex h-8 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"><Check size={16} />{savingOrder ? "Saving…" : "Save"}</button>
             </> : <button type="button" disabled={loading || links.length < 2} onClick={() => { setOriginalLinks(links); setError(""); }} className="inline-flex h-8 items-center gap-2 px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50"><ArrowUpDown size={16} />Reorder</button>}
-            <button ref={addButtonRef} type="button" disabled={loading || reordering} onClick={() => setEditing("new")} className="inline-flex h-8 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+            {!reordering ? <button ref={addButtonRef} type="button" disabled={loading} onClick={() => setEditing("new")} className="inline-flex h-8 shrink-0 items-center gap-2 bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
               <Plus size={16} />Add link
-            </button>
+            </button> : null}
           </div>
         </div>
         {error ? <p role="alert" className="mb-4 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}

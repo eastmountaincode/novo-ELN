@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHash, verify } from "node:crypto";
+import { createHash, sign, verify } from "node:crypto";
 import { strFromU8, unzipSync } from "fflate";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -696,12 +696,23 @@ describe("store", () => {
     const auditEvents = listPageRecordAuditEvents(admin.id, pageId);
     const recordPackage = await buildPageRecordPackage(page, notebook, { auditEvents, commentThreads });
 
+    expect(() => createPageRecordSignature(admin.id, {
+      pageId,
+      recordHash: recordPackage.recordHash,
+      recordManifest: recordPackage.manifest,
+      recordArchive: recordPackage.archive,
+      signingPassphrase,
+      signatureMeaning: "Unknown" as never,
+    })).toThrow("Select a valid signature meaning.");
+    expect(listPageRecordSignatures(admin.id, pageId)).toEqual([]);
+
     const signature = createPageRecordSignature(admin.id, {
       pageId,
       recordHash: recordPackage.recordHash,
       recordManifest: recordPackage.manifest,
       recordArchive: recordPackage.archive,
       signingPassphrase,
+      signatureMeaning: "Approval",
     });
 
     expect(signature.recordHash).toBe(recordPackage.recordHash);
@@ -712,9 +723,12 @@ describe("store", () => {
     expect(signature.recordPackageSha256).toBe(createHash("sha256").update(recordPackage.archive).digest("hex"));
     expect(fs.existsSync(path.join(process.env.ELN_DATA_DIR!, "proofs", signature.recordPackageStorageKey))).toBe(true);
     expect(JSON.parse(signature.signaturePayload).record.hash).toBe(recordPackage.recordHash);
-    expect(JSON.parse(signature.signaturePayload).schemaVersion).toBe(2);
-    expect(JSON.parse(signature.signaturePayload).signatureMeaning).toBe("Authorship");
+    expect(JSON.parse(signature.signaturePayload).schemaVersion).toBe(3);
+    expect(JSON.parse(signature.signaturePayload).signatureMeaning).toBe("Approval");
+    expect(JSON.parse(signature.signaturePayload).signatureMeaningStatement).toBe("I reviewed and approve this record.");
     expect(verify(null, Buffer.from(signature.signaturePayload, "utf8"), signature.signingPublicKey, Buffer.from(signature.signature, "base64"))).toBe(true);
+    expect(verify(null, Buffer.from(signature.signaturePayload.replace("approve", "reject"), "utf8"), signature.signingPublicKey, Buffer.from(signature.signature, "base64"))).toBe(false);
+    expect(verify(null, Buffer.from(signature.signaturePayload.replace('"Approval"', '"Disapproval"'), "utf8"), signature.signingPublicKey, Buffer.from(signature.signature, "base64"))).toBe(false);
     expect(signature.proofHashAlgorithm).toBe("sha256");
     expect(signature.proofHash).toMatch(/^[a-f0-9]{64}$/);
     const proofPackage = JSON.parse(signature.proofPackageJson);
@@ -770,6 +784,8 @@ describe("store", () => {
     expect(finalizationEntries["record.zip"]).toBeTruthy();
     expect(finalizationEntries["manifest.json"]).toBeTruthy();
     expect(finalizationEntries["proof/proof-package.json"]).toBeTruthy();
+    expect(strFromU8(finalizationEntries["proof/signature-payload.json"])).toBe(signature.signaturePayload);
+    expect(strFromU8(finalizationEntries["proof/proof-package.json"])).toBe(signature.proofPackageJson);
     expect(strFromU8(finalizationEntries["proof/record-manifest.sha256"])).toBe(`${signature.recordHash}  record-manifest.json\n`);
     expect(finalizationEntries[`timestamps/${timestamp.id}/request.tsq`]).toBeTruthy();
     expect(finalizationEntries[`timestamps/${timestamp.id}/response.tsr`]).toBeTruthy();
@@ -789,6 +805,7 @@ describe("store", () => {
       recordManifest: recordPackage.manifest,
       recordArchive: recordPackage.archive,
       signingPassphrase,
+      signatureMeaning: "Authorship",
     })).toThrow("Page is already finalized.");
     setPageLocked(admin.id, pageId, true);
     expect(() => setPageLocked(admin.id, pageId, false)).toThrow("Finalized pages cannot be unlocked.");
@@ -804,6 +821,45 @@ describe("store", () => {
     expect(listPageRecordAuditEvents(admin.id, pageId).some((event) =>
       (event.action === "page.record.signed" || event.action === "page.record.timestamped") && event.metadata.signatureId === signature.id,
     )).toBe(false);
+  });
+
+  it("preserves the signed bytes and verification of a legacy signature", async () => {
+    const { execSql, sql } = await import("../src/lib/sqlite");
+    const { buildPageRecordPackage, stableJsonStringify } = await import("../src/lib/pageRecordPackage");
+    const api = await import("../src/lib/store");
+    const admin = await createTestAdmin();
+    const passphrase = "Legacy signing passphrase 2026";
+    api.ensureUserSigningKey(admin.id, passphrase);
+    const pageId = api.getWorkspace(admin.id).notebooks[0].pages[0].id;
+    const record = await buildPageRecordPackage(api.getPage(admin.id, pageId), api.getPageNotebook(admin.id, pageId));
+    const signature = api.createPageRecordSignature(admin.id, {
+      pageId, recordHash: record.recordHash, recordManifest: record.manifest,
+      recordArchive: record.archive, signingPassphrase: passphrase, signatureMeaning: "Authorship",
+    });
+
+    // Seed the pre-selector format: a signed label, with no statement field.
+    const legacyPayload = JSON.parse(signature.signaturePayload);
+    legacyPayload.schemaVersion = 2;
+    delete legacyPayload.signatureMeaningStatement;
+    const payloadBytes = `${stableJsonStringify(legacyPayload)}\n`;
+    const signatureBytes = sign(null, Buffer.from(payloadBytes), api.getActiveUserSigningPrivateKeyForSigning(admin.id, passphrase)).toString("base64");
+    const proof = JSON.parse(signature.proofPackageJson);
+    proof.userSignature.payload = payloadBytes;
+    proof.userSignature.signature = signatureBytes;
+    delete proof.proofHash;
+    const proofHash = createHash("sha256").update(`${stableJsonStringify(proof)}\n`).digest("hex");
+    const proofBytes = `${stableJsonStringify({ ...proof, proofHash })}\n`;
+    execSql(`UPDATE page_signatures SET signature_payload = ${sql(payloadBytes)}, signature = ${sql(signatureBytes)}, proof_hash = ${sql(proofHash)}, proof_package_json = ${sql(proofBytes)} WHERE id = ${sql(signature.id)}`);
+
+    vi.resetModules();
+    const reloaded = (await import("../src/lib/store")).listPageRecordSignatures(admin.id, pageId)[0];
+    expect(reloaded.signaturePayload).toBe(payloadBytes);
+    expect(reloaded.signature).toBe(signatureBytes);
+    expect(reloaded.proofPackageJson).toBe(proofBytes);
+    expect(reloaded.proofHash).toBe(proofHash);
+    expect(verify(null, Buffer.from(reloaded.signaturePayload), reloaded.signingPublicKey, Buffer.from(reloaded.signature, "base64"))).toBe(true);
+    const { signatureMeaningDisplayFromPayload } = await import("../src/lib/pageSignatureMeaning");
+    expect(signatureMeaningDisplayFromPayload(reloaded.signaturePayload)).toBe("Authorship");
   });
 
   it("returns the live database schema for admins", async () => {

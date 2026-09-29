@@ -828,9 +828,8 @@ function PageSignatureModal({
               </select>
             </label>
             {selectedMeaning ? (
-              <p className="text-sm text-slate-200"><span className="font-medium text-white">{selectedMeaning.value}:</span> {selectedMeaning.statement}</p>
+              <p className="text-sm text-slate-200">&ldquo;<span className="font-medium text-white">{selectedMeaning.value}:</span> {selectedMeaning.statement}&rdquo;</p>
             ) : null}
-            <p className="text-xs text-slate-400">Finalizing locks the page, regardless of the meaning selected.</p>
             <label className="block text-sm font-medium text-slate-200">
               Signing passphrase
               <input

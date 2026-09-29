@@ -85,7 +85,13 @@ export function AuthorTagPanel({ user, onChanged }: { user: AppUser; onChanged: 
           </div>
         </form>
       ) : (
-        <p className="break-words border-t border-slate-100 pt-3 text-sm text-slate-950">{user.authorTag || "Not set"}</p>
+        <div className="flex border-t border-slate-100 pt-3">
+          {user.authorTag ? (
+            <span title={user.authorTag} className="inline-flex h-7 max-w-full min-w-0 items-center border border-slate-200 bg-slate-100 px-2 text-sm text-slate-700">
+              <span className="min-w-0 truncate">{user.authorTag}</span>
+            </span>
+          ) : <span className="text-sm text-slate-500">Not set</span>}
+        </div>
       )}
     </section>
   );

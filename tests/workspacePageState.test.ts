@@ -60,6 +60,7 @@ function workspace(): Workspace {
     appSettings: {
       prependDateToNewPages: false,
       suggestTagsGlobally: true,
+      addAuthorTagToNewPages: false,
     },
     members: [],
     notebooks: [firstNotebook, secondNotebook],

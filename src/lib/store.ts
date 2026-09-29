@@ -12,6 +12,7 @@ import { proofDir, uploadDir } from "./paths";
 import { ensurePostgresDatabase } from "./postgresSchema";
 import { deleteSearchIndexForNotebook, deleteSearchIndexForPage, queueSearchIndexForNotebook, queueSearchIndexForPage, rebuildSearchIndex, scheduleSearchIndexDrain } from "./search";
 import { execSql, isPostgresDatabase, queryOne, querySql, sql } from "./sqlite";
+import { assertAuthorTagAvailable, authorTagSelectSql, getAuthorTag, insertAuthorTagSql, isAuthorTagConflict, newAuthorTag, normalizeAuthorTag, pageAuthorTagInsertSql, renameAuthorTagSql } from "./authorTags";
 
 let initialized = false;
 
@@ -333,6 +334,13 @@ export function ensureDatabase() {
   migratePageStatusValues();
   migrateGroupedTagsToPageTags();
   ensureGlobalTagSchema();
+  execSql(`
+    CREATE TABLE IF NOT EXISTS user_author_tags (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      tag_id TEXT NOT NULL UNIQUE REFERENCES tags(id) ON DELETE RESTRICT,
+      label_key TEXT NOT NULL UNIQUE
+    );
+  `);
   ensureNotebookContentRevisionTriggers();
   const searchIndexCount = Number(queryOne("SELECT COUNT(*) AS count FROM search_pages_fts")?.count ?? 0);
   if (searchIndexCount === 0 && countRows("pages") > 0) rebuildSearchIndex();
@@ -830,15 +838,15 @@ export function findUserByEmail(email: string) {
 
 export function findUserById(id: string): AppUser | null {
   ensureDatabase();
-  const row = queryOne(`SELECT id, email, first_name, last_name, role FROM users WHERE id = ${sql(id)} AND is_active = 1 LIMIT 1`);
+  const row = queryOne(`SELECT id, email, first_name, last_name, role, ${authorTagSelectSql("users.id")} AS author_tag FROM users WHERE id = ${sql(id)} AND is_active = 1 LIMIT 1`);
   if (!row) return null;
-  return { id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, role: row.role as UserRole };
+  return { id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, authorTag: row.author_tag ?? "", role: row.role as UserRole };
 }
 
 export function verifyCredentials(email: string, password: string): AppUser | null {
   const user = findUserByEmail(email);
   if (!user || !user.active || !bcrypt.compareSync(password, user.passwordHash)) return null;
-  return { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role };
+  return findUserById(user.id);
 }
 
 export function verifyUserPassword(userId: string, password: string) {
@@ -920,21 +928,33 @@ export function createUser(input: { email: string; firstName: string; lastName?:
   const notebookId = randomUUID();
   const pageId = randomUUID();
 
-  execSql(`
-    INSERT INTO users (id, email, first_name, last_name, password_hash, role)
-    VALUES (${sql(userId)}, ${sql(email)}, ${sql(firstName)}, ${sql(lastName)}, ${sql(bcrypt.hashSync(password, 10))}, ${sql(role)});
-
-    INSERT INTO notebooks (id, name, owner_id, color)
-    VALUES (${sql(notebookId)}, 'Notebook', ${sql(userId)}, ${sql(defaultNotebookColor(notebookId))});
-
-    INSERT INTO notebook_members (notebook_id, user_id, role)
-    VALUES (${sql(notebookId)}, ${sql(userId)}, 'owner');
-
-    INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
-    VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
-  `);
-  queueSearchIndexForPage(pageId);
-  return { id: userId, email, firstName, lastName, role };
+  const passwordHash = bcrypt.hashSync(password, 10);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const tag = newAuthorTag(firstName, lastName);
+    try {
+      execSql(`
+        BEGIN;
+        INSERT INTO users (id, email, first_name, last_name, password_hash, role)
+        VALUES (${sql(userId)}, ${sql(email)}, ${sql(firstName)}, ${sql(lastName)}, ${sql(passwordHash)}, ${sql(role)});
+        ${insertAuthorTagSql(userId, tag)}
+        INSERT INTO notebooks (id, name, owner_id, color)
+        VALUES (${sql(notebookId)}, 'Notebook', ${sql(userId)}, ${sql(defaultNotebookColor(notebookId))});
+        INSERT INTO notebook_members (notebook_id, user_id, role)
+        VALUES (${sql(notebookId)}, ${sql(userId)}, 'owner');
+        INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
+        VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', '', '', ${sql(userId)});
+        ${pageAuthorTagInsertSql(userId, pageId)}
+        COMMIT;
+      `);
+    } catch (error) {
+      if (findUserByEmail(email)) throw new Error("An account with that email already exists.");
+      if (!isAuthorTagConflict(error)) throw error;
+      continue;
+    }
+    queueSearchIndexForPage(pageId);
+    return { id: userId, email, firstName, lastName, authorTag: tag.label, role };
+  }
+  throw new Error("Unable to assign an author tag. Please try again.");
 }
 
 export function createUserForAdmin(adminUserId: string, input: { email: string; firstName: string; lastName?: string; password: string }): AppUser {
@@ -954,6 +974,7 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
       u.last_name,
       u.role,
       u.is_active,
+      ${authorTagSelectSql("u.id")} AS author_tag,
       COALESCE(u.deactivated_at, '') AS deactivated_at,
       COALESCE(u.last_login_at, '') AS last_login_at,
       u.created_at,
@@ -971,6 +992,7 @@ export function listUsersForAdmin(adminUserId: string): AdminUser[] {
     lastName: row.last_name,
     role: row.role as UserRole,
     active: databaseBoolean(row.is_active),
+    authorTag: row.author_tag ?? "",
     deactivatedAt: row.deactivated_at,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at,
@@ -1021,7 +1043,8 @@ export function renameTagForAdmin(adminUserId: string, tagId: string, label: str
   if (duplicate) throw new Error("A tag with that name already exists. Merge the tag instead.");
 
   const pageRows = tagPageRows(tagId);
-  execSql(`UPDATE tags SET label = ${sql(normalizedLabel)} WHERE id = ${sql(tagId)};`);
+  if (queryOne(`SELECT user_id FROM user_author_tags WHERE tag_id = ${sql(tagId)}`)) assertAuthorTagAvailable(normalizedLabel, tagId);
+  execSql(`BEGIN; UPDATE tags SET label = ${sql(normalizedLabel)} WHERE id = ${sql(tagId)}; ${renameAuthorTagSql(tagId, normalizedLabel)} COMMIT;`);
   recordTagAuditEvent(adminUserId, tagId, "tag.renamed", `renamed tag ${quoteAuditValue(tag.label)} to ${quoteAuditValue(normalizedLabel)}`, {
     oldLabel: tag.label,
     newLabel: normalizedLabel,
@@ -1038,6 +1061,10 @@ export function mergeTagForAdmin(adminUserId: string, sourceTagId: string, targe
   const source = queryOne(`SELECT id, label FROM tags WHERE id = ${sql(sourceTagId)} LIMIT 1`);
   const target = queryOne(`SELECT id, label FROM tags WHERE id = ${sql(targetTagId)} LIMIT 1`);
   if (!source || !target) throw new Error("Tag not found.");
+  const sourceAuthor = queryOne(`SELECT user_id FROM user_author_tags WHERE tag_id = ${sql(sourceTagId)}`);
+  const targetAuthor = queryOne(`SELECT user_id FROM user_author_tags WHERE tag_id = ${sql(targetTagId)}`);
+  if (sourceAuthor && targetAuthor) throw new Error("Cannot merge author tags assigned to different users.");
+  if (sourceAuthor) assertAuthorTagAvailable(target.label, targetTagId);
 
   const pageRows = tagPageRows(sourceTagId);
   const mergePageTagsSql = isPostgresDatabase()
@@ -1058,6 +1085,8 @@ export function mergeTagForAdmin(adminUserId: string, sourceTagId: string, targe
     BEGIN;
     ${mergePageTagsSql}
     DELETE FROM page_tags WHERE tag_id = ${sql(sourceTagId)};
+    UPDATE user_author_tags SET tag_id = ${sql(targetTagId)} WHERE tag_id = ${sql(sourceTagId)};
+    ${renameAuthorTagSql(targetTagId, target.label)}
     DELETE FROM tags WHERE id = ${sql(sourceTagId)};
     COMMIT;
   `);
@@ -1078,6 +1107,9 @@ export function deleteTagForAdmin(adminUserId: string, tagId: string): AdminTag[
   const tag = queryOne(`SELECT id, label FROM tags WHERE id = ${sql(tagId)} LIMIT 1`);
   if (!tag) throw new Error("Tag not found.");
 
+  if (queryOne(`SELECT user_id FROM user_author_tags WHERE tag_id = ${sql(tagId)}`)) {
+    throw new Error("This tag is assigned as a user's author tag and cannot be deleted.");
+  }
   const pageRows = tagPageRows(tagId);
   execSql(`
     BEGIN;
@@ -1152,6 +1184,10 @@ export function updateAdminAppSettings(adminUserId: string, patch: Partial<Admin
   if (patch.suggestTagsGlobally !== undefined) {
     writeAppSetting("suggest_tags_globally", patch.suggestTagsGlobally ? "1" : "0");
   }
+  if (patch.addAuthorTagToNewPages !== undefined) {
+    if (typeof patch.addAuthorTagToNewPages !== "boolean") throw new Error("Invalid author tag setting.");
+    writeAppSetting("add_author_tag_to_new_pages", patch.addAuthorTagToNewPages ? "1" : "0");
+  }
   return readAppSettings();
 }
 
@@ -1162,15 +1198,44 @@ export function changeOwnPassword(userId: string, currentPassword: string, nextP
   execSql(updateUserPasswordSql(userId, nextPassword));
 }
 
-export function updateOwnProfile(userId: string, input: { firstName: string; lastName?: string }): AppUser {
+export function updateOwnProfile(userId: string, input: { firstName?: string; lastName?: string; authorTag?: string }): AppUser {
   ensureDatabase();
-  const firstName = normalizeUserNamePart(input.firstName);
-  const lastName = normalizeUserNamePart(input.lastName ?? "");
-  if (!firstName) throw new Error("First name is required.");
-  execSql(`UPDATE users SET first_name = ${sql(firstName)}, last_name = ${sql(lastName)} WHERE id = ${sql(userId)};`);
-  const user = findUserById(userId);
-  if (!user) throw new Error("User not found.");
-  return user;
+  if (!findUserById(userId)) throw new Error("Forbidden");
+  const nameUpdates: string[] = [];
+  if (input.firstName !== undefined) {
+    const firstName = normalizeUserNamePart(input.firstName);
+    if (!firstName) throw new Error("First name is required.");
+    nameUpdates.push(`first_name = ${sql(firstName)}`);
+  }
+  if (input.lastName !== undefined) nameUpdates.push(`last_name = ${sql(normalizeUserNamePart(input.lastName))}`);
+  const currentTag = getAuthorTag(userId);
+  const label = input.authorTag === undefined ? currentTag?.label : normalizeAuthorTag(input.authorTag);
+  const tagChanged = label !== undefined && label !== currentTag?.label;
+  const tagId = currentTag?.id ?? randomUUID();
+  if (tagChanged) assertAuthorTagAvailable(label!, currentTag?.id);
+  const pages = tagChanged && currentTag ? tagPageRows(currentTag.id) : [];
+  try {
+    execSql(`
+      BEGIN;
+      ${nameUpdates.length ? `UPDATE users SET ${nameUpdates.join(", ")} WHERE id = ${sql(userId)};` : ""}
+      ${tagChanged ? currentTag
+        ? `UPDATE tags SET label = ${sql(label!)} WHERE id = ${sql(tagId)}; ${renameAuthorTagSql(tagId, label!)}`
+        : insertAuthorTagSql(userId, { id: tagId, label: label! }) : ""}
+      COMMIT;
+    `);
+  } catch (error) {
+    if (isAuthorTagConflict(error)) throw new Error("That tag already exists. Choose a different author tag.");
+    throw error;
+  }
+  if (tagChanged) {
+    recordTagAuditEvent(userId, tagId, currentTag ? "tag.renamed" : "tag.author.assigned", currentTag
+      ? `renamed author tag ${quoteAuditValue(currentTag.label)} to ${quoteAuditValue(label!)}`
+      : `set author tag to ${quoteAuditValue(label!)}`, {
+      oldLabel: currentTag?.label ?? "", newLabel: label, authorUserId: userId, affectedPages: pages.length,
+    });
+    queueSearchIndexForTagPageRows(pages);
+  }
+  return findUserById(userId)!;
 }
 
 export function adminSetUserPassword(adminUserId: string, targetUserId: string, nextPassword: string) {
@@ -2380,14 +2445,18 @@ export function createNotebook(userId: string, name = "New Notebook") {
   ensureDatabase();
   const notebookId = randomUUID();
   const pageId = randomUUID();
+  ensureAuthorTagForNewPage(userId);
   const initialBody = readAppSettings().prependDateToNewPages ? formattedTodayForNewPage() : "";
   execSql(`
+    BEGIN;
     INSERT INTO notebooks (id, name, owner_id, color)
     VALUES (${sql(notebookId)}, ${sql(name)}, ${sql(userId)}, ${sql(defaultNotebookColor(notebookId))});
     INSERT INTO notebook_members (notebook_id, user_id, role)
     VALUES (${sql(notebookId)}, ${sql(userId)}, 'owner');
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, 'Untitled', ${sql(initialBody)}, '', ${sql(userId)});
+    ${pageAuthorTagInsertSql(userId, pageId)}
+    COMMIT;
   `);
   recordNotebookAuditEvent(userId, notebookId, "notebook.created", `created notebook ${quoteAuditValue(name)}`, { name });
   recordPageAuditEvent(userId, pageId, "page.created", "created page", { source: "notebook.create" });
@@ -2463,12 +2532,16 @@ export function createPage(userId: string, notebookId: string) {
   ensureDatabase();
   assertNotebookEditAccess(userId, notebookId);
   const pageId = randomUUID();
+  ensureAuthorTagForNewPage(userId);
   const initialBody = readAppSettings().prependDateToNewPages ? formattedTodayForNewPage() : "";
   const title = suggestPageTitle(notebookId);
   execSql(`
+    BEGIN;
     INSERT INTO pages (id, notebook_id, title, body, status, owner_id)
     VALUES (${sql(pageId)}, ${sql(notebookId)}, ${sql(title)}, ${sql(initialBody)}, '', ${sql(userId)});
     UPDATE notebooks SET updated_at = datetime('now') WHERE id = ${sql(notebookId)};
+    ${pageAuthorTagInsertSql(userId, pageId)}
+    COMMIT;
   `);
   recordPageAuditEvent(userId, pageId, "page.created", "created page");
   queueSearchIndexForPage(pageId);
@@ -3297,7 +3370,7 @@ function pruneUnusedTags() {
       SELECT 1
       FROM page_tags
       WHERE page_tags.tag_id = tags.id
-    );
+    ) AND NOT EXISTS (SELECT 1 FROM user_author_tags a WHERE a.tag_id = tags.id);
   `);
 }
 
@@ -3320,6 +3393,7 @@ function readAppSettings(): AdminAppSettings {
   return {
     prependDateToNewPages: readAppSetting("prepend_date_to_new_pages", "1") === "1",
     suggestTagsGlobally: readAppSetting("suggest_tags_globally", "1") === "1",
+    addAuthorTagToNewPages: readAppSetting("add_author_tag_to_new_pages", "0") === "1",
   };
 }
 
@@ -3333,6 +3407,23 @@ function writeAppSetting(key: string, value: string) {
     VALUES (${sql(key)}, ${sql(value)}, datetime('now'))
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
   `);
+}
+
+function ensureAuthorTagForNewPage(userId: string) {
+  if (!readAppSettings().addAuthorTagToNewPages || getAuthorTag(userId)) return;
+  const user = findUserById(userId);
+  if (!user) throw new Error("Forbidden");
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const tag = newAuthorTag(user.firstName, user.lastName, user.id);
+      execSql(`BEGIN; ${insertAuthorTagSql(userId, tag)} COMMIT;`);
+      return;
+    } catch (error) {
+      if (getAuthorTag(userId)) return;
+      if (!isAuthorTagConflict(error)) throw error;
+    }
+  }
+  throw new Error("Unable to assign an author tag. Please try again.");
 }
 
 function formattedTodayForNewPage() {

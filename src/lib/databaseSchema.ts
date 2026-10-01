@@ -103,6 +103,7 @@ function readTableSchema(name: string, type: string, createSql: string): Databas
     .map((index) => ({
       name: index.name,
       unique: index.unique === "1",
+      partial: index.partial === "1",
       columns: querySql(`PRAGMA index_info(${quoteIdentifier(index.name)});`).map((column) => column.name),
     }));
   return {
@@ -147,7 +148,7 @@ function readPostgresTableSchema(name: string, type: string, createSql: string):
   }));
   const foreignKeys: DatabaseSchemaRelationship[] = querySql(`
     SELECT
-      row_number() OVER (ORDER BY tc.constraint_name, kcu.ordinal_position) AS id,
+      dense_rank() OVER (ORDER BY tc.constraint_name) AS id,
       kcu.ordinal_position AS seq,
       kcu.table_name AS from_table,
       kcu.column_name AS from_column,
@@ -191,6 +192,7 @@ function readPostgresTableSchema(name: string, type: string, createSql: string):
     .map((index) => ({
       name: index.name,
       unique: /^CREATE UNIQUE INDEX/i.test(index.indexdef ?? ""),
+      partial: /\bWHERE\b/i.test(index.indexdef ?? ""),
       columns: postgresIndexColumns(index.indexdef ?? ""),
     }));
   return {

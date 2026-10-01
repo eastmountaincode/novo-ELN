@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
-import { getErflowAdminStatus } from "@/lib/erflow";
 import { getAdminDatabaseSchema } from "@/lib/store";
 
 export async function GET() {
@@ -10,7 +9,6 @@ export async function GET() {
   try {
     return NextResponse.json({
       schema: getAdminDatabaseSchema(user.id),
-      erflow: getErflowAdminStatus(),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to load database schema.";

@@ -1,144 +1,41 @@
-import { ExternalLink, Loader2, Workflow } from "lucide-react";
+import { RefreshCw, Workflow } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AdminLoadingState, AdminPanelHeader } from "@/features/account/admin/AdminPanelLayout";
-import type { ErflowAdminStatus, ErflowSyncResult } from "@/lib/types";
-
-type SchemaResponse = {
-  erflow?: ErflowAdminStatus;
-  result?: ErflowSyncResult;
-  error?: string;
-};
-
-const erflowActionClass = "inline-flex h-9 items-center gap-2 px-3 !text-sm !font-medium !leading-5";
+import { SchemaDiagram } from "@/features/account/admin/SchemaDiagram";
+import type { DatabaseSchemaOverview } from "@/lib/types";
 
 export function SchemaAdminPanel() {
-  const [erflow, setErflow] = useState<ErflowAdminStatus | null>(null);
-  const [syncResult, setSyncResult] = useState<ErflowSyncResult | null>(null);
+  const [schema, setSchema] = useState<DatabaseSchemaOverview | null>(null);
+  const [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
 
-  async function loadSchema() {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch("/api/admin/schema", { cache: "no-store" });
-      const body = (await response.json().catch(() => null)) as SchemaResponse | null;
-      if (!response.ok) {
-        setError(body?.error ?? "Unable to load database schema.");
-        return;
-      }
-      setErflow(body?.erflow ?? null);
-    } catch {
-      setError("Unable to load database schema.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function syncErflow() {
-    setSyncing(true);
-    setError("");
-    setSyncResult(null);
-    try {
-      const response = await fetch("/api/admin/schema/erflow-sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dryRun: false }),
-      });
-      const body = (await response.json().catch(() => null)) as SchemaResponse | null;
-      if (!response.ok) {
-        setError(body?.error ?? "Unable to sync ER Flow.");
-        return;
-      }
-      setSyncResult(body?.result ?? null);
-      setErflow(body?.erflow ?? erflow);
-      await loadSchema();
-    } catch {
-      setError("Unable to sync ER Flow.");
-    } finally {
-      setSyncing(false);
-    }
-  }
-
   useEffect(() => {
-    let active = true;
-    fetch("/api/admin/schema", { cache: "no-store" })
+    const controller = new AbortController();
+    fetch("/api/admin/schema", { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
-        const body = (await response.json().catch(() => null)) as SchemaResponse | null;
-        if (!active) return;
-        setLoading(false);
-        if (!response.ok) {
-          setError(body?.error ?? "Unable to load database schema.");
-          return;
-        }
-        setErflow(body?.erflow ?? null);
+        const body = await response.json() as { schema?: DatabaseSchemaOverview; error?: string };
+        if (!response.ok || !body.schema) throw new Error(body.error || "Unable to load the schema.");
+        if (!controller.signal.aborted) setSchema(body.schema);
       })
-      .catch(() => {
-        if (!active) return;
-        setLoading(false);
-        setError("Unable to load database schema.");
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const configured = erflow?.configured === true;
-  const syncedAt = syncResult ? new Date(syncResult.syncedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Unable to load the schema.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [refresh]);
 
   return (
-    <section className="max-w-3xl border border-slate-200 bg-white">
-      <AdminPanelHeader icon={Workflow} title="Schema" />
-
-      {loading ? (
-        <AdminLoadingState>Loading schema...</AdminLoadingState>
-      ) : (
-        <div className="space-y-4 p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void syncErflow()}
-              disabled={loading || !configured || syncing}
-              className={`${erflowActionClass} bg-slate-950 text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300`}
-            >
-              {syncing ? <Loader2 size={15} className="animate-spin" /> : <Workflow size={15} />}
-              Sync ER Flow
-            </button>
-            {erflow?.viewUrl ? (
-              <a
-                href={erflow.viewUrl}
-                target="_blank"
-                rel="noreferrer"
-                className={`${erflowActionClass} border border-slate-300 text-slate-700 hover:bg-slate-50`}
-              >
-                <ExternalLink size={15} />
-                Open ER Flow
-              </a>
-            ) : (
-              <button
-                type="button"
-                disabled
-                className={`${erflowActionClass} cursor-not-allowed border border-slate-200 text-slate-400`}
-              >
-                <ExternalLink size={15} />
-                Open ER Flow
-              </button>
-            )}
-          </div>
-
-          {!configured ? (
-            <p className="border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">ER Flow is not configured for this environment.</p>
-          ) : null}
-          {error ? <p className="border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
-          {syncResult ? (
-            <p className="border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-800">
-              Synced {syncResult.tableCount.toLocaleString()} tables and {syncResult.relationshipCount.toLocaleString()} relationships to ER Flow
-              {syncedAt ? ` at ${syncedAt}` : ""}.
-            </p>
-          ) : null}
-        </div>
-      )}
+    <section className="min-w-0 border border-slate-200 bg-white" aria-busy={loading}>
+      <AdminPanelHeader icon={Workflow} title="Schema" action={
+        <button type="button" disabled={loading} onClick={() => { setLoading(true); setError(""); setRefresh((value) => value + 1); }}
+          className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+          <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh
+        </button>
+      } />
+      {error ? <p role="alert" className="m-4 border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
+      {!schema && loading ? <AdminLoadingState>Loading schema...</AdminLoadingState> : null}
+      {schema ? <SchemaDiagram schema={schema} /> : null}
     </section>
   );
 }

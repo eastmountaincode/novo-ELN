@@ -58,8 +58,8 @@ function defaultRequests(pageId: string): PageEditingRequests {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
-      const result = (await response.json().catch(() => null)) as { changed?: boolean; error?: string } | null;
-      return { ok: response.ok, changed: result?.changed, error: result?.error };
+      const result = (await response.json().catch(() => null)) as Omit<MutationResult, "ok"> | null;
+      return { ok: response.ok, changed: result?.changed, updatedAt: result?.updatedAt, error: result?.error };
     },
     patchTags: async (tags) => {
       const response = await fetch(`/api/pages/${pageId}/tags`, {
@@ -67,8 +67,8 @@ function defaultRequests(pageId: string): PageEditingRequests {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tags }),
       });
-      const result = (await response.json().catch(() => null)) as { changed?: boolean; error?: string } | null;
-      return { ok: response.ok, changed: result?.changed, error: result?.error };
+      const result = (await response.json().catch(() => null)) as Omit<MutationResult, "ok"> | null;
+      return { ok: response.ok, changed: result?.changed, updatedAt: result?.updatedAt, error: result?.error };
     },
     setLocked: async (locked) => {
       const response = await fetch(`/api/pages/${pageId}`, {
@@ -144,7 +144,7 @@ export function createPageEditingSession({
     onStart: () => setStatus("body", "Saving..."),
     onSuccess: (body, result) => {
       if (latestBodyDraft !== body) return;
-      updatePage(result.changed ? { body, updatedAt: "Just now" } : { body });
+      updatePage({ body, ...(result.updatedAt ? { updatedAt: result.updatedAt } : {}) });
       dirtyBody = null;
       setStatus("body", "Saved", { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS });
     },
@@ -158,7 +158,7 @@ export function createPageEditingSession({
     onSuccess: (_patch, result, context) => {
       if (context.hasNewerPending) return;
       latestMetadataDraft = {};
-      if (result.changed) updatePage({ updatedAt: "Just now" });
+      if (result.updatedAt) updatePage({ updatedAt: result.updatedAt });
       setStatus("metadata", result.changed ? "Saved" : "", result.changed ? { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS } : {});
     },
     onFailure: () => setStatus("metadata", "Save failed"),
@@ -173,7 +173,7 @@ export function createPageEditingSession({
       persistedTags = [...tags];
       if (context.hasNewerPending) return;
       latestTagDraft = null;
-      if (result.changed) updatePage({ updatedAt: "Just now" });
+      if (result.updatedAt) updatePage({ updatedAt: result.updatedAt });
       setStatus("tags", "Saved", { clearAfterMs: SUCCESS_STATUS_CLEAR_AFTER_MS });
     },
     onFailure: (_tags, _result, context) => {

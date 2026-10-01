@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
-import { setPageTags } from "@/lib/store";
+import { getPageUpdatedAt, setPageTags } from "@/lib/store";
 
 export async function PATCH(request: Request, context: { params: Promise<{ pageId: string }> }) {
   const user = await currentUser();
@@ -12,7 +12,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ pageI
   }
   try {
     const changed = setPageTags(user.id, pageId, body.tags);
-    return NextResponse.json({ ok: true, changed });
+    return NextResponse.json({
+      ok: true,
+      changed,
+      ...(changed ? { updatedAt: getPageUpdatedAt(user.id, pageId) } : {}),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not update page tags";
     return NextResponse.json({ error: message }, { status: message === "Forbidden" ? 403 : message === "Page is locked." ? 423 : 400 });

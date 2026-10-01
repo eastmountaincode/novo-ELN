@@ -42,9 +42,12 @@ export async function syncSchemaToErflow(schema: DatabaseSchemaOverview, options
   ];
   const operations = [...deleteOperations, ...createOperations];
 
+  const preview = await callErflowTool(endpoint, "batch-operations", { dryRun: true, operations });
+  assertErflowPreviewSucceeded(preview);
+  // Keep deletion and replacement in the same batch; a rejected replacement must not clear the diagram.
   const responseText = options.dryRun === true
-    ? await callErflowTool(endpoint, "batch-operations", { dryRun: true, operations })
-    : await applyErflowOperations(endpoint, deleteOperations, createOperations);
+    ? preview
+    : await callErflowTool(endpoint, "batch-operations", { dryRun: false, operations });
 
   return {
     syncedAt: new Date().toISOString(),
@@ -56,19 +59,15 @@ export async function syncSchemaToErflow(schema: DatabaseSchemaOverview, options
   };
 }
 
-async function applyErflowOperations(
-  endpoint: string,
-  deleteOperations: Array<Record<string, unknown>>,
-  createOperations: Array<Record<string, unknown>>,
-) {
-  const responses: string[] = [];
-  if (deleteOperations.length > 0) {
-    responses.push(await callErflowTool(endpoint, "batch-operations", { dryRun: false, operations: deleteOperations }));
+function assertErflowPreviewSucceeded(text: string) {
+  const result = JSON.parse(text) as {
+    wouldSucceed?: boolean;
+    results?: Array<{ ok?: boolean; errors?: string[] }>;
+  };
+  const errors = result.results?.flatMap((operation) => operation.errors ?? []) ?? [];
+  if (result.wouldSucceed !== true || result.results?.some((operation) => operation.ok === false)) {
+    throw new Error(errors.join(" ") || "ER Flow could not validate the sync. The existing diagram was not changed.");
   }
-  if (createOperations.length > 0) {
-    responses.push(await callErflowTool(endpoint, "batch-operations", { dryRun: false, operations: createOperations }));
-  }
-  return responses.filter(Boolean).join("\n");
 }
 
 async function getActiveDiagram(endpoint: string) {

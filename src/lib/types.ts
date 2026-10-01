@@ -124,6 +124,7 @@ export type DatabaseSchemaColumn = {
 export type DatabaseSchemaIndex = {
   name: string;
   unique: boolean;
+  partial?: boolean;
   columns: string[];
 };
 

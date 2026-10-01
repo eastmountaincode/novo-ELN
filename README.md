@@ -111,11 +111,19 @@ companion route is deployed and should appear in Novo navigation. If all Chat
 settings remain unset, deployment uses only the base Compose file exactly as
 before. Never expose `/api/integrations/` through the public reverse proxy.
 
-## Optional ER Flow schema diagrams
+## Schema whiteboard
 
-Admins can sync the current SQLite schema from Account Settings -> Schema. ER
-Flow sync is optional. To connect it, create an ER Flow data model in your own
-ER Flow account and set:
+Account Settings -> Schema displays the current PostgreSQL or SQLite schema in
+a read-only, zoomable whiteboard. Tables, column types, primary keys, and
+foreign-key connections come from the database metadata. Crow's-foot line ends
+show optional/required and one/many relationships, using nullability and unique
+keys (excluding partial indexes). Select a table to
+highlight its connections, search by table or column name, and use Refresh after
+a migration. Internal search/index tables can be shown with the toolbar toggle.
+Viewing and refreshing the diagram never edits the database structure.
+
+The legacy ER Flow sync API and SQLite export script remain optional. They use
+these server-side settings:
 
 ```text
 ELN_ERFLOW_MODEL=https://app.erflow.io/mcp/data-model/YOUR_MODEL_UUID
@@ -124,8 +132,8 @@ ELN_ERFLOW_VIEW_URL=https://app.erflow.io/share/YOUR_VIEW_ONLY_LINK
 
 `ELN_ERFLOW_MODEL` can also be just the model UUID. Treat it as a write
 credential for that ER Flow model and keep it server-side. Do not commit it.
-`ELN_ERFLOW_VIEW_URL` is the admin-facing URL shown by the Open ER Flow button.
-Without these variables, Novo disables ER Flow sync.
+`ELN_ERFLOW_VIEW_URL` identifies the external diagram. These settings are not
+needed by Novo's built-in whiteboard.
 
 ## Backups
 

@@ -1,6 +1,7 @@
 import { Crown, Eye, Pencil, Shield, X } from "lucide-react";
 import type { AccessRole, ShareMember } from "@/lib/types";
 import { userDisplayName } from "@/lib/workspaceDisplay";
+import { NotebookRoleSelect } from "@/features/notebooks/settings/NotebookRoleSelect";
 
 const accessRoleIcons = {
   owner: Crown,
@@ -45,15 +46,11 @@ export function NotebookAccessList({
             {roleCanBeChanged ? (
               <div className="flex min-w-0 items-center gap-2">
                 <RoleIcon size={15} className={`shrink-0 ${roleIconClass}`} />
-                <select
+                <NotebookRoleSelect
                   value={member.role}
-                  onChange={(event) => void onRoleChange(member, event.target.value as AccessRole)}
-                  className="h-9 min-w-0 flex-1 cursor-pointer border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none focus:border-cyan-600"
-                >
-                  <option value="owner">Owner</option>
-                  <option value="editor">Editor</option>
-                  <option value="viewer">Viewer</option>
-                </select>
+                  onValueChange={(role) => void onRoleChange(member, role)}
+                  ariaLabel={`Access for ${userDisplayName(member)}`}
+                />
               </div>
             ) : (
               <span className="inline-flex items-center gap-2 text-sm capitalize text-slate-600">

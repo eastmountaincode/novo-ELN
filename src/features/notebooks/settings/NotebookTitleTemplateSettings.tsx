@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarPlus, Loader2 } from "lucide-react";
+import { CalendarPlus, ChevronDown, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { NotebookOverviewRow } from "@/features/notebooks/settings/NotebookOverviewRow";
 
@@ -95,7 +95,7 @@ export function NotebookTitleTemplateSettings({
             onChange={(event) => void changePageTitleTemplateEnabled(event.target.checked)}
             aria-label="Use title template for new pages"
             style={checkboxStyle}
-            className="size-4 cursor-pointer border-slate-300"
+            className="relative -top-px size-4 shrink-0 cursor-pointer border-slate-300"
           />
           <span>Use this template for new pages</span>
         </div>
@@ -120,7 +120,19 @@ export function NotebookTitleTemplateSettings({
             Save template
           </button>
         </div>
-        <p className="mt-2 text-xs text-slate-500">Use {"{number}"} where Novo should insert the next number. Leave blank to use Untitled.</p>
+        <details className="group text-xs text-slate-600">
+          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 font-medium select-none hover:text-slate-950 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600 [&::-webkit-details-marker]:hidden">
+            How to use
+            <ChevronDown size={13} aria-hidden="true" className="relative -top-[0.5px] shrink-0 group-open:rotate-180" />
+          </summary>
+          <div className="mt-3 max-w-2xl space-y-2 leading-relaxed">
+            <p>
+              Use <code>{"{number}"}</code> for automatic numbering. With <code>{"SortSeq-Expt{number}"}</code>,
+              if the highest matching page is <code>SortSeq-Expt740</code>, the next page will be <code>SortSeq-Expt741</code>.
+            </p>
+            <p>Leave blank or turn off to use <em>Untitled</em>.</p>
+          </div>
+        </details>
         {error ? <p className="mt-2 text-xs font-medium text-red-600">{error}</p> : null}
       </div>
     </section>

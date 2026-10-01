@@ -4,6 +4,9 @@ import { Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AccessRole, AppUser, ShareMember } from "@/lib/types";
 import { userDisplayName } from "@/lib/workspaceDisplay";
+import { NotebookRoleSelect } from "@/features/notebooks/settings/NotebookRoleSelect";
+
+const shareRoles: readonly AccessRole[] = ["editor", "viewer", "owner"];
 
 type NotebookShareFormProps = {
   members: AppUser[];
@@ -103,16 +106,13 @@ export function NotebookShareForm({
         </div>
       </label>
       <div className="flex gap-2">
-        <select
+        <NotebookRoleSelect
           value={role}
-          onChange={(event) => setRole(event.target.value as AccessRole)}
+          onValueChange={setRole}
           disabled={disabledByPermission}
-          className="h-9 flex-1 cursor-pointer border border-slate-300 bg-white px-2 text-sm text-slate-950 outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
-        >
-          <option value="editor">Editor</option>
-          <option value="viewer">Viewer</option>
-          <option value="owner">Owner</option>
-        </select>
+          ariaLabel="New member access"
+          roles={shareRoles}
+        />
         <button disabled={formDisabled} className="inline-flex h-9 items-center gap-2 bg-slate-950 px-3 text-sm font-semibold text-white disabled:bg-slate-300">
           {submitting ? <Loader2 size={15} className="animate-spin" /> : null}
           {submitting ? "Sharing..." : submitLabel}

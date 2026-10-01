@@ -132,7 +132,7 @@ export function SchemaDiagram({ schema }: { schema: DatabaseSchemaOverview }) {
         <p className="text-sm text-slate-500">{tables.length} tables · {relationships.length} connections</p>
         <div className="flex flex-wrap items-center gap-3">
           <label className="inline-flex select-none items-center gap-2 text-sm text-slate-600">
-            <input type="checkbox" checked={showInternal} onChange={(event) => { setShowInternal(event.target.checked); setView(null); setSelectedName(""); }} />
+            <input type="checkbox" checked={showInternal} onChange={(event) => { setShowInternal(event.target.checked); setSelectedName(""); }} />
             Internal tables
           </label>
           <div className="flex items-center gap-1">

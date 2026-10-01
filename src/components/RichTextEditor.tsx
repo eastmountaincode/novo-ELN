@@ -145,6 +145,24 @@ const EditorTabBehavior = Extension.create({
   },
 });
 
+const InsertDateShortcut = Extension.create({
+  name: "insertDateShortcut",
+  addKeyboardShortcuts() {
+    return {
+      "Mod-Shift-d": () => {
+        if (!this.editor.isEditable) return false;
+        const date = new Intl.DateTimeFormat("en-US", {
+          timeZone: "America/New_York",
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        }).format(new Date());
+        return this.editor.commands.insertContent(date);
+      },
+    };
+  },
+});
+
 type CommentDraftSelectionRange = { from: number; to: number } | null;
 
 const commentDraftSelectionKey = new PluginKey<CommentDraftSelectionRange>("novoCommentDraftSelection");
@@ -262,6 +280,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
         },
       }),
       EditorTabBehavior,
+      InsertDateShortcut,
       Underline,
       TextStyle,
       Color.configure({

@@ -1,6 +1,7 @@
 export type MutationResult = {
   ok: boolean;
   changed?: boolean;
+  updatedAt?: string;
   error?: string;
 };
 

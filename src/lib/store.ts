@@ -2013,6 +2013,14 @@ export function getPage(userId: string, pageId: string): PageEntry {
   };
 }
 
+export function getPageUpdatedAt(userId: string, pageId: string): string {
+  ensureDatabase();
+  assertPageReadAccess(userId, pageId);
+  const row = queryOne(`SELECT updated_at FROM pages WHERE id = ${sql(pageId)} LIMIT 1`);
+  if (!row) throw new Error("Page not found");
+  return row.updated_at;
+}
+
 export function getPageNotebook(userId: string, pageId: string): Pick<Notebook, "id" | "name" | "color"> {
   ensureDatabase();
   assertPageReadAccess(userId, pageId);

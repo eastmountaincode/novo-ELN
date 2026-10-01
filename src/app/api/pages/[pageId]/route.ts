@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { PageStatus } from "@/lib/types";
 import { currentUser } from "@/lib/auth";
-import { deletePage, getPage, movePage, setPageLocked, updatePage } from "@/lib/store";
+import { deletePage, getPage, getPageUpdatedAt, movePage, setPageLocked, updatePage } from "@/lib/store";
 
 export async function GET(_request: Request, context: { params: Promise<{ pageId: string }> }) {
   const user = await currentUser();
@@ -42,6 +42,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ pageI
     return NextResponse.json({
       ok: true,
       changed,
+      ...(changed ? { updatedAt: getPageUpdatedAt(user.id, pageId) } : {}),
       ...(typeof body.locked === "boolean" ? { page: getPage(user.id, pageId) } : {}),
     });
   } catch (error) {

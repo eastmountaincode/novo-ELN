@@ -57,6 +57,7 @@ import {
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { PresentationPreviewCarousel } from "@/components/PresentationPreviewCarousel";
+import { createPageReferenceExtension } from "@/components/editor/PageReference";
 import {
   bodyToEditorDocument,
   editorDocumentToBody,
@@ -281,6 +282,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       }),
       EditorTabBehavior,
       InsertDateShortcut,
+      createPageReferenceExtension(() => lastPageId.current),
       Underline,
       TextStyle,
       Color.configure({

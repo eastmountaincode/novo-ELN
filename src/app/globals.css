@@ -742,3 +742,54 @@ body.inline-attachment-dragging * {
 .rich-text-surface[contenteditable="false"] .attachment-row {
   cursor: default;
 }
+
+/* Inline references stay part of the sentence; suggestions float above the editor. */
+.rich-text-surface a.novo-page-reference {
+  color: #0369a1;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+  text-decoration: none;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  cursor: pointer;
+}
+.rich-text-surface a.novo-page-reference:hover { background: #e0f2fe; }
+.page-reference-picker {
+  position: fixed;
+  z-index: 100;
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 8px 24px #0f172a26;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+.page-reference-heading, .page-reference-footer {
+  padding: 8px 12px;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+.page-reference-heading { border-bottom: 1px solid #e2e8f0; }
+.page-reference-footer { border-top: 1px solid #e2e8f0; }
+.page-reference-options { max-height: min(320px, 50vh); overflow-y: auto; overscroll-behavior: contain; }
+.page-reference-option {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.page-reference-option[aria-selected="true"] { background: #eff6ff; }
+.page-reference-title { font-weight: 600; overflow-wrap: anywhere; }
+.page-reference-context { color: #475569; font-size: 0.9rem; overflow-wrap: anywhere; }
+.page-reference-date { color: #64748b; font-size: 0.8rem; }
+.page-reference-status { padding: 14px 12px; color: #64748b; }
+@media print { .page-reference-picker { display: none; } }

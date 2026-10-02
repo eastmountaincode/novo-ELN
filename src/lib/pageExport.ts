@@ -7,6 +7,7 @@ import sharp from "sharp";
 import { bodyToEditorDocument, bodyToEditorText } from "./editor";
 import { uploadDir } from "./paths";
 import type { Attachment, Notebook, PageEntry } from "./types";
+import { pageReferenceHref } from "./pageReferenceTypes";
 
 type ExportNotebook = Pick<Notebook, "id" | "name" | "color">;
 
@@ -144,6 +145,11 @@ function renderNode(node: JSONContent, context: RenderContext): string {
   switch (node.type) {
     case "text":
       return renderText(node);
+    case "pageReference": {
+      const label = escapeHtml(String(node.attrs?.label || "Untitled"));
+      const id = String(node.attrs?.id ?? "");
+      return id ? `<a href="https://novo.mgh.harvard.edu${escapeAttribute(pageReferenceHref(id))}">${label}</a>` : label;
+    }
     case "hardBreak":
       return "<br />";
     case "paragraph":

@@ -40,6 +40,7 @@ export function databaseDisplayName() {
 }
 
 export type SqlRow = Record<string, string>;
+export type SqlParameter = string | number;
 
 export function sql(value: string | number | null | undefined) {
   if (value === null || value === undefined) return "NULL";
@@ -51,26 +52,26 @@ export function nowSql() {
   return isPostgresDatabase() ? "novo_now_text()" : "datetime('now')";
 }
 
-export function execSql(statement: string) {
+export function execSql(statement: string, parameters?: readonly SqlParameter[]) {
   ensureRuntimeDirs();
   if (isPostgresDatabase()) {
-    execPostgresSql(statement);
+    execPostgresSql(statement, parameters);
     return;
   }
   execFileSync("sqlite3", ["-batch", databasePath], {
-    input: `.timeout 30000\n.bail on\nPRAGMA foreign_keys=ON;\n${statement}`,
+    input: `.timeout 30000\n.bail on\nPRAGMA foreign_keys=ON;\n${sqliteParameterBindings(parameters)}${statement}`,
     stdio: ["pipe", "pipe", "pipe"],
     maxBuffer: sqliteMaxBufferBytes(),
   });
 }
 
-export function querySql(statement: string): SqlRow[] {
+export function querySql(statement: string, parameters?: readonly SqlParameter[]): SqlRow[] {
   ensureRuntimeDirs();
   if (isPostgresDatabase()) {
-    return parseCsv(queryPostgresSql(statement));
+    return parseCsv(queryPostgresSql(statement, parameters));
   }
   const output = execFileSync("sqlite3", ["-batch", databasePath], {
-    input: `.timeout 30000\n.bail on\n.headers on\n.mode csv\nPRAGMA foreign_keys=ON;\n${statement}`,
+    input: `.timeout 30000\n.bail on\n.headers on\n.mode csv\nPRAGMA foreign_keys=ON;\n${sqliteParameterBindings(parameters)}${statement}`,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
     maxBuffer: sqliteMaxBufferBytes(),
@@ -78,8 +79,8 @@ export function querySql(statement: string): SqlRow[] {
   return parseCsv(output);
 }
 
-export function queryOne(statement: string): SqlRow | null {
-  return querySql(statement)[0] ?? null;
+export function queryOne(statement: string, parameters?: readonly SqlParameter[]): SqlRow | null {
+  return querySql(statement, parameters)[0] ?? null;
 }
 
 export function insertAndReturnId(statement: string) {
@@ -97,21 +98,52 @@ function postgresUrl() {
   return url;
 }
 
-function execPostgresSql(statement: string) {
+function execPostgresSql(statement: string, parameters?: readonly SqlParameter[]) {
   execFileSync("psql", [postgresUrl(), "-X", "-q", "-v", "ON_ERROR_STOP=1"], {
-    input: postgresCompatibleSql(statement),
+    input: postgresQueryInput(statement, parameters),
     stdio: ["pipe", "pipe", "pipe"],
     maxBuffer: postgresMaxBufferBytes(),
   });
 }
 
-function queryPostgresSql(statement: string) {
+function queryPostgresSql(statement: string, parameters?: readonly SqlParameter[]) {
   return execFileSync("psql", [postgresUrl(), "-X", "-q", "-v", "ON_ERROR_STOP=1", "--csv", "-P", "footer=off"], {
-    input: postgresCompatibleSql(statement),
+    input: postgresQueryInput(statement, parameters),
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
     maxBuffer: postgresMaxBufferBytes(),
   });
+}
+
+function validateSqlParameter(value: SqlParameter) {
+  if (typeof value === "number" && Number.isFinite(value)) return;
+  if (typeof value === "string" && !value.includes("\0")) return;
+  throw new Error("SQL parameters must be finite numbers or text without null bytes.");
+}
+
+function sqliteParameterBindings(parameters?: readonly SqlParameter[]) {
+  if (!parameters) return "";
+  // Hex encodes text for the CLI transport; SQLite binds the decoded value to $N.
+  // Never pass user text directly to .parameter, which can evaluate SQL expressions.
+  return ".parameter init\n" + parameters.map((value, index) => {
+    validateSqlParameter(value);
+    const literal = typeof value === "number" ? String(value) : `"CAST(X'${Buffer.from(value, "utf8").toString("hex")}' AS TEXT)"`;
+    return `.parameter set $${index + 1} ${literal}\n`;
+  }).join("");
+}
+
+function postgresQueryInput(statement: string, parameters?: readonly SqlParameter[]) {
+  const query = postgresCompatibleSql(statement);
+  if (!parameters) return query;
+  // psql 16+ \bind uses PostgreSQL's extended query protocol, not SQL interpolation.
+  // Encode every UTF-8 byte as a CLI octal escape so quotes, newlines, backticks,
+  // variable references and backslash commands in a value cannot become CLI syntax.
+  const bindings = parameters.map((value) => {
+    validateSqlParameter(value);
+    const encoded = Array.from(Buffer.from(String(value), "utf8"), (byte) => `\\${byte.toString(8).padStart(3, "0")}`).join("");
+    return `'${encoded}'`;
+  }).join(" ");
+  return `${query.trim().replace(/;$/, "")}\n\\bind ${bindings}\n\\g\n`;
 }
 
 function postgresCompatibleSql(statement: string) {

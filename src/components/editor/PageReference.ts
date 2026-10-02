@@ -1,5 +1,5 @@
 import Mention from "@tiptap/extension-mention";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { PluginKey } from "@tiptap/pm/state";
 import { exitSuggestion, type SuggestionProps } from "@tiptap/suggestion";
 import { formatDateTime } from "@/lib/dateTime";
 import { pageReferenceHref, type PageReferenceSuggestion } from "@/lib/pageReferenceTypes";
@@ -11,24 +11,6 @@ export function createPageReferenceExtension(currentPageId: () => string) {
     name: "pageReference",
     parseHTML() {
       return [{ tag: 'a[data-type="pageReference"]' }, { tag: 'span[data-type="pageReference"]' }];
-    },
-    addProseMirrorPlugins() {
-      return [
-        ...(this.parent?.() ?? []),
-        new Plugin({
-          props: {
-            handleClick(_view, _pos, event) {
-              const target = event.target;
-              const reference = target instanceof Element ? target.closest('a[data-type="pageReference"]') : null;
-              const id = reference?.getAttribute("data-id");
-              if (!id) return false;
-              event.preventDefault();
-              window.open(pageReferenceHref(id), "_blank", "noopener,noreferrer");
-              return true;
-            },
-          },
-        }),
-      ];
     },
   }).configure({
     HTMLAttributes: { class: "novo-page-reference", contenteditable: "false" },

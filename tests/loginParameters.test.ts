@@ -71,7 +71,7 @@ describe.sequential(`login parameters (${postgresAdminUrl ? "Postgres" : "SQLite
     execSql("INSERT INTO parameter_fixture VALUES ($1, $2, $3)", ["one", "unchanged", 1]);
     execSql("INSERT INTO parameter_fixture VALUES ($1, $2, $3)", ["two", "before", 2]);
     const value = "'); DELETE FROM parameter_fixture; --";
-    execSql("UPDATE parameter_fixture SET value = $1, amount = $2 + $2 WHERE id = $3", [value, 3, "two"]);
+    execSql("UPDATE parameter_fixture SET value = $1, amount = CAST($2 AS INTEGER) + CAST($2 AS INTEGER) WHERE id = $3", [value, 3, "two"]);
     expect(querySql("SELECT * FROM parameter_fixture ORDER BY id")).toEqual([
       { id: "one", value: "unchanged", amount: "1" }, { id: "two", value, amount: "6" },
     ]);

@@ -140,6 +140,7 @@ function shouldDropDefaultEditorAttr(nodeType: string, key: string, value: unkno
 
 function editorDocumentToText(node: JSONContent): string {
   if (node.type === "text") return node.text ?? "";
+  if (node.type === "pageReference") return String(node.attrs?.label || "Untitled");
   if (node.type === "hardBreak") return "\n";
   if (node.type === "attachmentCard") return `[${String(node.attrs?.kind ?? "File")}: ${String(node.attrs?.filename ?? "attachment")}]\n`;
   const childText = node.content?.map(editorDocumentToText).join("") ?? "";

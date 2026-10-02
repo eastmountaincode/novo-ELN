@@ -742,3 +742,58 @@ body.inline-attachment-dragging * {
 .rich-text-surface[contenteditable="false"] .attachment-row {
   cursor: default;
 }
+
+/* Inline references stay part of the sentence; suggestions float above the editor. */
+.rich-text-surface a.novo-page-reference {
+  color: #0369a1;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+  text-decoration: none;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  cursor: pointer;
+}
+.rich-text-surface a.novo-page-reference:hover { background: #e0f2fe; }
+.rich-text-surface a.novo-page-reference::before {
+  content: "";
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: 0.25em;
+  vertical-align: -0.15em;
+  background-color: currentColor;
+  /* Lucide FileText, matching the page picker and attachment icons. */
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z'/%3E%3Cpath d='M14 2v5a1 1 0 0 0 1 1h5M10 9H8M16 13H8M16 17H8'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.page-reference-picker {
+  position: fixed;
+  z-index: 100;
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 8px 24px #0f172a26;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+.page-reference-options { max-height: min(320px, 50vh); overflow-y: auto; overscroll-behavior: contain; }
+.page-reference-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.page-reference-option[aria-selected="true"] { background: #eff6ff; }
+.page-reference-icon { width: 18px; height: 18px; flex-shrink: 0; color: #64748b; }
+.page-reference-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.page-reference-title { font-weight: 600; overflow-wrap: anywhere; }
+.page-reference-context { color: #64748b; font-size: 0.85rem; overflow-wrap: anywhere; }
+.page-reference-status { padding: 14px 12px; color: #64748b; }
+@media print { .page-reference-picker { display: none; } }

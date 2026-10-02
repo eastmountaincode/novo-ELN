@@ -33,9 +33,10 @@ export function createPageReferenceExtension(currentPageId: () => string) {
   }).configure({
     HTMLAttributes: { class: "novo-page-reference", contenteditable: "false" },
     renderText: ({ node }) => String(node.attrs.label || "Untitled"),
-    renderHTML: ({ node }) => [
+    renderHTML: ({ node, options }) => [
       "a",
       {
+        ...options.HTMLAttributes,
         href: pageReferenceHref(String(node.attrs.id ?? "")),
         target: "_blank",
         rel: "noopener noreferrer",

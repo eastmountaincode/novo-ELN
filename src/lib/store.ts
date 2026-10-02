@@ -823,7 +823,7 @@ function migrateGroupedTagsToPageTags() {
 
 export function findUserByEmail(email: string) {
   ensureDatabase();
-  const row = queryOne(`SELECT id, email, first_name, last_name, password_hash, role, is_active FROM users WHERE lower(email) = lower(${sql(email)}) LIMIT 1`);
+  const row = queryOne("SELECT id, email, first_name, last_name, password_hash, role, is_active FROM users WHERE lower(email) = lower($1) LIMIT 1", [email]);
   if (!row) return null;
   return {
     id: row.id,
@@ -838,7 +838,7 @@ export function findUserByEmail(email: string) {
 
 export function findUserById(id: string): AppUser | null {
   ensureDatabase();
-  const row = queryOne(`SELECT id, email, first_name, last_name, role, ${authorTagSelectSql("users.id")} AS author_tag FROM users WHERE id = ${sql(id)} AND is_active = 1 LIMIT 1`);
+  const row = queryOne(`SELECT id, email, first_name, last_name, role, ${authorTagSelectSql("users.id")} AS author_tag FROM users WHERE id = $1 AND is_active = 1 LIMIT 1`, [id]);
   if (!row) return null;
   return { id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, authorTag: row.author_tag ?? "", role: row.role as UserRole };
 }
@@ -851,7 +851,7 @@ export function verifyCredentials(email: string, password: string): AppUser | nu
 
 export function verifyUserPassword(userId: string, password: string) {
   ensureDatabase();
-  const user = queryOne(`SELECT password_hash FROM users WHERE id = ${sql(userId)} AND is_active = 1 LIMIT 1`);
+  const user = queryOne("SELECT password_hash FROM users WHERE id = $1 AND is_active = 1 LIMIT 1", [userId]);
   return Boolean(user?.password_hash && bcrypt.compareSync(password, user.password_hash));
 }
 
@@ -860,7 +860,7 @@ export function getLoginRateLimit(email: string, ipAddress: string, now = Date.n
   pruneLoginAttempts(now);
   const normalizedEmail = normalizeLoginEmail(email);
   const normalizedIp = normalizeLoginIp(ipAddress);
-  const row = queryOne(`SELECT failed_count, first_failed_at FROM login_attempts WHERE email = ${sql(normalizedEmail)} AND ip_address = ${sql(normalizedIp)} LIMIT 1`);
+  const row = queryOne("SELECT failed_count, first_failed_at FROM login_attempts WHERE email = $1 AND ip_address = $2 LIMIT 1", [normalizedEmail, normalizedIp]);
   if (!row) return { limited: false, retryAfterSeconds: 0 };
 
   const firstFailedAt = Number(row.first_failed_at);
@@ -878,36 +878,36 @@ export function recordFailedLogin(email: string, ipAddress: string, now = Date.n
   pruneLoginAttempts(now);
   const normalizedEmail = normalizeLoginEmail(email);
   const normalizedIp = normalizeLoginIp(ipAddress);
-  const row = queryOne(`SELECT failed_count, first_failed_at FROM login_attempts WHERE email = ${sql(normalizedEmail)} AND ip_address = ${sql(normalizedIp)} LIMIT 1`);
+  const row = queryOne("SELECT failed_count, first_failed_at FROM login_attempts WHERE email = $1 AND ip_address = $2 LIMIT 1", [normalizedEmail, normalizedIp]);
   const firstFailedAt = Number(row?.first_failed_at);
   const withinWindow = row && Number.isFinite(firstFailedAt) && firstFailedAt > now - loginRateLimitWindowMs;
 
   if (withinWindow) {
     execSql(`
       UPDATE login_attempts
-      SET failed_count = failed_count + 1, last_failed_at = ${sql(now)}
-      WHERE email = ${sql(normalizedEmail)} AND ip_address = ${sql(normalizedIp)};
-    `);
+      SET failed_count = failed_count + 1, last_failed_at = $1
+      WHERE email = $2 AND ip_address = $3;
+    `, [now, normalizedEmail, normalizedIp]);
     return;
   }
 
   execSql(`
     INSERT INTO login_attempts (email, ip_address, failed_count, first_failed_at, last_failed_at)
-    VALUES (${sql(normalizedEmail)}, ${sql(normalizedIp)}, 1, ${sql(now)}, ${sql(now)})
+    VALUES ($1, $2, 1, $3, $3)
     ON CONFLICT(email, ip_address) DO UPDATE SET
       failed_count = 1,
       first_failed_at = excluded.first_failed_at,
       last_failed_at = excluded.last_failed_at;
-  `);
+  `, [normalizedEmail, normalizedIp, now]);
 }
 
 export function clearFailedLogins(email: string, ipAddress: string) {
   ensureDatabase();
-  execSql(`DELETE FROM login_attempts WHERE email = ${sql(normalizeLoginEmail(email))} AND ip_address = ${sql(normalizeLoginIp(ipAddress))};`);
+  execSql("DELETE FROM login_attempts WHERE email = $1 AND ip_address = $2;", [normalizeLoginEmail(email), normalizeLoginIp(ipAddress)]);
 }
 
 function pruneLoginAttempts(now = Date.now()) {
-  execSql(`DELETE FROM login_attempts WHERE last_failed_at <= ${sql(now - loginAttemptRetentionMs)};`);
+  execSql("DELETE FROM login_attempts WHERE last_failed_at <= $1;", [now - loginAttemptRetentionMs]);
 }
 
 export function createUser(input: { email: string; firstName: string; lastName?: string; password: string; role?: UserRole }): AppUser {
@@ -1127,7 +1127,7 @@ export function deleteTagForAdmin(adminUserId: string, tagId: string): AdminTag[
 
 export function recordUserLogin(userId: string) {
   ensureDatabase();
-  execSql(`UPDATE users SET last_login_at = datetime('now') WHERE id = ${sql(userId)};`);
+  execSql("UPDATE users SET last_login_at = datetime('now') WHERE id = $1;", [userId]);
 }
 
 export function getAdminDataOverview(adminUserId: string): AdminDataOverview {

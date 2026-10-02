@@ -1,10 +1,29 @@
 import Mention from "@tiptap/extension-mention";
 import { PluginKey } from "@tiptap/pm/state";
 import { exitSuggestion, type SuggestionProps } from "@tiptap/suggestion";
-import { formatDateTime } from "@/lib/dateTime";
 import { pageReferenceHref, type PageReferenceSuggestion } from "@/lib/pageReferenceTypes";
 
 const referenceKey = new PluginKey("novoPageReference");
+
+function createPageIcon() {
+  // Match the Lucide FileText icon used for attachments, in this DOM-rendered picker.
+  const namespace = "http://www.w3.org/2000/svg";
+  const icon = document.createElementNS(namespace, "svg");
+  for (const [name, value] of Object.entries({
+    viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+    "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round",
+    "aria-hidden": "true", focusable: "false", class: "page-reference-icon",
+  })) icon.setAttribute(name, value);
+  for (const d of [
+    "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",
+    "M14 2v5a1 1 0 0 0 1 1h5", "M10 9H8", "M16 13H8", "M16 17H8",
+  ]) {
+    const path = document.createElementNS(namespace, "path");
+    path.setAttribute("d", d);
+    icon.append(path);
+  }
+  return icon;
+}
 
 export function createPageReferenceExtension(currentPageId: () => string) {
   return Mention.extend({
@@ -121,7 +140,6 @@ function createReferencePicker(currentPageId: () => string) {
     if (!popup || !options || !props) return;
     options.replaceChildren();
     props.editor.view.dom.removeAttribute("aria-activedescendant");
-    popup.querySelector(".page-reference-heading")!.textContent = props.query ? "Matching pages · Recently updated first" : "Recently updated pages";
     if (message) {
       const status = document.createElement("div");
       status.className = "page-reference-status";
@@ -136,16 +154,16 @@ function createReferencePicker(currentPageId: () => string) {
         item.id = `${id}-${index}`;
         item.className = "page-reference-option";
         item.setAttribute("role", "option");
+        const copy = document.createElement("span");
+        copy.className = "page-reference-copy";
         const title = document.createElement("span");
         title.className = "page-reference-title";
         title.textContent = page.title || "Untitled";
         const context = document.createElement("span");
         context.className = "page-reference-context";
         context.textContent = page.notebookName;
-        const date = document.createElement("span");
-        date.className = "page-reference-date";
-        date.textContent = `Updated ${formatDateTime(page.updatedAt)}`;
-        item.append(title, context, date);
+        copy.append(title, context);
+        item.append(createPageIcon(), copy);
         item.addEventListener("pointerdown", (event) => event.preventDefault());
         item.addEventListener("click", () => choose(index));
         item.addEventListener("pointermove", () => select(index));
@@ -166,17 +184,12 @@ function createReferencePicker(currentPageId: () => string) {
     if (!popup) {
       popup = document.createElement("div");
       popup.className = "page-reference-picker";
-      const heading = document.createElement("div");
-      heading.className = "page-reference-heading";
       options = document.createElement("div");
       options.id = id;
       options.className = "page-reference-options";
       options.setAttribute("role", "listbox");
       options.setAttribute("aria-label", "Reference a page");
-      const footer = document.createElement("div");
-      footer.className = "page-reference-footer";
-      footer.textContent = "↑↓ to choose · Enter to insert · Esc to dismiss";
-      popup.append(heading, options, footer);
+      popup.append(options);
       document.body.append(popup);
       window.addEventListener("resize", position);
       document.addEventListener("scroll", position, true);

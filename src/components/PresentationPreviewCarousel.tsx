@@ -54,39 +54,39 @@ export function PresentationPreviewCarousel({ attachmentId, filename, large = fa
   }
 
   const slides = preview?.slides ?? [];
-  const previewHeight = large ? "h-[min(58vh,520px)]" : "h-[260px]";
+  const previewHeight = large ? "h-full" : "h-[260px]";
 
   return (
-    <div className={`border-t border-slate-200 bg-white ${large ? "grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]" : ""}`}>
-      <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-2 text-xs text-slate-600">
+    <div className={`border-t border-neutral-200 bg-white ${large ? "grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto]" : ""}`}>
+      <div className="flex items-center justify-between gap-3 border-b border-neutral-200 px-3 py-2 text-xs text-neutral-600">
         <span className="font-medium tabular-nums">Slide {activeSlide.index} / {slideCount}</span>
         <div className="flex items-center gap-1">
-          <button type="button" tabIndex={-1} onClick={selectPrevious} disabled={activeIndex === 0} className="grid size-7 place-items-center border border-slate-300 bg-white text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 hover:not-disabled:bg-slate-50" aria-label="Previous slide">
+          <button type="button" tabIndex={large ? 0 : -1} onClick={selectPrevious} disabled={activeIndex === 0} className="grid size-7 place-items-center border border-neutral-300 bg-white text-neutral-700 disabled:cursor-not-allowed disabled:opacity-40 hover:not-disabled:bg-neutral-50" aria-label="Previous slide">
             <ChevronLeft size={15} />
           </button>
-          <button type="button" tabIndex={-1} onClick={selectNext} disabled={activeIndex >= slideCount - 1} className="grid size-7 place-items-center border border-slate-300 bg-white text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 hover:not-disabled:bg-slate-50" aria-label="Next slide">
+          <button type="button" tabIndex={large ? 0 : -1} onClick={selectNext} disabled={activeIndex >= slideCount - 1} className="grid size-7 place-items-center border border-neutral-300 bg-white text-neutral-700 disabled:cursor-not-allowed disabled:opacity-40 hover:not-disabled:bg-neutral-50" aria-label="Next slide">
             <ChevronRight size={15} />
           </button>
         </div>
       </div>
-      <div className={`${previewHeight} min-h-0 overflow-hidden bg-slate-200 p-3`}>
+      <div className={`${previewHeight} min-h-0 overflow-hidden bg-neutral-100 p-3`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={activeSlide.imageUrl} alt={`${filename} slide ${activeSlide.index}`} className="mx-auto block h-full w-full border border-slate-300 bg-white object-contain shadow-sm" draggable={false} />
+        <img src={activeSlide.imageUrl} alt={`${filename} slide ${activeSlide.index}`} className="mx-auto block h-full w-full border border-neutral-300 bg-white object-contain shadow-sm" draggable={false} />
       </div>
       {large && slides.length > 1 ? (
-        <div className="flex h-24 gap-2 overflow-x-auto border-t border-slate-200 bg-slate-50 p-2 scroll-contained">
+        <div className="flex min-h-0 gap-2 overflow-x-auto border-t border-neutral-200 bg-neutral-50 p-2 scroll-contained">
           {slides.map((slide, index) => (
             <button
               key={slide.index}
               type="button"
-              tabIndex={-1}
               onClick={() => setActiveIndex(index)}
-              className={`w-24 shrink-0 border p-1 text-left ${index === activeIndex ? "border-cyan-500 bg-cyan-50" : "border-slate-300 bg-white hover:bg-slate-100"}`}
+              className={`grid w-24 shrink-0 grid-rows-[3.5rem_1rem] gap-1 border p-1 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-neutral-600 ${index === activeIndex ? "border-neutral-700 bg-neutral-200" : "border-neutral-300 bg-white hover:bg-neutral-100"}`}
               aria-label={`Show slide ${slide.index}`}
+              aria-current={index === activeIndex ? "true" : undefined}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={slide.imageUrl} alt="" className="h-14 w-full bg-white object-contain" draggable={false} />
-              <span className="mt-1 block text-center text-[10px] font-medium tabular-nums text-slate-600">{slide.index}</span>
+              <span className="flex items-center justify-center text-[10px] font-medium leading-none tabular-nums text-neutral-700">{slide.index}</span>
             </button>
           ))}
         </div>

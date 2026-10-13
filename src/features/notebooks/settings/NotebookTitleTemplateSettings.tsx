@@ -9,7 +9,7 @@ type NotebookTitleTemplateSettingsProps = {
   savedValue: string;
   savedEnabled: boolean;
   notebookColor: string;
-  canManage: boolean;
+  canEdit: boolean;
   onChanged: () => Promise<void>;
 };
 
@@ -18,7 +18,7 @@ export function NotebookTitleTemplateSettings({
   savedValue,
   savedEnabled,
   notebookColor,
-  canManage,
+  canEdit,
   onChanged,
 }: NotebookTitleTemplateSettingsProps) {
   const [value, setValue] = useState(savedValue);
@@ -62,7 +62,7 @@ export function NotebookTitleTemplateSettings({
     }
   }
 
-  if (!canManage) {
+  if (!canEdit) {
     return (
       <section className="border border-slate-200 bg-white p-4">
         <div className="mb-3 flex items-center gap-2">

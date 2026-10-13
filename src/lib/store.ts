@@ -2506,7 +2506,7 @@ export function updateNotebookColor(userId: string, notebookId: string, color: s
 
 export function updateNotebookPageTitleTemplate(userId: string, notebookId: string, template: string, enabled: boolean) {
   ensureDatabase();
-  assertNotebookManageAccess(userId, notebookId);
+  assertNotebookEditAccess(userId, notebookId);
   const nextTemplate = normalizePageTitleTemplate(template);
   const nextEnabled = Boolean(enabled && nextTemplate);
   const current = queryOne(`SELECT page_title_template, COALESCE(page_title_template_enabled, 0) AS page_title_template_enabled FROM notebooks WHERE id = ${sql(notebookId)} LIMIT 1`);

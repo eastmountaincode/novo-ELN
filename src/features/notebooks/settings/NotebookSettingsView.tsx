@@ -175,7 +175,7 @@ export function NotebookSettingsView({
               savedValue={notebook.pageTitleTemplate ?? ""}
               savedEnabled={Boolean(notebook.pageTitleTemplateEnabled)}
               notebookColor={notebook.color}
-              canManage={canManage}
+              canEdit={canEdit}
               onChanged={onChanged}
             />
 

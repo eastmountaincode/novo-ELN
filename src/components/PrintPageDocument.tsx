@@ -3,6 +3,7 @@
 import type { JSONContent } from "@tiptap/react";
 import type { ReactNode } from "react";
 import { bodyToEditorDocument } from "@/lib/editor";
+import { editorFontFamily } from "@/lib/editorFonts";
 import type { Notebook, PageEntry } from "@/lib/types";
 
 type Mark = NonNullable<JSONContent["marks"]>[number];
@@ -102,8 +103,10 @@ function applyMarks(text: string, marks: Mark[], key: number): ReactNode {
       const href = String(mark.attrs?.href ?? "");
       return <a href={href}>{content}</a>;
     }
-    if (mark.type === "textStyle" && mark.attrs?.color) {
-      return <span style={{ color: String(mark.attrs.color) }}>{content}</span>;
+    if (mark.type === "textStyle") {
+      const color = mark.attrs?.color ? String(mark.attrs.color) : undefined;
+      const fontFamily = editorFontFamily(mark.attrs?.fontFamily);
+      if (color || fontFamily) return <span style={{ color, fontFamily, whiteSpace: fontFamily ? "pre-wrap" : undefined }}>{content}</span>;
     }
     return content;
   }, <span key={key}>{text}</span>);

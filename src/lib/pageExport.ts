@@ -5,6 +5,7 @@ import type { JSONContent } from "@tiptap/react";
 import { strToU8, zipSync } from "fflate";
 import sharp from "sharp";
 import { bodyToEditorDocument, bodyToEditorText } from "./editor";
+import { editorFontFamily } from "./editorFonts";
 import { uploadDir } from "./paths";
 import type { Attachment, Notebook, PageEntry } from "./types";
 import { pageReferenceHref } from "./pageReferenceTypes";
@@ -198,7 +199,9 @@ function renderText(node: JSONContent) {
       html = href ? `<a href="${escapeAttribute(href)}">${html}</a>` : html;
     } else if (mark.type === "textStyle") {
       const color = sanitizeCssColor(mark.attrs?.color);
-      if (color) html = `<span style="color: ${escapeAttribute(color)};">${html}</span>`;
+      const fontFamily = editorFontFamily(mark.attrs?.fontFamily);
+      const styles = [color ? `color: ${color}` : "", fontFamily ? `font-family: ${fontFamily}; white-space: pre-wrap` : ""].filter(Boolean);
+      if (styles.length) html = `<span style="${escapeAttribute(styles.join("; "))};">${html}</span>`;
     }
   }
   return html;

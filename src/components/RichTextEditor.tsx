@@ -12,7 +12,7 @@ import { Color } from "@tiptap/extension-color";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
-import { TextStyle } from "@tiptap/extension-text-style";
+import { FontFamily, TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import {
   Bold,
@@ -58,6 +58,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyn
 import { createPortal } from "react-dom";
 import { PresentationPreviewCarousel } from "@/components/PresentationPreviewCarousel";
 import { createPageReferenceExtension } from "@/components/editor/PageReference";
+import { FontFamilyMenu } from "@/components/editor/FontFamilyMenu";
 import {
   bodyToEditorDocument,
   editorDocumentToBody,
@@ -285,6 +286,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       createPageReferenceExtension(() => lastPageId.current),
       Underline,
       TextStyle,
+      FontFamily,
       Color.configure({
         types: ["textStyle"],
       }),
@@ -619,6 +621,8 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       {!readOnly || onPrint || onExportPdf || onExportArchive ? <div role="group" aria-label="Text editor controls" className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
         {!editorInteractionBlocked ? (
           <>
+            <FontFamilyMenu editor={editor} commitCommand={commitEditorCommand} />
+            <ToolbarDivider />
             <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
             <ToolbarButton active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()} label="Italic"><Italic size={15} /></ToolbarButton>
             <ToolbarButton active={editor.isActive("underline")} onClick={() => editor.chain().focus().toggleUnderline().run()} label="Underline"><UnderlineIcon size={15} /></ToolbarButton>

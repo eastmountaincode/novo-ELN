@@ -54,8 +54,9 @@ export function FontFamilyMenu({ editor }: { editor: Editor }) {
                 value={option.value}
                 onSelect={() => {
                   keepEditorFocus.current = true;
-                  if (option.value) editor.chain().focus().setFontFamily(option.value).run();
-                  else editor.chain().focus().unsetFontFamily().run();
+                  const command = editor.chain().focus(undefined, { scrollIntoView: false });
+                  if (option.value) command.setFontFamily(option.value).run();
+                  else command.unsetFontFamily().run();
                 }}
                 className="relative cursor-pointer select-none py-1.5 pl-7 pr-3 text-sm text-slate-700 outline-none data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900"
                 style={{ fontFamily: option.value || undefined }}

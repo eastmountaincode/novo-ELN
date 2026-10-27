@@ -621,7 +621,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       {!readOnly || onPrint || onExportPdf || onExportArchive ? <div role="group" aria-label="Text editor controls" className="z-20 flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 p-2 shadow-sm">
         {!editorInteractionBlocked ? (
           <>
-            <FontFamilyMenu editor={editor} />
+            <FontFamilyMenu editor={editor} commitCommand={commitEditorCommand} />
             <ToolbarDivider />
             <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
             <ToolbarButton active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()} label="Italic"><Italic size={15} /></ToolbarButton>

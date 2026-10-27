@@ -7,7 +7,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { useRef } from "react";
 import { EDITOR_FONTS, editorFontFamily } from "@/lib/editorFonts";
 
-export function FontFamilyMenu({ editor }: { editor: Editor }) {
+export function FontFamilyMenu({ editor, commitCommand }: { editor: Editor; commitCommand: (command: () => boolean) => void }) {
   const keepEditorFocus = useRef(false);
   const font = useEditorState({
     editor,
@@ -54,9 +54,13 @@ export function FontFamilyMenu({ editor }: { editor: Editor }) {
                 value={option.value}
                 onSelect={() => {
                   keepEditorFocus.current = true;
-                  const command = editor.chain().focus(undefined, { scrollIntoView: false });
-                  if (option.value) command.setFontFamily(option.value).run();
-                  else command.unsetFontFamily().run();
+                  const applyFont = () => {
+                    const command = editor.chain().focus(undefined, { scrollIntoView: false });
+                    return option.value ? command.setFontFamily(option.value).run() : command.unsetFontFamily().run();
+                  };
+                  // A caret-only choice sets the font for future typing; selected text must save even while the menu has focus.
+                  if (editor.state.selection.empty) applyFont();
+                  else commitCommand(applyFont);
                 }}
                 className="relative cursor-pointer select-none py-1.5 pl-7 pr-3 text-sm text-slate-700 outline-none data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900"
                 style={{ fontFamily: option.value || undefined }}

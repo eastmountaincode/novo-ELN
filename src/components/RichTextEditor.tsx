@@ -700,7 +700,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
               className={`${toolbarTextMenuTriggerClassName} ${toolbarMenuTriggerClassName}`}
             >
               <Paperclip size={15} aria-hidden="true" />
-              <span className={toolbarMenuLabelClassName}>File</span>
+              <span className={toolbarMenuLabelClassName}>Insert file</span>
             </button>
             <ToolbarDivider />
             <ToolbarButton disabled={!canUndo} onClick={() => editor.chain().focus().undo().run()} label="Undo"><Undo2 size={15} /></ToolbarButton>

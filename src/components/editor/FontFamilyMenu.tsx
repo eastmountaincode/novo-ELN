@@ -6,6 +6,7 @@ import { useEditorState } from "@tiptap/react";
 import { Check, ChevronDown } from "lucide-react";
 import { useRef } from "react";
 import { EDITOR_FONTS, editorFontFamily } from "@/lib/editorFonts";
+import { toolbarMenuContentClassName, toolbarMenuItemClassName, toolbarMenuLabelClassName, toolbarMenuTriggerClassName, toolbarTextMenuTriggerClassName } from "./toolbarMenuStyles";
 
 export function FontFamilyMenu({ editor, commitCommand }: { editor: Editor; commitCommand: (command: () => boolean) => void }) {
   const keepEditorFocus = useRef(false);
@@ -27,9 +28,9 @@ export function FontFamilyMenu({ editor, commitCommand }: { editor: Editor; comm
           aria-label={`Font: ${selected.label}`}
           disabled={font.disabled}
           onMouseDown={(event) => event.preventDefault()}
-          className="inline-flex h-8 w-28 cursor-pointer items-center justify-between gap-2 border border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className={`${toolbarTextMenuTriggerClassName} ${toolbarMenuTriggerClassName}`}
         >
-          <span className="truncate" style={{ fontFamily: selected.value || undefined }}>{selected.label}</span>
+          <span className={toolbarMenuLabelClassName}>Font</span>
           <ChevronDown size={12} className="shrink-0" aria-hidden="true" />
         </button>
       </DropdownMenu.Trigger>
@@ -45,7 +46,7 @@ export function FontFamilyMenu({ editor, commitCommand }: { editor: Editor; comm
             event.preventDefault();
             keepEditorFocus.current = false;
           }}
-          className="z-[1000] min-w-40 border border-slate-200 bg-white p-1 shadow-md outline-none"
+          className={`${toolbarMenuContentClassName} min-w-40`}
         >
           <DropdownMenu.RadioGroup value={font.value}>
             {EDITOR_FONTS.map((option) => (
@@ -62,7 +63,7 @@ export function FontFamilyMenu({ editor, commitCommand }: { editor: Editor; comm
                   if (editor.state.selection.empty) applyFont();
                   else commitCommand(applyFont);
                 }}
-                className="relative cursor-pointer select-none py-1.5 pl-7 pr-3 text-sm text-slate-700 outline-none data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900"
+                className={`relative pl-7 pr-3 ${toolbarMenuItemClassName}`}
                 style={{ fontFamily: option.value || undefined }}
               >
                 <DropdownMenu.ItemIndicator className="absolute inset-y-0 left-2 flex items-center">

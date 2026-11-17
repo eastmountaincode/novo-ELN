@@ -59,6 +59,7 @@ import { createPortal } from "react-dom";
 import { PresentationPreviewCarousel } from "@/components/PresentationPreviewCarousel";
 import { createPageReferenceExtension } from "@/components/editor/PageReference";
 import { FontFamilyMenu } from "@/components/editor/FontFamilyMenu";
+import { toolbarMenuContentClassName, toolbarMenuItemClassName, toolbarMenuLabelClassName, toolbarMenuTriggerClassName, toolbarTextMenuTriggerClassName } from "@/components/editor/toolbarMenuStyles";
 import {
   bodyToEditorDocument,
   editorDocumentToBody,
@@ -551,17 +552,6 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     }
   }
 
-  async function insertInlineFile(blockType: BlockType, accept: string) {
-    if (!editor || readOnly || editorBusy || commentSubmitting) return;
-    const file = await pickFile(accept);
-    if (!file) return;
-    const attachment = await uploadInlineFile(file, blockType);
-    if (!attachment || editor.isDestroyed || editorInteractionBlockedRef.current) return;
-    insertAttachmentCard(attachmentToInlineAttrs(attachment));
-    const body = editorDocumentToBody(editor.getJSON());
-    onInlineAttachmentInserted(attachment, body);
-  }
-
   function insertAttachmentCard(attrs: InlineAttachmentAttrs, position?: number) {
     if (!editor || readOnly || editorBusy || commentSubmitting) return;
     const content = { type: "attachmentCard", attrs };
@@ -622,7 +612,6 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
         {!editorInteractionBlocked ? (
           <>
             <FontFamilyMenu editor={editor} commitCommand={commitEditorCommand} />
-            <ToolbarDivider />
             <ToolbarButton active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold"><Bold size={15} /></ToolbarButton>
             <ToolbarButton active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()} label="Italic"><Italic size={15} /></ToolbarButton>
             <ToolbarButton active={editor.isActive("underline")} onClick={() => editor.chain().focus().toggleUnderline().run()} label="Underline"><UnderlineIcon size={15} /></ToolbarButton>
@@ -688,17 +677,6 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
                   separatorBefore: true,
                   focusEditor: true,
                 },
-              ]}
-            />
-            <ToolbarDivider />
-            <ToolbarMenu
-              label="Insert"
-              icon={null}
-              items={[
-                { label: "Image", icon: <FileImage size={15} />, onSelect: () => void insertInlineFile("image", imageAccept) },
-                { label: "Spreadsheet", icon: <FileSpreadsheet size={15} />, onSelect: () => void insertInlineFile("sheet", spreadsheetAccept) },
-                { label: "Presentation", icon: <Presentation size={15} />, onSelect: () => void insertInlineFile("slides", presentationAccept) },
-                { label: "File", icon: <File size={15} />, onSelect: () => void insertInlineFile("file", "") },
               ]}
             />
             <ToolbarDivider />
@@ -1820,12 +1798,12 @@ function ToolbarMenu({
           disabled={disabled}
           title={label}
           aria-label={label}
-          className={`${iconOnly ? "grid size-8 place-items-center" : "inline-flex h-8 items-center gap-1.5 px-2"} cursor-pointer border text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:text-slate-400 ${open ? "border-slate-300 bg-white text-slate-900" : "border-transparent"}`}
+          className={`${iconOnly ? "grid size-8 place-items-center" : toolbarTextMenuTriggerClassName} ${toolbarMenuTriggerClassName}`}
         >
           {icon}
           {!iconOnly ? (
             <>
-              <span className="text-xs font-medium">{label}</span>
+              <span className={toolbarMenuLabelClassName}>{label}</span>
               <ChevronDown size={12} aria-hidden="true" />
             </>
           ) : null}
@@ -1841,7 +1819,7 @@ function ToolbarMenu({
             event.preventDefault();
             keepEditorFocus.current = false;
           }}
-          className="z-[1000] min-w-48 border border-slate-200 bg-white p-1 shadow-md outline-none"
+          className={`${toolbarMenuContentClassName} min-w-48`}
         >
           <DropdownMenu.Label className="px-2 pb-1 pt-1 text-xs font-semibold text-slate-500">{label}</DropdownMenu.Label>
           {resolvedItems.map((item) => (
@@ -1853,7 +1831,7 @@ function ToolbarMenu({
                   keepEditorFocus.current = Boolean(item.focusEditor);
                   item.onSelect();
                 }}
-                className="flex cursor-pointer select-none items-center gap-2 px-2 py-1.5 text-xs text-slate-700 outline-none data-[highlighted]:bg-slate-100 data-[highlighted]:text-slate-900 data-[disabled]:cursor-not-allowed data-[disabled]:text-slate-300"
+                className={`flex items-center gap-2 px-2 ${toolbarMenuItemClassName}`}
               >
                 <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">{item.icon}</span>
                 <span className="min-w-0 flex-1">{item.label}</span>
@@ -1984,16 +1962,6 @@ function normalizeTextColor(value: unknown) {
 
 function ToolbarDivider() {
   return <div aria-hidden="true" className="mx-1 h-6 w-px bg-slate-200" />;
-}
-
-function pickFile(accept: string) {
-  return new Promise<File | null>((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = accept;
-    input.addEventListener("change", () => resolve(input.files?.[0] ?? null), { once: true });
-    input.click();
-  });
 }
 
 function normalizeKind(kind: string): BlockType {

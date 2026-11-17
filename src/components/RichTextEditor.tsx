@@ -38,7 +38,6 @@ import {
   MessageSquarePlus,
   Minus,
   Palette,
-  Paperclip,
   ArrowUpRight,
   Pencil,
   Plus,
@@ -553,17 +552,6 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
     }
   }
 
-  async function insertInlineFile() {
-    if (!editor || readOnly || editorBusy || commentSubmitting) return;
-    const file = await pickFile();
-    if (!file || editor.isDestroyed || editorInteractionBlockedRef.current) return;
-    const attachment = await uploadInlineFile(file, blockTypeForFile(file));
-    if (!attachment || editor.isDestroyed || editorInteractionBlockedRef.current) return;
-    insertAttachmentCard(attachmentToInlineAttrs(attachment));
-    const body = editorDocumentToBody(editor.getJSON());
-    onInlineAttachmentInserted(attachment, body);
-  }
-
   function insertAttachmentCard(attrs: InlineAttachmentAttrs, position?: number) {
     if (!editor || readOnly || editorBusy || commentSubmitting) return;
     const content = { type: "attachmentCard", attrs };
@@ -598,7 +586,7 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
       const dropPosition = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? editor.state.doc.content.size;
       let insertPosition = dropPosition;
       for (const file of files) {
-        const attachment = await uploadInlineFile(file, blockTypeForFile(file));
+        const attachment = await uploadInlineFile(file, blockTypeForDroppedFile(file));
         if (!attachment || editor.isDestroyed || editorInteractionBlockedRef.current) continue;
         insertAttachmentCard(attachmentToInlineAttrs(attachment), insertPosition);
         onInlineAttachmentInserted(attachment, editorDocumentToBody(editor.getJSON()));
@@ -691,17 +679,6 @@ export function RichTextEditor({ pageId, value, onChange, onBlur, uploadInlineFi
                 },
               ]}
             />
-            <ToolbarDivider />
-            <button
-              type="button"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => void insertInlineFile()}
-              aria-label="Insert file"
-              className={`${toolbarTextMenuTriggerClassName} ${toolbarMenuTriggerClassName}`}
-            >
-              <Paperclip size={15} aria-hidden="true" />
-              <span className={toolbarMenuLabelClassName}>Insert file</span>
-            </button>
             <ToolbarDivider />
             <ToolbarButton disabled={!canUndo} onClick={() => editor.chain().focus().undo().run()} label="Undo"><Undo2 size={15} /></ToolbarButton>
             <ToolbarButton disabled={!canRedo} onClick={() => editor.chain().focus().redo().run()} label="Redo"><Redo2 size={15} /></ToolbarButton>
@@ -839,7 +816,7 @@ function acceptListMatchesFile(file: File, accept: string) {
   });
 }
 
-function blockTypeForFile(file: File): BlockType {
+function blockTypeForDroppedFile(file: File): BlockType {
   const name = file.name.toLowerCase();
   if (acceptListMatchesFile(file, imageAccept)) return "image";
   if (name.endsWith(".pdf") || file.type === "application/pdf") return "pdf";
@@ -1985,16 +1962,6 @@ function normalizeTextColor(value: unknown) {
 
 function ToolbarDivider() {
   return <div aria-hidden="true" className="mx-1 h-6 w-px bg-slate-200" />;
-}
-
-function pickFile() {
-  return new Promise<File | null>((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.addEventListener("change", () => resolve(input.files?.[0] ?? null), { once: true });
-    input.addEventListener("cancel", () => resolve(null), { once: true });
-    input.click();
-  });
 }
 
 function normalizeKind(kind: string): BlockType {
